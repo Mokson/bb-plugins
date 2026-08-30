@@ -39,7 +39,7 @@ export function SecondRow({
   return (
     <div
       className={cn(
-        "flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground",
+        "flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground/70",
         DIM_CLASS[row.dimLevel],
       )}
     >

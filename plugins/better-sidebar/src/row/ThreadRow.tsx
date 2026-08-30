@@ -31,6 +31,13 @@ const DEPTH_INDENT_PX = 12;
 const CHEVRON_BOX_CLASS =
   "relative flex size-3.5 shrink-0 items-center justify-center";
 
+/**
+ * The provider column: the glyph's own box (`size-3.5`), reserved even when
+ * the mark is hidden so titles and row 2 keep one left edge across settings.
+ * With row 1's `gap-2` it measures the 22px that row 2 is indented by.
+ */
+const PROVIDER_BOX_CLASS = "size-3.5 shrink-0";
+
 /** B51.5: a fixed slot per trailing element, so the time column aligns down the list. */
 const TRAILING_TEXT_CLASS =
   "shrink-0 text-right text-[11px] tabular-nums text-muted-foreground";
@@ -203,8 +210,14 @@ function RowBody({
             {/* B57: one row-1 layout for every row —
                 [provider] title [chevron, parents only] … [status] [time]. */}
             <div data-better-sidebar-row1="" className="flex h-7 min-w-0 items-center gap-2">
-              {/* B51.2: leading, on every row. Its resolution is unchanged. */}
-              {showProviderGlyph ? <ProviderGlyph providerId={thread.providerId} /> : null}
+              {/* B51.2: leading, on every row. Its resolution is unchanged.
+                  With the setting off the box stays and only the mark goes, so
+                  every title keeps its x whichever way the setting is set. */}
+              {showProviderGlyph ? (
+                <ProviderGlyph providerId={thread.providerId} />
+              ) : (
+                <span aria-hidden className={PROVIDER_BOX_CLASS} />
+              )}
 
               {renameEditor.isRenaming ? (
                 <input
@@ -299,7 +312,9 @@ function RowBody({
 
             {/* B52.1: a child renders row 1 only — its project and workspace
                 repeat its parent's. Row 2 is indented to the provider column so
-                the two lines share a left edge. */}
+                the two lines share a left edge: 22px is the glyph box
+                (`size-3.5`) plus row 1's `gap-2`. The box is drawn whether or
+                not the mark is, so the indent is unconditional too. */}
             {showSecondRow && row.depth === 0 ? (
               <div className="pb-1 pl-[22px]">
                 <SecondRow
