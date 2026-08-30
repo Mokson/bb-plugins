@@ -1,14 +1,15 @@
 import {
-  createContext,
-  useContext,
   useEffect,
+  useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import { useSettings } from "@get-bb/plugin-sdk/app";
 import { HoverPopover } from "../ui/HoverPopover";
 import { parseSettings } from "../settings";
+import type { RenderRow } from "../model/types";
 import { Dossier } from "./Dossier";
 import { useDossier } from "./useDossier";
 
@@ -18,54 +19,12 @@ const FETCH_DELAY_MS = 200;
 const OPEN_DELAY_MS = 250;
 /** B26: suppression outlasts the release, so a drag never ends in a popover. */
 const RELEASE_DELAY_MS = 300;
-
 /**
- * `isCompactViewport` is a thread-list slot prop and `RowHover`'s signature is
- * fixed at `{threadId, children}`, so the list passes it down through this
- * context. With no provider the hook falls back to the same media query the
- * host describes the prop with, which keeps B32 true either way.
+ * The pointer needs a moment to cross from the row onto the card. Closing on
+ * the row's `pointerleave` alone unmounts the card before it can arrive, which
+ * makes the error branch's Retry control unreachable.
  */
-const CompactViewportContext = createContext<boolean | null>(null);
-
-export function CompactViewportProvider({
-  isCompactViewport,
-  children,
-}: {
-  isCompactViewport: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <CompactViewportContext.Provider value={isCompactViewport}>
-      {children}
-    </CompactViewportContext.Provider>
-  );
-}
-
-/** The host's own words for `isCompactViewport`, as a media query. */
-const COMPACT_QUERY = "(max-width: 768px), (pointer: coarse)";
-
-function matchCompact(): MediaQueryList | null {
-  return typeof window !== "undefined" && typeof window.matchMedia === "function"
-    ? window.matchMedia(COMPACT_QUERY)
-    : null;
-}
-
-function subscribeToCompact(listener: () => void): () => void {
-  const list = matchCompact();
-  if (list === null) return () => {};
-  list.addEventListener("change", listener);
-  return () => list.removeEventListener("change", listener);
-}
-
-function useIsCompactViewport(): boolean {
-  const provided = useContext(CompactViewportContext);
-  const matches = useSyncExternalStore(
-    subscribeToCompact,
-    () => matchCompact()?.matches ?? false,
-    () => false,
-  );
-  return provided ?? matches;
-}
+const CLOSE_GRACE_MS = 150;
 
 /* -------------------------------------------------------------------------- */
 /* B26 pointer suppression — one document-level pair of listeners for the list */
@@ -129,18 +88,35 @@ export function resetHoverSuppression(): void {
 /* -------------------------------------------------------------------------- */
 
 /**
- * B26-B32. The seam slice 3's `ThreadRow` wraps its row content in. Everything
- * about hover intent, pointer suppression, the popover and its placement lives
- * behind this one component, so no other slice's file learns about the dossier.
+ * B26-B32. The seam `ThreadRow` wraps its row content in.
+ *
+ * It takes the whole `RenderRow` rather than a bare id: the row already holds
+ * the resolved title, the branch and the thread, so the dossier reads them
+ * from here instead of re-subscribing to the entire thread list and scanning
+ * it for one entry. `isCompactViewport` arrives the same way — it is a
+ * thread-list slot prop the row already has, so B32 needs neither a context
+ * nor a media query of its own.
+ *
+ * This component owns the row's box (`className` / `style`), because the
+ * hover-intent handlers must sit on the element that also contains the row's
+ * `absolute inset-0` anchor: the content above the anchor is
+ * `pointer-events-none`, so a trigger wrapping the content alone would never
+ * see the pointer.
  */
 export function RowHover({
-  threadId,
+  row,
+  isCompactViewport,
+  className,
+  style,
   children,
 }: {
-  threadId: string;
+  row: RenderRow;
+  isCompactViewport: boolean;
+  className?: string;
+  style?: CSSProperties;
   children: ReactNode;
 }) {
-  const isCompactViewport = useIsCompactViewport();
+  const threadId = row.thread.id;
   const { tooltip } = parseSettings(useSettings().values);
   const enabled = !isCompactViewport && tooltip !== "off";
 
@@ -151,6 +127,26 @@ export function RowHover({
     () => false,
   );
   const [phase, setPhase] = useState<"idle" | "fetching" | "open">("idle");
+
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelClose = () => {
+    if (closeTimer.current !== null) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  };
+  const enter = () => {
+    cancelClose();
+    setHovering(true);
+  };
+  const leave = () => {
+    cancelClose();
+    closeTimer.current = setTimeout(() => {
+      closeTimer.current = null;
+      setHovering(false);
+    }, CLOSE_GRACE_MS);
+  };
+  useEffect(() => cancelClose, []);
 
   useEffect(() => {
     if (!enabled || !hovering || isSuppressed) {
@@ -165,11 +161,20 @@ export function RowHover({
     };
   }, [enabled, hovering, isSuppressed]);
 
-  const state = useDossier(threadId, phase !== "idle");
+  // B50: `minimal` shows the overflow fields the row itself truncated and
+  // performs **no** backend fetch. The gate belongs here rather than inside
+  // the dossier — by the time a payload is discarded the request is spent.
+  const state = useDossier(threadId, tooltip === "rich" && phase !== "idle");
 
   // B32: on a compact viewport the dossier does not render at any hover
   // duration, and no pointer handler — long-press or otherwise — is attached.
-  if (!enabled) return <>{children}</>;
+  if (!enabled) {
+    return (
+      <div className={className} style={style}>
+        {children}
+      </div>
+    );
+  }
 
   return (
     <HoverPopover
@@ -184,18 +189,24 @@ export function RowHover({
       trigger={
         <div
           data-better-sidebar-hover-trigger={threadId}
-          onPointerEnter={() => setHovering(true)}
-          onPointerLeave={() => setHovering(false)}
+          className={className}
+          style={style}
+          onPointerEnter={enter}
+          onPointerLeave={leave}
         >
           {children}
         </div>
       }
     >
-      <Dossier
-        threadId={threadId}
-        state={state}
-        variant={tooltip === "minimal" ? "minimal" : "rich"}
-      />
+      {/* The card is part of the hover surface: without this the pointer can
+          never reach the error branch's Retry button. */}
+      <div onPointerEnter={enter} onPointerLeave={leave}>
+        <Dossier
+          row={row}
+          state={state}
+          variant={tooltip === "minimal" ? "minimal" : "rich"}
+        />
+      </div>
     </HoverPopover>
   );
 }

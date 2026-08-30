@@ -9,6 +9,8 @@ import {
 /** §5: `rowSignals` is the 30s-TTL method. */
 const SIGNALS_TTL_MS = 30_000;
 const ERROR_TTL_MS = 2_000;
+/** How often a stationary viewport re-checks its own signals for staleness. */
+const REFRESH_INTERVAL_MS = SIGNALS_TTL_MS / 2;
 /** The contract caps one request at 60 ids; a larger visible set chunks. */
 const MAX_IDS_PER_REQUEST = 60;
 /**
@@ -33,6 +35,7 @@ const observedIds = new WeakMap<Element, string>();
 let call: Call | null = null;
 let observer: IntersectionObserver | null = null;
 let batchTimer: ReturnType<typeof setTimeout> | null = null;
+let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
 /** Test seam: module state outlives `cleanup()`, so tests must clear it. */
 export function resetRowSignals(): void {
@@ -45,6 +48,27 @@ export function resetRowSignals(): void {
   observer = null;
   if (batchTimer !== null) clearTimeout(batchTimer);
   batchTimer = null;
+  stopRefresh();
+}
+
+/**
+ * The visible set only changes on scroll and the invalidation channel only
+ * fires on a turn boundary, so a list nobody touches had no path back to
+ * `runBatch` at all: every glyph aged past the 30s TTL and never returned.
+ * One interval for the whole list closes that, and it only runs while some
+ * row is actually subscribed.
+ */
+function startRefresh(): void {
+  if (refreshTimer !== null || typeof setInterval !== "function") return;
+  // Half the TTL, so an entry that lapses is picked up within one tick of
+  // going stale rather than up to a full window later. `runBatch` filters on
+  // staleness, so the extra ticks cost one array scan and send nothing.
+  refreshTimer = setInterval(runBatch, REFRESH_INTERVAL_MS);
+}
+
+function stopRefresh(): void {
+  if (refreshTimer !== null) clearInterval(refreshTimer);
+  refreshTimer = null;
 }
 
 function notify(threadId: string): void {
@@ -55,9 +79,11 @@ function subscribe(threadId: string, listener: () => void): () => void {
   const set = listeners.get(threadId) ?? new Set<() => void>();
   set.add(listener);
   listeners.set(threadId, set);
+  startRefresh();
   return () => {
     set.delete(listener);
     if (set.size === 0) listeners.delete(threadId);
+    if (listeners.size === 0) stopRefresh();
   };
 }
 
@@ -118,15 +144,13 @@ function setVisible(threadId: string, isVisible: boolean): void {
   else visible.delete(threadId);
 }
 
-function ensureObserver(): IntersectionObserver {
+function ensureObserver(): IntersectionObserver | null {
   if (observer !== null) return observer;
-  if (typeof IntersectionObserver === "undefined") {
-    // Loud rather than silent: without it every row would report invisible and
-    // the four signals would quietly never render. jsdom needs a mock.
-    throw new Error(
-      "better-sidebar: IntersectionObserver is unavailable; row signals cannot be bounded to the viewport.",
-    );
-  }
+  // This runs inside a React ref callback, so throwing here unmounts the tree
+  // and blanks the whole sidebar — the very outcome `ListStates` exists to
+  // prevent. Degrading to "no signals" costs four decorative glyphs; the rows,
+  // their titles and B44's shortcut targets all survive.
+  if (typeof IntersectionObserver === "undefined") return null;
   observer = new IntersectionObserver((entries) => {
     for (const entry of entries) {
       const threadId = observedIds.get(entry.target);
@@ -176,14 +200,14 @@ export function useRowSignal(threadId: string): {
     (node: Element | null) => {
       const previous = attachedRef.current;
       if (previous !== null) {
-        ensureObserver().unobserve(previous);
+        ensureObserver()?.unobserve(previous);
         observedIds.delete(previous);
         setVisible(threadId, false);
       }
       attachedRef.current = node;
       if (node !== null) {
         observedIds.set(node, threadId);
-        ensureObserver().observe(node);
+        ensureObserver()?.observe(node);
       }
     },
     [threadId],

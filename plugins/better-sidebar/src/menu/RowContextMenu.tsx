@@ -2,7 +2,6 @@ import { useRef, type ReactNode } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
   experimental_useSidebarThreadActions as useSidebarThreadActions,
-  useBbNavigate,
   type PluginSidebarPullRequest,
   type PluginSidebarThread,
 } from "@get-bb/plugin-sdk/app";
@@ -28,19 +27,25 @@ import type { RenameEditor } from "./useRenameEditor";
  */
 export function RowContextMenu({
   thread,
+  title,
   pullRequest,
   onNavigate,
+  onOpenPullRequest,
   renameEditor,
   children,
 }: {
   thread: PluginSidebarThread;
+  /** The model's resolved title — B13's chain, not the raw nullable field. */
+  title: string;
   pullRequest: PluginSidebarPullRequest | null;
   onNavigate: () => void;
+  /** B36's one handler, owned by the row: `openUrl` returns a boolean that a
+   *  second call site would be free to discard, and this one did. */
+  onOpenPullRequest: () => void;
   renameEditor: RenameEditor;
   children: ReactNode;
 }) {
   const actions = useSidebarThreadActions();
-  const navigate = useBbNavigate();
   const portalScope = usePortalScopeProps();
   // Set by the Rename item, drained by `onCloseAutoFocus`. See the comment on
   // `ContextMenu.Content` for why the editor cannot open from `onSelect`.
@@ -77,7 +82,7 @@ export function RowContextMenu({
             if (!renameRequested.current) return;
             renameRequested.current = false;
             event.preventDefault();
-            renameEditor.start(thread.title ?? "");
+            renameEditor.start(title);
           }}
           aria-label="Thread actions"
           className="z-50 min-w-48 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md"
@@ -91,7 +96,7 @@ export function RowContextMenu({
           {pullRequest === null ? null : (
             <Item
               glyph="pull-request"
-              onSelect={() => navigate.openUrl(pullRequest.url)}
+              onSelect={onOpenPullRequest}
             >
               Open pull request
             </Item>

@@ -105,8 +105,23 @@ export function useDossier(threadId: string, enabled: boolean): DossierState {
     if (invalidated === threadId) bumpVersion();
   });
 
+  // The last value this hook actually served, so an entry that ages out while
+  // the popover is still open keeps rendering rather than reverting to a
+  // skeleton it can never leave. Cleared when the thread or the version
+  // changes, because neither value describes the new request.
+  const servedRef = useRef<{ threadId: string; version: number; settled: Settled } | null>(
+    null,
+  );
+
+  // Deliberately unconditional: a settled-and-fresh entry returns early, so
+  // this costs one map lookup per render. Gating it on `[enabled, threadId,
+  // version]` is what made expiry unrecoverable — the TTL runs on the clock,
+  // not on the deps, so nothing ever re-triggered the fetch while the popover
+  // stayed open. `useNow`'s minute tick alone was enough to strand it.
   useEffect(() => {
     if (!enabled) return;
+    const current = cache.get(threadId);
+    if (isFresh(current) && current.result !== null) return;
     let cancelled = false;
     // `ensure` never rejects — every rejection is folded into the entry.
     void ensure(threadId, callRef.current).then(() => {
@@ -115,20 +130,28 @@ export function useDossier(threadId: string, enabled: boolean): DossierState {
     return () => {
       cancelled = true;
     };
-  }, [enabled, threadId, version]);
+  });
 
   const retry = () => {
     cache.delete(threadId);
+    servedRef.current = null;
     bumpVersion();
   };
 
   if (!enabled) return { status: "idle", data: null, error: null, retry };
 
   const entry = cache.get(threadId);
-  const settled = isFresh(entry) ? entry.result : null;
+  const fresh = isFresh(entry) ? entry.result : null;
+  const served = servedRef.current;
+  const settled =
+    fresh ??
+    (served !== null && served.threadId === threadId && served.version === version
+      ? served.settled
+      : null);
   if (settled === null) {
     return { status: "loading", data: null, error: null, retry };
   }
+  if (fresh !== null) servedRef.current = { threadId, version, settled: fresh };
   return settled.status === "ready"
     ? { status: "ready", data: settled.data, error: null, retry }
     : { status: "error", data: null, error: settled.error, retry };

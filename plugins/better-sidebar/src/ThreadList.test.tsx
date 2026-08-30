@@ -9,7 +9,6 @@ import type {
   PluginSidebarThreadsState,
   PluginThreadListProps,
 } from "@get-bb/plugin-sdk/app";
-import type { ReactNode } from "react";
 import "./test-setup";
 
 /**
@@ -20,23 +19,9 @@ import "./test-setup";
  */
 let threadsState: PluginSidebarThreadsState = { status: "ready", threads: [], projects: [] };
 
-/**
- * `CompactViewportProvider` is replaced by a marker so the assertion is about
- * the list mounting it with the host's prop, not about the dossier's internals.
- */
 vi.mock("@get-bb/plugin-sdk/app", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   experimental_useSidebarThreads: () => threadsState,
-}));
-vi.mock("./dossier/RowHover", async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  CompactViewportProvider: ({
-    isCompactViewport,
-    children,
-  }: {
-    isCompactViewport: boolean;
-    children: ReactNode;
-  }) => <div data-compact-provider={String(isCompactViewport)}>{children}</div>,
 }));
 
 installTestPluginRuntime();
@@ -191,6 +176,30 @@ describe("ThreadList — sections and collapse (B7, B10)", () => {
     expect(renderedIds()).toEqual(["new"]);
   });
 
+  /**
+   * B41 (§7): the stale gradient reaches section headers. It was derived from
+   * `rows[0]`, which a collapsed section does not have — so collapsing a
+   * dimmed section snapped its header back to full opacity, and the gradient
+   * broke exactly where the user was looking.
+   */
+  it("keeps a collapsed section header's dim level (B41)", () => {
+    threadsState = ready([
+      thread({ id: "old", latestAttentionAt: BEFORE_MIDNIGHT - 3 * DAY }),
+      thread({ id: "new", latestAttentionAt: BEFORE_MIDNIGHT }),
+    ]);
+    renderList();
+
+    const expanded = screen.getByRole("button", { name: /last 7 days/i });
+    const dim = expanded.className.match(/opacity-\d+/)?.[0];
+    expect(dim).toBeDefined();
+
+    fireEvent.click(expanded);
+    expect(renderedIds()).toEqual(["new"]);
+    expect(
+      screen.getByRole("button", { name: /last 7 days/i }).className,
+    ).toContain(dim);
+  });
+
   it("renders no collapse control for NEEDS YOU or PINNED", () => {
     threadsState = ready([
       thread({ id: "needs", hasPendingInteraction: true }),
@@ -294,7 +303,11 @@ describe("ThreadList — host contract", () => {
     threadsState = ready([thread()]);
     const slot = renderList();
 
-    fireEvent.click(screen.getByText("Ship the sidebar"));
+    // The row's click target is its `absolute inset-0` anchor overlay, which
+    // is also B44's shortcut target; the title above it is transparent to the
+    // pointer, so a real click lands here.
+    const target = document.querySelector("[data-sidebar-thread-shortcut-target]");
+    fireEvent.click(target!);
 
     expect(slot.inspection.sidebarActionCalls).toContainEqual(
       expect.objectContaining({ method: "open", threadId: "t1" }),
@@ -302,10 +315,24 @@ describe("ThreadList — host contract", () => {
     expect(onNavigate).toHaveBeenCalled();
   });
 
-  it("mounts CompactViewportProvider with the host's prop", () => {
+  /**
+   * B32, asserted through what the user sees rather than through a provider
+   * that no longer exists: `isCompactViewport` is a slot prop the list already
+   * holds, so it reaches the dossier as a `RowHover` prop and the hover trigger
+   * — the only thing that could open a dossier — is simply not attached.
+   */
+  it("attaches no hover trigger on a compact viewport (B32)", () => {
     threadsState = ready([thread()]);
     renderList({ isCompactViewport: true });
-    expect(document.querySelector('[data-compact-provider="true"]')).not.toBeNull();
+    expect(document.querySelector("[data-better-sidebar-hover-trigger]")).toBeNull();
+  });
+
+  it("attaches one on a regular viewport (B32)", () => {
+    threadsState = ready([thread()]);
+    renderList({ isCompactViewport: false });
+    expect(
+      document.querySelectorAll("[data-better-sidebar-hover-trigger]"),
+    ).toHaveLength(1);
   });
 });
 

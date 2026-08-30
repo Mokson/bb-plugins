@@ -107,39 +107,64 @@ function RowBody({
   return (
     <RowContextMenu
       thread={thread}
+      title={row.title}
       pullRequest={pullRequest}
       onNavigate={onNavigate}
+      onOpenPullRequest={openPullRequest}
       renameEditor={renameEditor}
     >
-      {/* `RowHover` sits inside the row element rather than around it. Both
-          seams mount a Radix `asChild` trigger, and such a trigger needs a real
-          DOM element to clone: nesting one Radix root inside another's trigger
-          silently drops the outer one's handlers. The row element takes the
-          context menu and the host contract; the hover card takes the content
-          inside it. */}
-      <div
-        role="button"
-        tabIndex={0}
-        // B44: both attributes, on the interactive element, in visual order.
-        // Omitting either silently breaks bb's nine sidebar shortcuts.
-        data-sidebar-thread-shortcut-target=""
-        data-sidebar-thread-id={thread.id}
-        aria-label={row.title}
-        className={cn(
-          "w-full min-w-0 rounded-md px-2 py-1.5 text-left",
-          "hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-        )}
-        style={{ paddingLeft: 8 + row.depth * DEPTH_INDENT_PX }}
-        onClick={openThread}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") openThread();
-        }}
-        // B45: the host owns every rule of the split gesture; the row's only
-        // job is to spread the props onto the same element it made clickable.
-        {...splitProps}
-      >
-        <RowHover threadId={thread.id}>
-          <div className="flex min-w-0 flex-col gap-0.5">
+      {/* Three nested elements, each one load-bearing.
+          - This wrapper is the context menu's `asChild` trigger, and it is
+            also the one real DOM element that has to sit between it and the
+            hover card's trigger: nesting one Radix root directly inside
+            another's trigger silently drops the outer one's handlers.
+          - `RowHover` owns the row's box, because hover intent has to be
+            observed on the element that contains the anchor.
+          - The anchor is `absolute inset-0`, bb's own row pattern
+            (`.bb-refs/bb-sidebar/src/SlimRow.tsx:78-96`). The host's shortcut
+            collector accepts a match **only** when it is an
+            `HTMLAnchorElement`; a `<div role="button">` carrying the same two
+            attributes yields zero targets and all nine numbered / next /
+            previous shortcuts silently do nothing. */}
+      <div data-better-sidebar-row={thread.id}>
+        <RowHover
+          row={row}
+          isCompactViewport={isCompactViewport}
+          className={cn(
+            "relative w-full min-w-0 rounded-md px-2 py-1.5 text-left",
+            "hover:bg-accent/60 focus-within:ring-1 focus-within:ring-ring",
+          )}
+          style={{ paddingLeft: 8 + row.depth * DEPTH_INDENT_PX }}
+        >
+          <a
+            href="#"
+            // B44: both attributes, on the interactive element, in visual
+            // order. Omitting either — or making it anything but an anchor —
+            // silently breaks bb's nine sidebar shortcuts.
+            data-sidebar-thread-shortcut-target=""
+            data-sidebar-thread-id={thread.id}
+            aria-label={row.title}
+            className="absolute inset-0 cursor-pointer rounded-md focus-visible:outline-none"
+            onClick={(event) => {
+              event.preventDefault();
+              openThread();
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openThread();
+              }
+            }}
+            // B45: the host owns every rule of the split gesture; the row's
+            // only job is to spread the props onto the same element it made
+            // clickable.
+            {...splitProps}
+          />
+
+          {/* Above the anchor and transparent to the pointer, so a click
+              anywhere on the row reaches it. The few genuinely interactive
+              children opt back in individually. */}
+          <div className="pointer-events-none relative flex min-w-0 flex-col gap-0.5">
             <div className="flex min-w-0 items-center gap-1">
               {row.childCount === 0 ? null : (
                 <span
@@ -151,7 +176,7 @@ function RowBody({
                       : `Collapse ${row.childCount} child threads`
                   }
                   aria-expanded={!isSubtreeCollapsed}
-                  className="flex shrink-0 items-center gap-0.5 text-2xs tabular-nums text-muted-foreground"
+                  className="pointer-events-auto flex shrink-0 items-center gap-0.5 text-2xs tabular-nums text-muted-foreground"
                   onClick={toggleSubtree}
                   onPointerDown={(event) => event.stopPropagation()}
                 >
@@ -167,7 +192,7 @@ function RowBody({
               {renameEditor.isRenaming ? (
                 <input
                   {...renameEditor.inputProps}
-                  className="min-w-0 flex-1 rounded-sm border border-border bg-background px-1 text-xs"
+                  className="pointer-events-auto min-w-0 flex-1 rounded-sm border border-border bg-background px-1 text-xs"
                   onClick={(event) => event.stopPropagation()}
                   onPointerDown={(event) => event.stopPropagation()}
                 />
@@ -198,7 +223,6 @@ function RowBody({
                 onOpenPullRequest={openPullRequest}
               />
             ) : null}
-
           </div>
         </RowHover>
       </div>

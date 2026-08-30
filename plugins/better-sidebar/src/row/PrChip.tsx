@@ -81,7 +81,10 @@ export function PrChip({
       aria-label={`Pull request #${pullRequest.number}: ${pullRequest.title}`}
       data-better-sidebar-pr={pullRequest.number}
       className={cn(
-        "flex shrink-0 items-center gap-0.5 text-2xs tabular-nums",
+        // The row's content sits above an `absolute inset-0` anchor and is
+        // transparent to the pointer; the chip is one of the few children that
+        // must take its own clicks (B36).
+        "pointer-events-auto flex shrink-0 items-center gap-0.5 text-2xs tabular-nums",
         toneClass(pullRequest),
       )}
       onClick={activate}

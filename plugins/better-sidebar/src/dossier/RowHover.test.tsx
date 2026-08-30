@@ -7,12 +7,11 @@ import {
   type PluginRpcTestHandlers,
 } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk";
+import type { RenderRow } from "../model/types";
 
 installTestPluginRuntime();
 
-const { RowHover, CompactViewportProvider, resetHoverSuppression } = await import(
-  "./RowHover"
-);
+const { RowHover, resetHoverSuppression } = await import("./RowHover");
 const { resetDossierCache } = await import("./useDossier");
 const { resetRowSignals } = await import("./useRowSignals");
 const { betterSidebarRpcContract } = await import("../server-contract");
@@ -85,28 +84,35 @@ function handlers(
   };
 }
 
+/** The list already built these; `RowHover` takes one whole, not an id. */
+function row(id: string): RenderRow {
+  return {
+    thread: thread(id),
+    title: `Thread ${id}`,
+    workspaceLabel: `feat/${id}-a-branch-row-two-truncates`,
+    depth: 0,
+    childCount: 0,
+    projectName: "bb",
+    dimLevel: 0,
+    sectionKey: "today",
+  };
+}
+
 function Harness({
   threadIds,
-  isCompactViewport,
+  isCompactViewport = false,
 }: {
   threadIds: string[];
   isCompactViewport?: boolean;
 }) {
-  const rows = (
+  return (
     <div>
       {threadIds.map((id) => (
-        <RowHover key={id} threadId={id}>
+        <RowHover key={id} row={row(id)} isCompactViewport={isCompactViewport}>
           <span>row {id}</span>
         </RowHover>
       ))}
     </div>
-  );
-  return isCompactViewport === undefined ? (
-    rows
-  ) : (
-    <CompactViewportProvider isCompactViewport={isCompactViewport}>
-      {rows}
-    </CompactViewportProvider>
   );
 }
 
@@ -245,6 +251,86 @@ describe("RowHover request accounting (B27, B28)", () => {
     expect(screen.getByText("claude-opus-5 · high")).not.toBeNull();
     expect(screen.queryByTestId("dossier-skeleton")).toBeNull();
     expect(slot.inspection.rpcCalls).toHaveLength(afterFirst);
+  });
+});
+
+describe("RowHover tooltip: minimal (B50)", () => {
+  /**
+   * B50 says minimal is "the overflow fields only, with **no** backend fetch".
+   * It enabled `useDossier` anyway and spent three SDK reads per hover to
+   * render a card that discards the payload.
+   */
+  it("shows the overflow fields and issues no backend call", async () => {
+    const slot = render(["t1"], { settings: { tooltip: "minimal" } });
+    hover("t1");
+    await advance(1_000);
+
+    // Full title, full branch, absolute time — the three things the row
+    // truncated or abbreviated.
+    expect(screen.getByText("Thread t1")).not.toBeNull();
+    expect(
+      screen.getByText("feat/t1-a-branch-row-two-truncates"),
+    ).not.toBeNull();
+    expect(screen.getAllByText(/UTC$/).length).toBeGreaterThan(0);
+
+    expect(
+      slot.inspection.rpcCalls.filter((c) => c.method === "threadDossier"),
+    ).toHaveLength(0);
+    // And no skeleton: nothing is loading, because nothing was asked for.
+    expect(screen.queryByTestId("dossier-skeleton")).toBeNull();
+  });
+
+  it("carries the full branch in the rich variant too", async () => {
+    render(["t1"]);
+    hover("t1");
+    await advance(300);
+    expect(
+      screen.getByText("feat/t1-a-branch-row-two-truncates"),
+    ).not.toBeNull();
+  });
+});
+
+describe("RowHover error branch reachability (ruling 10)", () => {
+  /**
+   * Leaving the row used to clear hover state immediately, so Radix unmounted
+   * the card before the pointer could cross onto it. An error state whose
+   * Retry cannot be clicked is not an error state.
+   */
+  it("survives the pointer crossing from the row onto the card, so Retry works", async () => {
+    let failing = true;
+    const slot = render(["t1"], {
+      rpc: {
+        threadDossier: ({ threadId }) => {
+          if (failing) throw new Error("backend unavailable");
+          return dossier(threadId);
+        },
+      },
+    });
+
+    const trigger = hover("t1");
+    await advance(300);
+    expect(screen.getByRole("alert").textContent).toBe("backend unavailable");
+
+    // The pointer leaves the row on its way to the button.
+    unhover(trigger);
+    await advance(50);
+    const retry = screen.getByText("Retry");
+    fireEvent.pointerOver(retry);
+    await advance(1_000);
+
+    // Still mounted well past the grace window, because the pointer is on it.
+    expect(screen.getByText("Retry")).not.toBeNull();
+
+    failing = false;
+    await act(async () => {
+      fireEvent.click(retry);
+    });
+    await advance(10);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("claude-opus-5 · high")).not.toBeNull();
+    expect(
+      slot.inspection.rpcCalls.filter((c) => c.method === "threadDossier").length,
+    ).toBeGreaterThan(1);
   });
 });
 

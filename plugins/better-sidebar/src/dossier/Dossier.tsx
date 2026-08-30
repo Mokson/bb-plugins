@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import { experimental_useSidebarThreads } from "@get-bb/plugin-sdk/app";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk";
+import type { RenderRow } from "../model/types";
 import type { Dossier as DossierPayload } from "../server-contract";
 import type { DossierState } from "./useDossier";
 import { useSignalValue } from "./useRowSignals";
@@ -10,19 +10,23 @@ import { useSignalValue } from "./useRowSignals";
  * omitted when its field is null (B31), and no section anywhere renders a
  * monetary figure (B30) — bb exposes no per-thread cost and this plugin never
  * estimates one.
+ *
+ * The identity fields come from the `RenderRow` the row already holds — the
+ * title is the model's resolved one and the branch its untruncated label — so
+ * this file neither subscribes to the thread list nor re-derives either.
  */
 export function Dossier({
-  threadId,
+  row,
   state,
   variant = "rich",
 }: {
-  threadId: string;
+  row: RenderRow;
   state: DossierState;
-  /** B48's `tooltip` setting: `minimal` keeps identity, drops the numbers. */
+  /** B50's `tooltip` setting: `minimal` is the overflow fields, no backend. */
   variant?: "rich" | "minimal";
 }) {
-  const threads = experimental_useSidebarThreads();
-  const thread = threads.threads.find((candidate) => candidate.id === threadId) ?? null;
+  const { thread } = row;
+  const threadId = thread.id;
   const signal = useSignalValue(threadId);
   const data = state.status === "ready" ? state.data : null;
 
@@ -31,7 +35,13 @@ export function Dossier({
       className="flex w-72 flex-col gap-2 text-xs"
       data-better-sidebar-dossier={threadId}
     >
-      {thread !== null ? <Identity thread={thread} /> : null}
+      <Identity thread={thread} title={row.title} />
+
+      {/* B50: row 2 truncates the branch, so the full one is the single most
+          useful field the overflow card can carry — in both variants. */}
+      {row.workspaceLabel === null ? null : (
+        <Field label="Branch">{row.workspaceLabel}</Field>
+      )}
 
       {/* B29 (§7 ruling): model and effort are omitted together when the
           thread has never resolved execution options. */}
@@ -49,12 +59,10 @@ export function Dossier({
         </Section>
       ) : null}
 
-      {thread !== null ? (
-        <Section title="Timestamps">
-          <Field label="Created">{absolute(thread.createdAt)}</Field>
-          <Field label="Updated">{absolute(thread.updatedAt)}</Field>
-        </Section>
-      ) : null}
+      <Section title="Timestamps">
+        <Field label="Created">{absolute(thread.createdAt)}</Field>
+        <Field label="Updated">{absolute(thread.updatedAt)}</Field>
+      </Section>
 
       {variant === "rich" && data?.contextWindow ? (
         <ContextWindow window={data.contextWindow} />
@@ -98,11 +106,18 @@ export function Dossier({
   );
 }
 
-function Identity({ thread }: { thread: PluginSidebarThread }) {
+function Identity({
+  thread,
+  title,
+}: {
+  thread: PluginSidebarThread;
+  title: string;
+}) {
   const activity = Object.entries(thread.activity).filter(([, value]) => value > 0);
   return (
     <div className="flex flex-col gap-1">
-      <div className="text-sm font-medium">{title(thread)}</div>
+      {/* B50: the full title, which row 1 truncated. */}
+      <div className="text-sm font-medium">{title}</div>
       <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
         <span data-dossier-indicator={thread.indicator}>
           {thread.indicatorLabel ?? thread.indicator}
@@ -162,11 +177,6 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       <span>{children}</span>
     </div>
   );
-}
-
-function title(thread: PluginSidebarThread): string {
-  const resolved = thread.title?.trim() || thread.titleFallback?.trim();
-  return resolved && resolved.length > 0 ? resolved : "Untitled";
 }
 
 const ACTIVITY_LABELS: Record<string, string> = {

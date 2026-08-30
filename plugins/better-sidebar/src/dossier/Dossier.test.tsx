@@ -7,6 +7,7 @@ import {
   type PluginRpcTestHandlers,
 } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk";
+import type { RenderRow } from "../model/types";
 
 installTestPluginRuntime();
 
@@ -82,13 +83,28 @@ function thread(): PluginSidebarThread {
   };
 }
 
-function Harness() {
-  const state = useDossier(THREAD_ID, true);
-  return <Dossier threadId={THREAD_ID} state={state} />;
+/** The row the list already built; the dossier reads its identity from here. */
+function row(overrides: Partial<RenderRow> = {}): RenderRow {
+  return {
+    thread: thread(),
+    title: "Rework the sidebar",
+    workspaceLabel: "feat/a-very-long-branch-name-row-two-truncates",
+    depth: 0,
+    childCount: 0,
+    projectName: "bb",
+    dimLevel: 0,
+    sectionKey: "today",
+    ...overrides,
+  };
+}
+
+function Harness({ variant }: { variant?: "rich" | "minimal" }) {
+  const state = useDossier(THREAD_ID, variant !== "minimal");
+  return <Dossier row={row()} state={state} variant={variant} />;
 }
 
 function render(rpc: Partial<PluginRpcTestHandlers<Contract>> = {}) {
-  return renderSlot<Record<string, never>, Contract>({ component: Harness }, {}, {
+  return renderSlot<{ variant?: "rich" | "minimal" }, Contract>({ component: Harness }, {}, {
     rpc: {
       threadDossier: () => full(),
       rowSignals: () => ({ signals: [] }),
@@ -108,7 +124,7 @@ function SignalsHarness() {
   return (
     <>
       <RowSignals threadId={THREAD_ID} />
-      <Dossier threadId={THREAD_ID} state={state} />
+      <Dossier row={row()} state={state} />
     </>
   );
 }
@@ -257,6 +273,29 @@ describe("Dossier error branch (ruling 10)", () => {
     expect(screen.getAllByRole("alert")).toHaveLength(1);
     expect(screen.getByText("Retry")).not.toBeNull();
     expect(screen.queryByTestId("dossier-skeleton")).toBeNull();
+  });
+});
+
+describe("Row signals refresh (B37-B40)", () => {
+  /**
+   * `runBatch` was reachable only from an IntersectionObserver callback or the
+   * invalidation channel, so a viewport nobody scrolled and a thread nobody
+   * touched had no path back to it at all: every glyph aged past the 30s TTL
+   * and never returned.
+   */
+  it("refreshes a stationary viewport's signals once the TTL lapses", async () => {
+    const slot = renderWithSignals();
+    await settle();
+    const calls = () =>
+      slot.inspection.rpcCalls.filter((c) => c.method === "rowSignals").length;
+    expect(calls()).toBe(1);
+
+    // Nothing scrolls, nothing publishes. Only the clock moves.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(46_000);
+    });
+    await settle();
+    expect(calls()).toBe(2);
   });
 });
 

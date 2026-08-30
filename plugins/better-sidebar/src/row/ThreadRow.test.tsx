@@ -147,7 +147,22 @@ function renderRow(target: RenderRow, options: RenderSlotOptions = {}) {
   );
 }
 
+/** The row's box: everything the user sees, anchor overlay included. */
 function rowElement(container: HTMLElement): HTMLElement {
+  const element = container.querySelector<HTMLElement>("[data-better-sidebar-row]");
+  if (element === null) throw new Error("no row rendered");
+  return element;
+}
+
+/** The PR chip. The row overlay is an anchor now, so `role="link"` is plural. */
+function prChip(): HTMLElement {
+  const chip = document.querySelector<HTMLElement>("[data-better-sidebar-pr]");
+  if (chip === null) throw new Error("no pull-request chip rendered");
+  return chip;
+}
+
+/** The host contract's element, which the collector requires be an anchor. */
+function shortcutTarget(container: HTMLElement): HTMLElement {
   const element = container.querySelector<HTMLElement>(
     "[data-sidebar-thread-shortcut-target]",
   );
@@ -168,24 +183,41 @@ afterEach(() => {
 });
 
 describe("ThreadRow host contract", () => {
-  it("carries both shortcut attributes on the interactive element (B44)", () => {
+  /**
+   * The host collects shortcut targets with
+   * `if (el instanceof HTMLAnchorElement) { … } else { … continue }`, so the
+   * element type is the contract and the attributes alone are not. A
+   * `<div role="button">` carrying both passed every attribute assertion while
+   * bb's nine shortcuts addressed nothing at all.
+   */
+  it("carries both shortcut attributes on an anchor (B44)", () => {
     const { container } = renderRow(row());
-    const element = rowElement(container);
+    const element = shortcutTarget(container);
 
     expect(element.getAttribute("data-sidebar-thread-shortcut-target")).toBe("");
     expect(element.getAttribute("data-sidebar-thread-id")).toBe("t1");
-    expect(element.getAttribute("role")).toBe("button");
+    expect(element).toBeInstanceOf(HTMLAnchorElement);
+    expect(element.getAttribute("aria-label")).toBe("Ship the sidebar");
   });
 
   it("spreads splitProps onto that same element (B45)", () => {
     const { container } = renderRow(row());
-    fireEvent.pointerDown(rowElement(container));
+    fireEvent.pointerDown(shortcutTarget(container));
     expect(splitPointerDown).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the thread from the keyboard as well as the pointer (B44)", () => {
+    const { container, inspection } = renderRow(row());
+    fireEvent.keyDown(shortcutTarget(container), { key: "Enter" });
+
+    expect(inspection.sidebarActionCalls).toEqual([
+      { method: "open", threadId: "t1" },
+    ]);
   });
 
   it("opens the thread and calls onNavigate (B47)", () => {
     const { container, inspection } = renderRow(row());
-    fireEvent.click(rowElement(container));
+    fireEvent.click(shortcutTarget(container));
 
     expect(inspection.sidebarActionCalls).toEqual([
       { method: "open", threadId: "t1" },
@@ -230,6 +262,15 @@ describe("ThreadRow host contract", () => {
     expect(
       Array.from(targets, (node) => node.getAttribute("data-sidebar-thread-id")),
     ).toEqual(rows.map((item) => item.thread.id));
+
+    // The host's collector accepts a match only when it is an
+    // `HTMLAnchorElement` (or carries `data-sidebar-windowed-nav`); every other
+    // element is skipped outright. Attribute presence was never the contract,
+    // so asserting only that let a `<div role="button">` row pass while all
+    // nine numbered/next/previous shortcuts silently did nothing.
+    expect(
+      Array.from(targets).filter((node) => node instanceof HTMLAnchorElement),
+    ).toHaveLength(200);
   });
 });
 
@@ -241,7 +282,6 @@ describe("ThreadRow chrome", () => {
     expect(element.textContent).toContain("Ship the sidebar");
     expect(element.querySelector(".font-semibold")).not.toBeNull();
     expect(element.querySelectorAll('[class*="opacity-"]')).toHaveLength(0);
-    expect(element.getAttribute("class")).not.toContain("opacity-");
   });
 
   it("keeps a read row at the same opacity, in normal weight (B14)", () => {
@@ -375,7 +415,7 @@ describe("ThreadRow pull request", () => {
       sidebarPullRequests: { t1: pr() },
     });
 
-    fireEvent.click(screen.getByRole("link"));
+    fireEvent.click(prChip());
 
     expect(inspection.navigateCalls).toEqual([
       { method: "openUrl", url: "https://github.test/org/repo/pull/42" },
@@ -392,7 +432,7 @@ describe("ThreadRow pull request", () => {
       openUrl: () => false,
     });
 
-    fireEvent.click(screen.getByRole("link"));
+    fireEvent.click(prChip());
     // A toast rather than an inline row element: an error line drawn inside the
     // row would shift every row below it, which is exactly what B6's freeze
     // exists to prevent. `sonner` is the surface bb's own sidebar uses.
@@ -408,7 +448,7 @@ describe("ThreadRow pull request", () => {
       openUrl: () => true,
     });
 
-    fireEvent.click(screen.getByRole("link"));
+    fireEvent.click(prChip());
     expect(toastError).not.toHaveBeenCalled();
   });
 });

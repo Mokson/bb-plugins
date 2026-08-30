@@ -88,8 +88,10 @@ function open(
     { component: RowContextMenu },
     {
       thread: thread(),
+      title: "Right click me",
       pullRequest: null,
       onNavigate: vi.fn(),
+      onOpenPullRequest: vi.fn(),
       renameEditor: renameEditor(),
       children: <div>Right click me</div>,
       ...props,
@@ -221,9 +223,34 @@ describe("RowContextMenu", () => {
     expect(rendered.inspection.sidebarActionCalls).toEqual([]);
   });
 
-  it("shows the pull-request item only when a pull request is passed", () => {
-    const openUrl = vi.fn(() => true);
-    open({ pullRequest }, { openUrl });
+  /**
+   * The editor used to seed from the raw `thread.title`, which is null for a
+   * thread rendering its `titleFallback` — so the row showed a name and the
+   * rename box opened empty. B13's chain is resolved once, by the model, and
+   * the row passes that down.
+   */
+  it("seeds the editor from the resolved title, not the raw thread.title", async () => {
+    const start = vi.fn();
+    open({
+      thread: thread({ title: null, titleFallback: "Fallback name" }),
+      title: "Fallback name",
+      renameEditor: renameEditor(start),
+    });
+    click("Rename");
+
+    await waitFor(() => expect(start).toHaveBeenCalledWith("Fallback name"));
+  });
+
+  /**
+   * B36 has exactly one handler, and the row owns it. The menu used to call
+   * `openUrl` itself and discard the boolean it returns, so a host that
+   * declined the open failed silently here while the chip toasted — one host
+   * contract implemented twice, divergently. Asserting the delegation rather
+   * than the call is what keeps the second implementation from coming back.
+   */
+  it("shows the pull-request item only when a pull request is passed, and delegates the open", () => {
+    const onOpenPullRequest = vi.fn();
+    const rendered = open({ pullRequest, onOpenPullRequest });
     expect(
       within(menu())
         .getAllByRole("menuitem")
@@ -231,6 +258,8 @@ describe("RowContextMenu", () => {
     ).toContain("Open pull request");
 
     click("Open pull request");
-    expect(openUrl).toHaveBeenCalledWith("https://example.test/pr/7");
+    expect(onOpenPullRequest).toHaveBeenCalledTimes(1);
+    // The menu never reaches the host directly; the row's handler does.
+    expect(rendered.inspection.navigateCalls).toHaveLength(0);
   });
 });

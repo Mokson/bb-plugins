@@ -160,7 +160,7 @@ describe("useDossier cache (B27, B28)", () => {
     expect(slot.inspection.rpcCalls).toHaveLength(1);
   });
 
-  it("refetches once the TTL has expired", async () => {
+  it("refetches once the TTL has expired and the popover re-opens", async () => {
     const slot = render({ threadId: "t1", enabled: true });
     await settle();
 
@@ -170,6 +170,34 @@ describe("useDossier cache (B27, B28)", () => {
     });
     slot.lifecycle.rerender(<Harness threadId="t1" enabled={true} />);
     await settle();
+    expect(slot.inspection.rpcCalls).toHaveLength(2);
+  });
+
+  /**
+   * The motivating scenario, which the disable-then-advance ordering above is
+   * the one arrangement that hides. A dossier that ages past its TTL **while
+   * the popover is still open** used to re-evaluate to `loading` on the next
+   * re-render — `useNow`'s minute tick is enough — and nothing re-triggered
+   * the fetch, because the effect's deps had not changed. The card was stuck
+   * on a skeleton it could never leave.
+   */
+  it("keeps serving its settled value past the TTL while the popover stays open, and refetches", async () => {
+    const slot = render({ threadId: "t1", enabled: true });
+    await settle();
+    expect(status()).toBe("ready");
+    expect(slot.inspection.rpcCalls).toHaveLength(1);
+
+    // Only the clock moves. `enabled` never goes false: the pointer has not
+    // left the row.
+    await act(async () => {
+      vi.advanceTimersByTime(11_000);
+    });
+    slot.lifecycle.rerender(<Harness threadId="t1" enabled={true} />);
+    expect(status()).toBe("ready");
+    expect(screen.getByTestId("model").textContent).toBe("claude-opus-5");
+
+    await settle();
+    expect(status()).toBe("ready");
     expect(slot.inspection.rpcCalls).toHaveLength(2);
   });
 

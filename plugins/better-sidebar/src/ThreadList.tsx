@@ -7,9 +7,9 @@ import {
 import { cn } from "./lib/utils";
 import { parseSettings } from "./settings";
 import { buildListModel } from "./model/list-model";
+import { dimLevelFor } from "./model/buckets";
 import type { GroupBy, RenderSection, SecondRowMode } from "./model/types";
 import { ThreadRow } from "./row/ThreadRow";
-import { CompactViewportProvider } from "./dossier/RowHover";
 import { Glyph } from "./ui/Glyph";
 import { ListEmpty, ListError, ListLoading, ListNoMatches } from "./ui/ListStates";
 import { useCollapse } from "./useCollapse";
@@ -114,44 +114,39 @@ function ThreadListBody({
   headersRef.current = [];
 
   return (
-    // The dossier reads `isCompactViewport` from this provider: `RowHover`'s
-    // signature is fixed at `{threadId, children}`, so without it B32 would be
-    // decided by the hook's own media query rather than by the host's prop.
-    <CompactViewportProvider isCompactViewport={isCompactViewport}>
-      <div
-        data-better-sidebar-list=""
-        className="flex h-full flex-col overflow-y-auto py-1"
-        onPointerEnter={freeze.onPointerEnter}
-        onPointerLeave={freeze.onPointerLeave}
-        onKeyDown={onKeyDown}
-      >
-        {model.sections.map((section, index) => (
-          <section key={section.key} data-sidebar-section={section.key}>
-            <SectionHeader
-              section={section}
-              onToggle={() => collapse.toggleSection(section.key)}
-              ref={(node) => {
-                headersRef.current[index] = node;
-              }}
+    <div
+      data-better-sidebar-list=""
+      className="flex h-full flex-col overflow-y-auto py-1"
+      onPointerEnter={freeze.onPointerEnter}
+      onPointerLeave={freeze.onPointerLeave}
+      onKeyDown={onKeyDown}
+    >
+      {model.sections.map((section, index) => (
+        <section key={section.key} data-sidebar-section={section.key}>
+          <SectionHeader
+            section={section}
+            onToggle={() => collapse.toggleSection(section.key)}
+            ref={(node) => {
+              headersRef.current[index] = node;
+            }}
+          />
+          {section.rows.map((row) => (
+            <ThreadRow
+              key={row.thread.id}
+              row={row}
+              now={now}
+              showSecondRow={showSecondRow}
+              isCompactViewport={isCompactViewport}
+              onNavigate={handleNavigate}
+              isSubtreeCollapsed={collapse.collapsedThreadIds.has(row.thread.id)}
+              onToggleSubtree={
+                row.childCount > 0 ? () => collapse.toggleThread(row.thread.id) : undefined
+              }
             />
-            {section.rows.map((row) => (
-              <ThreadRow
-                key={row.thread.id}
-                row={row}
-                now={now}
-                showSecondRow={showSecondRow}
-                isCompactViewport={isCompactViewport}
-                onNavigate={handleNavigate}
-                isSubtreeCollapsed={collapse.collapsedThreadIds.has(row.thread.id)}
-                onToggleSubtree={
-                  row.childCount > 0 ? () => collapse.toggleThread(row.thread.id) : undefined
-                }
-              />
-            ))}
-          </section>
-        ))}
-      </div>
-    </CompactViewportProvider>
+          ))}
+        </section>
+      ))}
+    </div>
   );
 }
 
@@ -216,8 +211,13 @@ function SectionHeader({
   );
 }
 
-/** B41: the gradient reaches section headers, never a row-1 title. */
+/**
+ * B41: the gradient reaches section headers, never a row-1 title.
+ *
+ * Derived from the section key, not from `rows[0]` — a collapsed section has
+ * no rows at all, so reading the first one made every collapsed header render
+ * fully opaque and broke the gradient exactly where it is most visible.
+ */
 function dimClassFor(section: RenderSection): string {
-  const dimLevel = section.rows[0]?.dimLevel ?? 0;
-  return ["", "opacity-90", "opacity-80", "opacity-70"][dimLevel] ?? "";
+  return ["", "opacity-90", "opacity-80", "opacity-70"][dimLevelFor(section.key)] ?? "";
 }
