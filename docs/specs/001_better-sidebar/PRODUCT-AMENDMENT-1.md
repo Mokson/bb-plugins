@@ -122,6 +122,54 @@ Row 1 becomes:
 > the screenshots show that indent working. If the intent was a fully flat list with no
 > nesting indent either, say so; it is a one-line change.
 
+## B66 — the status glyph is coloured, and the spinner spins
+
+**Supersedes B22.** B22 said colour is used *only* for Needs-you and error, and that
+working is distinguished by motion rather than hue — chosen in round 7 when the brief
+was "minimalistic, not a large badge or coloured row". The user has since seen it
+running and asked for colour. That constraint is relaxed deliberately; the *other* half
+of B22 stands, and this is not a licence for coloured row backgrounds or filled badges.
+
+### Palette
+
+bb's own sidebar (`.bb-refs/bb-sidebar/src/StatusSlot.tsx:96-118`) already has a status
+palette, and using different colours from it would mean a hue says one thing here and
+another in bb's own list — the exact trap B22 was written to avoid. So the palette is
+bb's, with one addition: bb groups working and planning both as sky, while our
+five-state vocabulary keeps them distinct, so planning takes violet.
+
+| State | Indicators | Colour |
+| --- | --- | --- |
+| Needs you | `waiting-for-input` | `text-indigo-600 dark:text-indigo-300` |
+| Error | `unread-error` | `text-red-700 dark:text-red-300` |
+| Working | `runtime`, `workflow`, `background-agent`, `background-command` | `text-sky-600 dark:text-sky-400` |
+| Planning | `plan-mode`, `goal` | `text-violet-600 dark:text-violet-400` |
+| Draft | `draft`, `working-draft` | `text-amber-700 dark:text-amber-300` |
+| Unread | `unread-success` | `text-emerald-700 dark:text-emerald-300` |
+| Idle | `none` | nothing drawn |
+
+- **B66.1** (auto) Every pair is a light/dark pair. A single hue that only works in one
+  theme is a defect — the user runs dark on desktop and the phone may differ.
+- **B66.2** (auto) B20 is unchanged and still load-bearing: an indicator outside the
+  set draws **nothing** and throws nothing.
+- **B66.3** (auto) B14 is unchanged: colour lives on the glyph only. **No coloured row
+  background, no filled badge, no tinted title.** Unread is still font weight alone.
+
+### Animation
+
+- **B66.4** (auto) `runtime` renders the spinner glyph with **`animate-spin`**. It
+  currently uses `animate-pulse`, so the spinner fades in and out instead of turning —
+  a spinner that does not spin reads as a rendering bug, which is what it is.
+- **B66.5** (auto) `workflow`, `background-agent` and `background-command` keep a
+  gentle `animate-pulse`. They are active but not a single determinate operation, so
+  they should read as alive without competing with the spinner for attention.
+- **B66.6** (auto) `plan-mode`, `goal`, `draft`, `working-draft` and `unread-success`
+  carry **no animation**. Motion means "something is happening right now"; a draft is
+  not happening.
+- **B66.7** (auto) No new keyframes. `animate-spin` and `animate-pulse` are stock
+  Tailwind; bb's shine sweep was considered and rejected because it needs a keyframe
+  this plugin would have to add.
+
 ## B63 — the PR chip is coloured by state, with breakage overriding
 
 **Supersedes B34.** B34 tinted the chip by `attention` — bb's rolled-up "does this
