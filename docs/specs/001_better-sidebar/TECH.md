@@ -303,12 +303,25 @@ impossible by construction.
 
 Given `frozen` and the freshly built sections:
 
-1. Sections render in `frozen.sectionOrder`. A section that had rows at freeze time
-   keeps its position even if it is now empty of frozen rows; a section that did not
-   exist at freeze time is appended after the last frozen section.
-2. Every id in `frozen.ids` that still exists is forced into
-   `frozen.sectionOf[id]` at index `frozen.ids.indexOf(id)`. Its live section and live
-   sort position are ignored.
+**Corrected after the code review — the original points 1 and 2 WERE the defect.**
+They had the overlay rebuild section and tree structure out of a row-only snapshot,
+which shipped two bugs: expanding a collapsed subtree appended its children to the end
+of the whole list (absent from `frozen.ids`, so they read as newcomers), and a
+collapsed section vanished (its snapshot held no row ids, so nothing rebuilt it). One
+error class, two instances. The fix removes the class: **structure comes from the live
+model, order comes from the snapshot, and the two never swap roles.**
+
+1. **Every structural fact comes from the LIVE model**: which sections exist, their
+   labels, counts, collapsibility and collapse state, and the parent/child nesting
+   inside each root subtree. A collapsed section stays present with its header and its
+   count. Expanding a subtree reveals its children in place beneath their parent,
+   because nesting was never the snapshot's to decide.
+2. **The snapshot contributes ORDER only**: the rank of each root subtree in the
+   global sequence, the relative order of sections, and the section an
+   already-rendered root sits in — that last one pinned **only while the live model
+   still renders that section**, otherwise the row follows live. A root subtree moves
+   as one unit and its descendants are never ranked independently, which is what makes
+   expand and collapse free of ordering effects.
 3. An id in `frozen.ids` that no longer exists (deleted, archived, filtered out) is
    simply omitted. Surviving rows close the gap; they do not re-sort.
 4. **A thread not in the snapshot renders immediately, appended to the end of the
