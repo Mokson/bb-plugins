@@ -1,18 +1,21 @@
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
-
-function BetterSidebarPlaceholder() {
-  return (
-    <div className="flex h-full items-center justify-center text-muted-foreground">
-      Better Sidebar — scaffold
-    </div>
-  );
-}
+import { ThreadList } from "./src/ThreadList";
+import { ChildThreadsChip } from "./src/header/ChildThreadsChip";
 
 export default definePluginApp((app) => {
   app.slots.experimental_threadList({
     id: "better-sidebar",
     title: "Better Sidebar",
-    description: "A replacement sidebar thread list.",
-    component: BetterSidebarPlaceholder,
+    description:
+      "Threads grouped by activity date, with provider logos, minimal status glyphs and a hover dossier.",
+    component: ThreadList,
+  });
+
+  // B58.1. The header's own home for a thread's children, reachable when the
+  // sidebar is collapsed or the phone drawer is closed.
+  app.slots.experimental_threadHeaderAction({
+    id: "children",
+    title: "Child threads",
+    component: ChildThreadsChip,
   });
 });

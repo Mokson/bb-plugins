@@ -1,0 +1,144 @@
+import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
+import { NO_HOST_KEY, type DateBucketKey, type SectionKey, type StatusGroupKey } from "./types";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** B41: the dimmest level any bucket may reach, so `OLDER` stays legible. */
+export const DIM_FLOOR = 3 as const;
+
+/** Start of the local calendar day containing `at`, as epoch ms. */
+export function startOfLocalDay(at: number): number {
+  const d = new Date(at);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/**
+ * B2. `today` and `yesterday` are local calendar days; the wider buckets are
+ * rolling windows measured from `now`.
+ */
+export function bucketOf(latestAttentionAt: number, now: number): DateBucketKey {
+  const todayStart = startOfLocalDay(now);
+  if (latestAttentionAt >= todayStart) return "today";
+  const yesterdayStart = startOfLocalDay(todayStart - 1);
+  if (latestAttentionAt >= yesterdayStart) return "yesterday";
+  const age = now - latestAttentionAt;
+  if (age <= 7 * DAY_MS) return "last-7";
+  if (age <= 30 * DAY_MS) return "last-30";
+  return "older";
+}
+
+const DIM_BY_BUCKET: Record<DateBucketKey, 0 | 1 | 2 | 3> = {
+  today: 0,
+  yesterday: 1,
+  "last-7": 2,
+  "last-30": 3,
+  older: DIM_FLOOR,
+};
+
+/**
+ * B41 under the §7 B41-vs-B14 ruling: `needs-you`, `pinned`, `today` and the
+ * search list are never dimmed; date buckets step down to `DIM_FLOOR`.
+ */
+export function dimLevelFor(section: SectionKey): 0 | 1 | 2 | 3 {
+  return Object.hasOwn(DIM_BY_BUCKET, section)
+    ? DIM_BY_BUCKET[section as DateBucketKey]
+    : 0;
+}
+
+const STATIC_LABELS: Record<string, string> = {
+  "needs-you": "NEEDS YOU",
+  done: "DONE",
+  pinned: "PINNED",
+  // B65.4: the same five words the row's glyph legend uses, plus the `unread`
+  // state B67.7 folds the DONE band into.
+  "status:needs-you": "NEEDS YOU",
+  "status:unread": "UNREAD",
+  "status:working": "WORKING",
+  "status:planning": "PLANNING",
+  "status:draft": "DRAFT",
+  "status:idle": "IDLE",
+  [NO_HOST_KEY]: "NO MACHINE",
+  today: "TODAY",
+  yesterday: "YESTERDAY",
+  "last-7": "LAST 7 DAYS",
+  "last-30": "LAST 30 DAYS",
+  older: "OLDER",
+  all: "THREADS",
+  search: "RESULTS",
+};
+
+/**
+ * `dynamicLabels` resolves the `project:<id>` and `host:<id>` sections, keyed by
+ * the WHOLE section key so a project id and a host id can never collide.
+ * An unresolved key falls back to its own id.
+ */
+export function labelFor(
+  section: SectionKey,
+  dynamicLabels: ReadonlyMap<SectionKey, string>,
+): string {
+  const staticLabel = STATIC_LABELS[section];
+  if (staticLabel !== undefined) return staticLabel;
+  const resolved = dynamicLabels.get(section);
+  if (resolved !== undefined) return resolved.toUpperCase();
+  return section.slice(section.indexOf(":") + 1).toUpperCase();
+}
+
+/**
+ * B7: `NEEDS YOU` and `PINNED` are not collapsible; every other section is,
+ * including the B67.6 `DONE` band and the B65 host and status groups.
+ */
+export function isCollapsibleSection(section: SectionKey): boolean {
+  return section !== "needs-you" && section !== "pinned" && section !== "search";
+}
+
+/** B65.5/B67.7: the status groups, in the order they render. */
+export const STATUS_GROUP_ORDER: readonly StatusGroupKey[] = [
+  "needs-you",
+  "unread",
+  "working",
+  "planning",
+  "draft",
+  "idle",
+];
+
+/**
+ * B65.4. The row's own five-state vocabulary, read off the same `indicator`
+ * values `StatusGlyph` reads, so a user who learned the glyphs reads the same
+ * words here. `hasPendingInteraction` is the B1 needs-you signal and outranks
+ * the indicator, exactly as it does in the band.
+ */
+export function statusGroupOf(thread: PluginSidebarThread): StatusGroupKey {
+  if (thread.hasPendingInteraction) return "needs-you";
+  switch (thread.indicator) {
+    case "waiting-for-input":
+      return "needs-you";
+    case "unread-success":
+    case "unread-error":
+      return "unread";
+    case "runtime":
+    case "workflow":
+    case "background-agent":
+    case "background-command":
+      return "working";
+    case "plan-mode":
+    case "goal":
+      return "planning";
+    case "draft":
+    case "working-draft":
+      return "draft";
+    // B20: `none` and any future indicator kind read as idle rather than
+    // throwing or vanishing.
+    default:
+      return "idle";
+  }
+}
+
+/** Section render order within a group-by mode, ignoring emptiness. */
+export const DATE_BUCKET_ORDER: readonly DateBucketKey[] = [
+  "today",
+  "yesterday",
+  "last-7",
+  "last-30",
+  "older",
+];

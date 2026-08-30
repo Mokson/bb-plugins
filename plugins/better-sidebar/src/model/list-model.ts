@@ -1,0 +1,416 @@
+import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
+import {
+  DATE_BUCKET_ORDER,
+  STATUS_GROUP_ORDER,
+  bucketOf,
+  dimLevelFor,
+  isCollapsibleSection,
+  labelFor,
+  statusGroupOf,
+} from "./buckets";
+import { rankSearch, type SearchCandidate } from "./search";
+import {
+  NO_HOST_KEY,
+  type BetterSidebarSettings,
+  type ListModel,
+  type ListModelInput,
+  type RenderRow,
+  type RenderSection,
+  type SectionKey,
+  type SectionOrder,
+} from "./types";
+
+/**
+ * B13: `title ?? titleFallback ?? "Untitled"`. The chain is **nullish**, not
+ * truthy: a thread that carries a title only ever shows that title, so a
+ * whitespace-only `"   "` renders as `"Untitled"` rather than borrowing the
+ * fallback of a thread the host already considers named.
+ */
+export function resolveTitle(thread: PluginSidebarThread): string {
+  const chosen = thread.title ?? thread.titleFallback ?? "";
+  const trimmed = chosen.trim();
+  return trimmed === "" ? "Untitled" : trimmed;
+}
+
+const WORKTREE_KINDS = new Set(["managed-worktree", "unmanaged-worktree"]);
+
+/**
+ * B16 as re-worded in §7: `environment.branchName` → `environment.name` when the
+ * workspace is a worktree → `host.name` → null, and the whole chain is skipped
+ * when `environment` is null.
+ */
+export function resolveWorkspaceLabel(thread: PluginSidebarThread): string | null {
+  const environment = thread.environment;
+  if (!environment) return null;
+  const branch = environment.branchName?.trim();
+  if (branch) return branch;
+  if (WORKTREE_KINDS.has(environment.workspaceDisplayKind)) {
+    const name = environment.name?.trim();
+    if (name) return name;
+  }
+  const host = thread.host?.name.trim();
+  return host ? host : null;
+}
+
+/** Descending `latestAttentionAt`, `id` breaking ties so the order is total (B5). */
+function byAttention(a: PluginSidebarThread, b: PluginSidebarThread): number {
+  if (a.latestAttentionAt !== b.latestAttentionAt) {
+    return b.latestAttentionAt - a.latestAttentionAt;
+  }
+  return a.id < b.id ? -1 : 1;
+}
+
+/** B67.1: the host's own rolled-up "finished, and you have not looked" state. */
+export function isDone(thread: PluginSidebarThread): boolean {
+  return thread.indicator === "unread-success" || thread.indicator === "unread-error";
+}
+
+/**
+ * B1 precedence, extended by B67 — the ONE place a thread's section is decided.
+ *
+ * `useSectionOrder` calls this over the unfiltered set (B68.5) and the model
+ * calls it over the roots it renders, so the entrance-order map and the
+ * rendered structure can never disagree about which section a thread is in.
+ *
+ * B65.9: `host` and `status` add section KEYS here and nothing else. The three
+ * band predicates and their order are identical in every mode; in `status` mode
+ * the two bands resolve to their own status group instead of a floating band
+ * (B65.5, B67.7), which is a different key for the same decision.
+ */
+export function sectionKeyOf(
+  thread: PluginSidebarThread,
+  settings: BetterSidebarSettings,
+  now: number,
+): SectionKey {
+  const merged = settings.groupBy === "status";
+  if (thread.hasPendingInteraction) return merged ? "status:needs-you" : "needs-you";
+  if (isDone(thread)) return merged ? "status:unread" : "done";
+  if (thread.isPinned) return "pinned";
+  switch (settings.groupBy) {
+    case "date":
+      return bucketOf(thread.latestAttentionAt, now);
+    case "project":
+      return `project:${thread.projectId}`;
+    case "host":
+      return thread.host ? `host:${thread.host.id}` : NO_HOST_KEY;
+    case "status":
+      return `status:${statusGroupOf(thread)}`;
+    default:
+      return "all";
+  }
+}
+
+/**
+ * B68.2: a thread's entrance sequence, higher meaning "entered later", which
+ * renders first.
+ *
+ * A thread with no entry falls back to `latestAttentionAt`, which covers both
+ * cases the fallback has. With no map at all every thread uses it, so the model
+ * renders the B5 order the hook seeds from. With a map that has not yet seen
+ * this thread, the epoch dwarfs every real sequence and the thread renders at
+ * the top of its section — which is what a thread nobody has recorded entering
+ * is: an arrival.
+ */
+function sequenceOf(
+  thread: PluginSidebarThread,
+  order: SectionOrder | null,
+): number {
+  return order?.entries.get(thread.id)?.sequence ?? thread.latestAttentionAt;
+}
+
+/**
+ * B68.2 ordering: newest entrant first, `id` making the order total.
+ *
+ * Applied to ROOTS only. B9/B69 keep a subtree together and its children on
+ * `latestAttentionAt`, so a descendant is never sequenced independently.
+ */
+function byEntrance(order: SectionOrder | null) {
+  return (a: PluginSidebarThread, b: PluginSidebarThread): number => {
+    const delta = sequenceOf(b, order) - sequenceOf(a, order);
+    if (delta !== 0) return delta;
+    return a.id < b.id ? -1 : 1;
+  };
+}
+
+interface Tree {
+  readonly visible: readonly PluginSidebarThread[];
+  readonly byId: ReadonlyMap<string, PluginSidebarThread>;
+  readonly childrenOf: ReadonlyMap<string, PluginSidebarThread[]>;
+  readonly roots: readonly PluginSidebarThread[];
+}
+
+/**
+ * B11: an archived thread is visible only while every ancestor up to its root is
+ * present and expanded. Non-archived threads are always in the visible set;
+ * collapse prunes them at render time, not here.
+ */
+function buildTree(input: ListModelInput): Tree {
+  // B64.6: the scope removes threads from every section; it changes nothing
+  // about precedence, and it is deliberately applied AFTER the entrance-order
+  // reconciler has already seen the unfiltered set (B68.5).
+  const scoped =
+    input.projectFilter === null
+      ? input.threads
+      : input.threads.filter((thread) => thread.projectId === input.projectFilter);
+  const present = new Map(scoped.map((thread) => [thread.id, thread]));
+  const decided = new Map<string, boolean>();
+
+  const isVisible = (thread: PluginSidebarThread, seen: Set<string>): boolean => {
+    const cached = decided.get(thread.id);
+    if (cached !== undefined) return cached;
+    if (seen.has(thread.id)) return false; // a parent cycle is not a crash
+    seen.add(thread.id);
+    let result = true;
+    if (thread.isArchived) {
+      const parent = thread.parentThreadId
+        ? present.get(thread.parentThreadId)
+        : undefined;
+      // B59: `showArchivedChildren: false` drops the archived child from the
+      // model, so its row is never built rather than built and hidden.
+      result =
+        input.settings.showArchivedChildren &&
+        parent !== undefined &&
+        !input.collapsedThreadIds.has(parent.id) &&
+        isVisible(parent, seen);
+    }
+    decided.set(thread.id, result);
+    return result;
+  };
+
+  const visible = scoped.filter((thread) => isVisible(thread, new Set()));
+  const byId = new Map(visible.map((thread) => [thread.id, thread]));
+
+  /**
+   * B1: a `parentThreadId` cycle (`A→B`, `B→A`) would leave every member of the
+   * cycle unreachable from `roots`, and the whole ring would vanish from the
+   * list. The rule: **a thread that can reach itself by walking parents has no
+   * reachable visible root, so it is treated as a root.** Every cycle member
+   * qualifies, so every one of them renders exactly once, and the edges that
+   * survive into `childrenOf` are acyclic by construction.
+   */
+  const isOnParentCycle = (thread: PluginSidebarThread): boolean => {
+    const seen = new Set<string>([thread.id]);
+    let parentId = thread.parentThreadId;
+    while (parentId) {
+      if (parentId === thread.id) return true;
+      if (seen.has(parentId)) return false; // a ring the thread is not part of
+      seen.add(parentId);
+      parentId = byId.get(parentId)?.parentThreadId ?? null;
+    }
+    return false;
+  };
+
+  const childrenOf = new Map<string, PluginSidebarThread[]>();
+  const roots: PluginSidebarThread[] = [];
+  for (const thread of visible) {
+    // B9: a thread whose parent is not visible is its own root, so orphans stay
+    // reachable rather than disappearing with their parent.
+    const parentId =
+      thread.parentThreadId &&
+      byId.has(thread.parentThreadId) &&
+      !isOnParentCycle(thread)
+        ? thread.parentThreadId
+        : null;
+    if (parentId === null) {
+      roots.push(thread);
+      continue;
+    }
+    const siblings = childrenOf.get(parentId);
+    if (siblings) siblings.push(thread);
+    else childrenOf.set(parentId, [thread]);
+  }
+  // B9/B69: children stay on `latestAttentionAt`; only roots are sequenced.
+  for (const siblings of childrenOf.values()) siblings.sort(byAttention);
+  // B68.2 for every section at once. Grouping preserves this order, so no
+  // section needs its own sort and the new B65 keys need no special case.
+  roots.sort(byEntrance(input.sectionOrder));
+  return { visible, byId, childrenOf, roots };
+}
+
+/**
+ * Step 4 of §3. One write per root into a single map, so a thread satisfying two
+ * predicates cannot land in two sections (B1, B67.5).
+ */
+function assignSections(
+  roots: readonly PluginSidebarThread[],
+  input: ListModelInput,
+): Map<string, SectionKey> {
+  const assignment = new Map<string, SectionKey>();
+  for (const root of roots) {
+    assignment.set(root.id, sectionKeyOf(root, input.settings, input.now));
+  }
+  return assignment;
+}
+
+/**
+ * Labels for the sections whose name comes from data, keyed by the whole
+ * section key so a project id and a host id can never collide.
+ */
+function dynamicLabelMap(input: ListModelInput): Map<SectionKey, string> {
+  const labels = new Map<SectionKey, string>();
+  for (const project of input.projects) {
+    labels.set(`project:${project.id}`, project.name);
+  }
+  // B65.1: the machine's name, taken off the threads because the SDK gives the
+  // sidebar no separate host list.
+  for (const thread of input.threads) {
+    if (thread.host) labels.set(`host:${thread.host.id}`, thread.host.name);
+  }
+  return labels;
+}
+
+function projectNameMap(input: ListModelInput): Map<string, string> {
+  return new Map(input.projects.map((project) => [project.id, project.name]));
+}
+
+function makeRow(
+  thread: PluginSidebarThread,
+  tree: Tree,
+  sectionKey: SectionKey,
+  depth: number,
+  projectNames: ReadonlyMap<string, string>,
+  projectNameFallback: string | null = null,
+): RenderRow {
+  return {
+    thread,
+    title: resolveTitle(thread),
+    workspaceLabel: resolveWorkspaceLabel(thread),
+    depth,
+    childCount: tree.childrenOf.get(thread.id)?.length ?? 0,
+    projectName: projectNames.get(thread.projectId) ?? projectNameFallback,
+    dimLevel: dimLevelFor(sectionKey),
+    sectionKey,
+  };
+}
+
+/** Pre-order walk, stopping at collapsed parents (step 6 of §3). */
+function flattenSubtree(
+  root: PluginSidebarThread,
+  tree: Tree,
+  input: ListModelInput,
+  sectionKey: SectionKey,
+  projectNames: ReadonlyMap<string, string>,
+  out: RenderRow[],
+  depth = 0,
+): void {
+  out.push(makeRow(root, tree, sectionKey, depth, projectNames));
+  if (input.collapsedThreadIds.has(root.id)) return;
+  for (const child of tree.childrenOf.get(root.id) ?? []) {
+    flattenSubtree(child, tree, input, sectionKey, projectNames, out, depth + 1);
+  }
+}
+
+function sectionOrderFor(
+  input: ListModelInput,
+  present: ReadonlySet<SectionKey>,
+  dynamicLabels: ReadonlyMap<SectionKey, string>,
+): SectionKey[] {
+  // B67: DONE sits between NEEDS YOU and PINNED. In `status` mode neither band
+  // is emitted (B65.5/B67.7), so these two keys are simply never present.
+  const order: SectionKey[] = ["needs-you", "done", "pinned"];
+  if (input.settings.groupBy === "date") order.push(...DATE_BUCKET_ORDER);
+  else if (input.settings.groupBy === "none") order.push("all");
+  else if (input.settings.groupBy === "status") {
+    for (const status of STATUS_GROUP_ORDER) order.push(`status:${status}`);
+  } else if (input.settings.groupBy === "host") {
+    // B65.2: machines by name, with `No machine` pinned last however it sorts.
+    const hosts = [...present].filter(
+      (key) => key !== NO_HOST_KEY && key.startsWith("host:"),
+    );
+    hosts.sort((a, b) =>
+      labelFor(a, dynamicLabels).localeCompare(labelFor(b, dynamicLabels)),
+    );
+    order.push(...hosts, NO_HOST_KEY);
+  } else {
+    // B8: project sections follow the host's project order.
+    for (const project of input.projects) order.push(`project:${project.id}`);
+    for (const key of present) if (!order.includes(key)) order.push(key);
+  }
+  return order;
+}
+
+function makeSection(
+  key: SectionKey,
+  rows: readonly RenderRow[],
+  count: number,
+  input: ListModelInput,
+  dynamicLabels: ReadonlyMap<SectionKey, string>,
+): RenderSection {
+  const isCollapsible = isCollapsibleSection(key);
+  const isCollapsed = isCollapsible && input.collapsedSections.has(key);
+  return {
+    key,
+    label: labelFor(key, dynamicLabels),
+    count,
+    isCollapsible,
+    isCollapsed,
+    rows: isCollapsed ? [] : rows,
+  };
+}
+
+/** Step 2 of §3: search suspends all grouping (B43). */
+function buildSearchSections(
+  tree: Tree,
+  input: ListModelInput,
+  projectNames: ReadonlyMap<string, string>,
+  dynamicLabels: ReadonlyMap<SectionKey, string>,
+): RenderSection[] {
+  const candidates: SearchCandidate[] = tree.visible.map((thread) => ({
+    thread,
+    title: resolveTitle(thread),
+    projectName: projectNames.get(thread.projectId) ?? thread.projectId,
+    // B69: search ranks by match, then entrance order.
+    sequence: sequenceOf(thread, input.sectionOrder),
+  }));
+  const rows = rankSearch(candidates, input.searchQuery).map((candidate) =>
+    makeRow(candidate.thread, tree, "search", 0, projectNames, candidate.projectName),
+  );
+  if (rows.length === 0) return [];
+  return [makeSection("search", rows, rows.length, input, dynamicLabels)];
+}
+
+function buildLiveSections(
+  tree: Tree,
+  input: ListModelInput,
+  projectNames: ReadonlyMap<string, string>,
+  dynamicLabels: ReadonlyMap<SectionKey, string>,
+): RenderSection[] {
+  const assignment = assignSections(tree.roots, input);
+  const rowsBySection = new Map<SectionKey, RenderRow[]>();
+  const countBySection = new Map<SectionKey, number>();
+  for (const root of tree.roots) {
+    const key = assignment.get(root.id)!;
+    let rows = rowsBySection.get(key);
+    if (!rows) rowsBySection.set(key, (rows = []));
+    flattenSubtree(root, tree, input, key, projectNames, rows);
+    // B53.4: root rows only, never nested children. Counting the whole subtree
+    // made the number churn continuously as subagents spawned and finished,
+    // while nothing the user put in the section had changed. Root-only is also
+    // what makes the count invariant under expanding a subtree (B53.5) —
+    // collapse state cannot touch a number that never counted children.
+    countBySection.set(key, (countBySection.get(key) ?? 0) + 1);
+  }
+  const order = sectionOrderFor(input, new Set(rowsBySection.keys()), dynamicLabels);
+  const sections: RenderSection[] = [];
+  for (const key of order) {
+    const count = countBySection.get(key) ?? 0;
+    if (count === 0) continue; // B4: an empty section renders nothing at all
+    sections.push(
+      makeSection(key, rowsBySection.get(key) ?? [], count, input, dynamicLabels),
+    );
+  }
+  return sections;
+}
+
+export function buildListModel(input: ListModelInput): ListModel {
+  const tree = buildTree(input);
+  const projectNames = projectNameMap(input);
+  const dynamicLabels = dynamicLabelMap(input);
+  const sections =
+    input.searchQuery.trim() === ""
+      ? buildLiveSections(tree, input, projectNames, dynamicLabels)
+      : buildSearchSections(tree, input, projectNames, dynamicLabels);
+  let rowCount = 0;
+  for (const section of sections) rowCount += section.rows.length;
+  return { sections, rowCount };
+}
