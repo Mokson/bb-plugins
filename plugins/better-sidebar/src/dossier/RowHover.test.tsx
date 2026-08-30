@@ -80,6 +80,7 @@ function handlers(
   return {
     threadDossier: ({ threadId }) => dossier(threadId),
     rowSignals: () => ({ signals: [] }),
+    threadExecutions: () => ({ executions: [] }),
     ...overrides,
   };
 }

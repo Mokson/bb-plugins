@@ -236,6 +236,81 @@ describe("lifecycle invalidation (B28)", () => {
   });
 });
 
+describe("threadExecutions (B71.1)", () => {
+  /** A host whose `defaultExecutionOptions` answers per thread id. */
+  function hostWithExecutions(
+    perThread: Record<string, unknown | (() => never)>,
+  ): FakePluginHost {
+    const sdk: CreateFakePluginHostOptions["sdk"] = {
+      threads: {
+        defaultExecutionOptions: async (args) => {
+          const { threadId } = args as { threadId: string };
+          const value = perThread[threadId];
+          return typeof value === "function" ? value() : (value ?? null);
+        },
+        events: { list: async () => [] },
+      },
+    };
+    return createFakePluginHost({ pluginId: "better-sidebar", sdk });
+  }
+
+  it("returns one entry per requested id, in the order asked for", async () => {
+    const threadIds = Array.from({ length: 17 }, (_, index) => `t${index}`);
+    const host = hostWithExecutions(
+      Object.fromEntries(
+        threadIds.map((id) => [id, { model: "opus", reasoningLevel: "high" }]),
+      ),
+    );
+    await plugin(host.bb);
+
+    const result = (await host.harness.callRpc("threadExecutions", {
+      threadIds,
+    })) as { executions: { threadId: string; execution: unknown }[] };
+
+    expect(result.executions.map((entry) => entry.threadId)).toEqual(threadIds);
+    expect(result.executions[0].execution).toEqual({
+      model: "opus",
+      reasoningLevel: "high",
+    });
+    // Seventeen children, one round trip. The fan-out is inside the handler.
+    expect(
+      host.harness.inspection.sdk.callsTo("threads.defaultExecutionOptions"),
+    ).toHaveLength(17);
+  });
+
+  it("returns execution: null for a thread that never resolved options", async () => {
+    const host = hostWithExecutions({ t1: null });
+    await plugin(host.bb);
+
+    const result = (await host.harness.callRpc("threadExecutions", {
+      threadIds: ["t1"],
+    })) as { executions: unknown[] };
+
+    expect(result.executions).toEqual([{ threadId: "t1", execution: null }]);
+  });
+
+  it("folds a per-id failure into that id's null and keeps the batch", async () => {
+    const host = hostWithExecutions({
+      t1: { model: "opus", reasoningLevel: "high" },
+      t2: () => {
+        throw new Error("thread gone");
+      },
+      t3: { model: "sonnet", reasoningLevel: "low" },
+    });
+    await plugin(host.bb);
+
+    const result = (await host.harness.callRpc("threadExecutions", {
+      threadIds: ["t1", "t2", "t3"],
+    })) as { executions: { threadId: string; execution: unknown }[] };
+
+    expect(result.executions).toEqual([
+      { threadId: "t1", execution: { model: "opus", reasoningLevel: "high" } },
+      { threadId: "t2", execution: null },
+      { threadId: "t3", execution: { model: "sonnet", reasoningLevel: "low" } },
+    ]);
+  });
+});
+
 describe("rowSignals", () => {
   it("issues exactly four events.list calls per requested thread, and one row each", async () => {
     const threadIds = Array.from({ length: 40 }, (_, index) => `t${index}`);
@@ -405,11 +480,15 @@ describe("handler failure (ruling 10)", () => {
 });
 
 describe("registration", () => {
-  it("registers both contract methods and the seven settings descriptors (B59)", async () => {
+  it("registers all three contract methods and the seven settings descriptors (B59)", async () => {
     const host = hostWith({});
     await plugin(host.bb);
 
-    expect(Object.keys(betterSidebarRpcContract)).toEqual(["threadDossier", "rowSignals"]);
+    expect(Object.keys(betterSidebarRpcContract)).toEqual([
+      "threadDossier",
+      "rowSignals",
+      "threadExecutions",
+    ]);
 
     const descriptors = host.harness.inspection.registrations.settingsDescriptors;
     expect(Object.keys(descriptors)).toEqual([

@@ -108,6 +108,7 @@ function render(rpc: Partial<PluginRpcTestHandlers<Contract>> = {}) {
     rpc: {
       threadDossier: () => full(),
       rowSignals: () => ({ signals: [] }),
+      threadExecutions: () => ({ executions: [] }),
       ...rpc,
     },
     sidebarThreads: {
@@ -138,6 +139,7 @@ function renderWithSignals(rpc: Partial<PluginRpcTestHandlers<Contract>> = {}) {
       rpc: {
         threadDossier: () => full(),
         rowSignals: () => ({ signals: [] }),
+      threadExecutions: () => ({ executions: [] }),
         ...rpc,
       },
       sidebarThreads: {

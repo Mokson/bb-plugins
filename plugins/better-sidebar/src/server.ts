@@ -4,6 +4,7 @@ import {
   DOSSIER_CHANNEL,
   type Dossier,
   type RowSignal,
+  type ThreadExecution,
 } from "./server-contract";
 
 type ThreadsApi = BbPluginApi["sdk"]["threads"];
@@ -41,6 +42,30 @@ function pressure(
   if (usedTokens === null || modelContextWindow === null) return null;
   if (modelContextWindow <= 0) return null;
   return usedTokens / modelContextWindow;
+}
+
+/**
+ * B71.1: one child's model and effort, from the same call `loadDossier` makes.
+ *
+ * A per-id rejection becomes `execution: null` for that id and nothing more.
+ * One unreadable child must not cost the popover its other sixteen rows, and
+ * the frontend already draws no metadata line for a null.
+ */
+async function loadExecution(
+  threads: ThreadsApi,
+  threadId: string,
+): Promise<ThreadExecution> {
+  try {
+    const execution = await threads.defaultExecutionOptions({ threadId });
+    return {
+      threadId,
+      execution: execution
+        ? { model: execution.model, reasoningLevel: execution.reasoningLevel }
+        : null,
+    };
+  } catch {
+    return { threadId, execution: null };
+  }
 }
 
 async function loadDossier(threads: ThreadsApi, threadId: string): Promise<Dossier> {
@@ -171,6 +196,12 @@ export default function plugin(bb: BbPluginApi) {
     rowSignals: async ({ threadIds }) => ({
       signals: await Promise.all(
         threadIds.map((threadId) => loadRowSignal(bb.sdk.threads, threadId)),
+      ),
+    }),
+    // B71.1: the fan-out is here, inside one round trip, not across the wire.
+    threadExecutions: async ({ threadIds }) => ({
+      executions: await Promise.all(
+        threadIds.map((threadId) => loadExecution(bb.sdk.threads, threadId)),
       ),
     }),
   });

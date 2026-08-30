@@ -11,12 +11,15 @@ const tokenTotalsSchema = z.object({
   reasoningOutputTokens: z.number(),
 });
 
+/** The resolved model and effort. B29's null is "the thread never ran". */
+const executionSchema = z
+  .object({ model: z.string(), reasoningLevel: z.string() })
+  .nullable();
+
 export const dossierSchema = z.object({
   threadId: z.string(),
   /** null when the thread never resolved execution options (never ran). */
-  execution: z
-    .object({ model: z.string(), reasoningLevel: z.string() })
-    .nullable(),
+  execution: executionSchema,
   /** null when the provider reports no token usage. B31's no-data case. */
   economics: z
     .object({
@@ -60,6 +63,13 @@ export const rowSignalSchema = z.object({
     .nullable(),
 });
 
+/** B71.1: one entry per requested id, in request order. */
+export const threadExecutionSchema = z.object({
+  threadId: z.string(),
+  /** null when the thread never ran, and also when its lookup failed. */
+  execution: executionSchema,
+});
+
 export const betterSidebarRpcContract = defineRpcContract({
   /** One hovered thread's dossier. B31 returns nulls, never throws. */
   threadDossier: {
@@ -71,6 +81,15 @@ export const betterSidebarRpcContract = defineRpcContract({
     input: z.object({ threadIds: z.array(threadIdSchema).max(60) }),
     output: z.object({ signals: z.array(rowSignalSchema) }),
   },
+  /**
+   * B71.1: model and effort for every child in one open popover, in ONE round
+   * trip. The parent of this very feature has seventeen children, so a call
+   * per child was rejected; the fan-out lives inside the handler.
+   */
+  threadExecutions: {
+    input: z.object({ threadIds: z.array(threadIdSchema).max(60) }),
+    output: z.object({ executions: z.array(threadExecutionSchema) }),
+  },
 });
 
 export const DOSSIER_CHANNEL = "thread-dossier";
@@ -79,3 +98,5 @@ export const DOSSIER_CHANNEL = "thread-dossier";
 export type Dossier = z.infer<typeof dossierSchema>;
 /** One entry of the `rowSignals` result. */
 export type RowSignal = z.infer<typeof rowSignalSchema>;
+/** One entry of the `threadExecutions` result. */
+export type ThreadExecution = z.infer<typeof threadExecutionSchema>;

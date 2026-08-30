@@ -5,6 +5,7 @@ import {
   experimental_useSidebarThreads as useSidebarThreads,
   useSettings,
   type PluginSidebarThread,
+  type PluginSidebarThreadIndicator,
   type PluginThreadHeaderActionProps,
 } from "@get-bb/plugin-sdk/app";
 import { cn } from "../lib/utils";
@@ -13,9 +14,26 @@ import { usePortalScopeProps } from "../lib/portal-scope";
 import { resolveTitle } from "../model/list-model";
 import { ProviderGlyph } from "../row/ProviderGlyph";
 import { StatusGlyph } from "../row/StatusGlyph";
+import { durationLabel } from "../row/relative-time";
+import { useNow } from "../useNow";
+import { useThreadExecutions } from "./useThreadExecutions";
+import type { ThreadExecution } from "../server-contract";
 
 /** B58.3: three glyphs read as a cluster; a fourth reads as a queue. */
 const MAX_GLYPHS = 3;
+
+/**
+ * B70.1. "Running" is read off `thread.indicator`, the one field `StatusGlyph`
+ * already reads the row's state from — no second definition of running lives
+ * in this plugin. These are the four kinds `StatusGlyph` draws in motion:
+ * work is happening right now, so the clock is still counting.
+ */
+const RUNNING_INDICATORS: ReadonlySet<PluginSidebarThreadIndicator> = new Set([
+  "runtime",
+  "workflow",
+  "background-agent",
+  "background-command",
+]);
 
 /**
  * B58 — the child-threads chip in bb's thread header.
@@ -70,8 +88,18 @@ function ChipBody({ threadId, isCompactViewport }: PluginThreadHeaderActionProps
   const [open, setOpen] = useState(false);
   // Above the B58.2 early return: hook order may not depend on child count.
   const portalScopeProps = usePortalScopeProps();
+  const { density } = parseSettings(useSettings().values);
+  const now = useNow();
 
   const children = childrenOf(threads, threadId);
+  // B72.1: `compact` promises no backend RPC of any kind (B60.1), and this is
+  // the chip's first RPC. Open counts as enabled at every other density.
+  const wantsMetadata = density !== "compact";
+  const executions = useThreadExecutions(
+    children.map((child) => child.id),
+    open && wantsMetadata,
+  );
+
   // B58.2: most threads have no children, and an empty chip is chrome tax on
   // every header. Nothing at all, not a disabled control.
   if (children.length === 0) return null;
@@ -137,9 +165,16 @@ function ChipBody({ threadId, isCompactViewport }: PluginThreadHeaderActionProps
                     <span className="truncate text-xs">
                       {resolveTitle(child)}
                     </span>
-                    <span className="truncate text-2xs text-muted-foreground">
-                      {child.originKind ?? "thread"}
-                    </span>
+                    {/* B71.3/B72.1: loading, error and compact all render the
+                        row without this line. Never a spinner — arriving
+                        metadata must not move the row it lands in. */}
+                    {executions.status === "ready" ? (
+                      <MetadataLine
+                        thread={child}
+                        execution={executions.executions.get(child.id) ?? null}
+                        now={now}
+                      />
+                    ) : null}
                   </span>
                   <StatusGlyph thread={child} />
                 </button>
@@ -150,6 +185,64 @@ function ChipBody({ threadId, isCompactViewport }: PluginThreadHeaderActionProps
       </Popover.Portal>
     </Popover.Root>
   );
+}
+
+/**
+ * B70. The child row's second line: `<model> · <effort> · <duration>`, plus
+ * `fork` when the child is one.
+ *
+ * B70.4 is why this builds a filtered array and joins it. Conditional JSX with
+ * hand-placed separators is what produces a stray " · · " on the thread that
+ * never resolved its execution options, and that thread is common.
+ *
+ * B70.2 renders the model id and the effort verbatim. The line is a flex child
+ * with `truncate` in a 320px popover, the same treatment the title above it
+ * gets, so no shortener is invented here.
+ */
+function MetadataLine({
+  thread,
+  execution,
+  now,
+}: {
+  thread: PluginSidebarThread;
+  execution: ThreadExecution["execution"];
+  now: number;
+}) {
+  const parts = [
+    execution?.model,
+    execution?.reasoningLevel,
+    durationOf(thread, now),
+    // B70.3: a fork is worth naming and a plain thread is not, so the null
+    // origin contributes no segment at all. "thread" never renders.
+    thread.originKind === "fork" ? "fork" : null,
+  ].filter((part): part is string => typeof part === "string" && part !== "");
+
+  if (parts.length === 0) return null;
+
+  return (
+    <span className="truncate text-2xs text-muted-foreground">
+      {parts.join(" · ")}
+    </span>
+  );
+}
+
+/**
+ * B70.1. Elapsed since creation: `now - createdAt` while the thread runs, and
+ * `updatedAt - createdAt` once it stopped.
+ *
+ * It answers "how long did this take", which is the question when scanning
+ * seats you dispatched. It is deliberately not time-since-activity — sidebar
+ * row 1 already carries that, and repeating it here would spend the row.
+ */
+function durationOf(thread: PluginSidebarThread, now: number): string | null {
+  const { createdAt, updatedAt } = thread;
+  if (!Number.isFinite(createdAt)) return null;
+  const end = RUNNING_INDICATORS.has(thread.indicator)
+    ? now
+    : Number.isFinite(updatedAt)
+      ? updatedAt
+      : null;
+  return end === null ? null : durationLabel(end - createdAt);
 }
 
 /**

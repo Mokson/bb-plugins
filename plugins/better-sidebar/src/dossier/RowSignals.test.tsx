@@ -92,6 +92,7 @@ function render(threadIds: string[], signals: RowSignal[]) {
         rowSignals: ({ threadIds: requested }) => ({
           signals: signals.filter((s) => requested.includes(s.threadId)),
         }),
+        threadExecutions: () => ({ executions: [] }),
       },
     },
   );
@@ -258,6 +259,7 @@ describe("useRowSignals batching (§7 B37-B40 ruling)", () => {
           rowSignals: () => {
             throw new Error("signals unavailable");
           },
+          threadExecutions: () => ({ executions: [] }),
         },
       },
     );

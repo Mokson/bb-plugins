@@ -22,3 +22,22 @@ export function relativeTimeLabel(timestamp: number, now: number): string {
   if (elapsed < 7 * DAY) return `${Math.floor(elapsed / DAY)}d`;
   return `${Math.floor(elapsed / (7 * DAY))}w`;
 }
+
+/**
+ * B70.5. How long a span lasted: "<1m", "47m", "3h", "2d", "2w".
+ *
+ * The same units as `relativeTimeLabel`, and a separate function on purpose.
+ * That one returns "now" under a minute, which is an age; a duration of "now"
+ * reads as nonsense, so a short span says "<1m" instead.
+ *
+ * A negative span — a clock that moved backwards, or an `updatedAt` that
+ * precedes its `createdAt` — floors at zero rather than printing a minus sign.
+ */
+export function durationLabel(elapsedMs: number): string {
+  const elapsed = Math.max(0, elapsedMs);
+  if (elapsed < MINUTE) return "<1m";
+  if (elapsed < HOUR) return `${Math.floor(elapsed / MINUTE)}m`;
+  if (elapsed < DAY) return `${Math.floor(elapsed / HOUR)}h`;
+  if (elapsed < 7 * DAY) return `${Math.floor(elapsed / DAY)}d`;
+  return `${Math.floor(elapsed / (7 * DAY))}w`;
+}

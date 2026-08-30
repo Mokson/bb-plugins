@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import {
   installTestPluginRuntime,
   loadPluginApp,
   renderSlot,
+  type PluginRpcTestHandlers,
   type RenderSlotOptions,
 } from "@get-bb/plugin-sdk/testing/app";
 import type {
@@ -16,6 +17,10 @@ import type {
 installTestPluginRuntime();
 
 const { ChildThreadsChip } = await import("./ChildThreadsChip");
+const { resetThreadExecutionsCache } = await import("./useThreadExecutions");
+const { betterSidebarRpcContract } = await import("../server-contract");
+
+type Contract = typeof betterSidebarRpcContract;
 
 const NOW = 1_700_000_000_000;
 
@@ -79,6 +84,12 @@ function render(
 function chip() {
   return screen.getByRole("button", { name: /child threads$/ });
 }
+
+beforeEach(() => {
+  // The execution cache is module-level and outlives `cleanup()` (B71.4), so
+  // a call-count test would otherwise read the previous test's cache.
+  resetThreadExecutionsCache();
+});
 
 afterEach(() => {
   cleanup();
@@ -201,7 +212,9 @@ describe("open popover (B58.6, B58.7, B58.8)", () => {
     return rendered;
   }
 
-  it("lists every child with title, origin and status glyph", () => {
+  // Amendment 2a supersedes B58.6's origin line: the second line is now
+  // model, effort and duration (B70), and it is absent until the batch lands.
+  it("lists every child with title and status glyph", () => {
     openWith([
       thread("parent"),
       child("c1", "parent", {
@@ -215,11 +228,10 @@ describe("open popover (B58.6, B58.7, B58.8)", () => {
     const items = within(list).getAllByRole("listitem");
     expect(items).toHaveLength(2);
     expect(items[0].textContent).toContain("c1");
-    expect(items[0].textContent).toContain("fork");
     // Row 1's own title resolution, whitespace trim included.
     expect(items[1].textContent).toContain("Fallback");
-    // A child with no originKind reads as a plain thread, not as blank.
-    expect(items[1].textContent).toContain("thread");
+    // B70.3: the word "thread" is gone from the popover for good.
+    expect(items[1].textContent).not.toContain("thread");
     // B58.7: this plugin's StatusGlyph, labelled by the host's own string.
     expect(
       within(items[0]).getByRole("img", { name: "Thread needs user input" }),
@@ -355,5 +367,307 @@ describe("unexpected data (B58.10)", () => {
     }) as PluginSidebarThread;
     const { container } = render([exploding]);
     expect(container.innerHTML).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Amendment 2a — B70, B71, B72
+// ---------------------------------------------------------------------------
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+
+/** The quantized clock `useNow` serves, so a duration lands on the bucket. */
+function nowMinute(): number {
+  return Math.floor(Date.now() / MINUTE) * MINUTE;
+}
+
+function handlers(
+  overrides: Partial<PluginRpcTestHandlers<Contract>> = {},
+): PluginRpcTestHandlers<Contract> {
+  return {
+    threadDossier: () => {
+      throw new Error("the chip never calls threadDossier");
+    },
+    rowSignals: () => ({ signals: [] }),
+    threadExecutions: ({ threadIds }) => ({
+      executions: threadIds.map((threadId) => ({
+        threadId,
+        execution: { model: "claude-opus-5", reasoningLevel: "high" },
+      })),
+    }),
+    ...overrides,
+  };
+}
+
+function renderRich(
+  threads: PluginSidebarThread[],
+  extra: {
+    rpc?: Partial<PluginRpcTestHandlers<Contract>>;
+    settings?: Record<string, string>;
+  } = {},
+) {
+  return renderSlot<PluginThreadHeaderActionProps, Contract>(
+    { component: ChildThreadsChip },
+    { threadId: "parent", projectId: "p1", isCompactViewport: false },
+    {
+      sidebarThreads: { status: "ready", threads },
+      rpc: handlers(extra.rpc),
+      ...(extra.settings === undefined ? {} : { settings: extra.settings }),
+    },
+  );
+}
+
+async function settle() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+function executionCalls(slot: { inspection: { rpcCalls: { method: string }[] } }) {
+  return slot.inspection.rpcCalls.filter(
+    (call) => call.method === "threadExecutions",
+  );
+}
+
+function rows() {
+  return within(screen.getByRole("list")).getAllByRole("listitem");
+}
+
+describe("batched executions call (B71)", () => {
+  it("issues no call at all while the chip is closed (B71.2)", async () => {
+    const slot = renderRich([thread("parent"), child("c1", "parent")]);
+    await settle();
+    expect(executionCalls(slot)).toHaveLength(0);
+  });
+
+  it("issues exactly one call for seventeen children (B71.1)", async () => {
+    const children = Array.from({ length: 17 }, (_, i) =>
+      child(`c${i}`, "parent"),
+    );
+    const slot = renderRich([thread("parent"), ...children]);
+    fireEvent.click(chip());
+    await settle();
+
+    const calls = executionCalls(slot);
+    expect(calls).toHaveLength(1);
+    expect(rows()).toHaveLength(17);
+  });
+
+  it("re-opening inside the READY TTL issues no second call (B71.4)", async () => {
+    const slot = renderRich([
+      thread("parent"),
+      child("c1", "parent"),
+      child("c2", "parent"),
+    ]);
+    fireEvent.click(chip());
+    await settle();
+    expect(executionCalls(slot)).toHaveLength(1);
+
+    fireEvent.click(chip());
+    await settle();
+    fireEvent.click(chip());
+    await settle();
+    expect(executionCalls(slot)).toHaveLength(1);
+    expect(rows()[0].textContent).toContain("claude-opus-5");
+  });
+
+  it("keeps every title and both glyphs when the call rejects (B71.3)", async () => {
+    const slot = renderRich(
+      [
+        thread("parent"),
+        child("c1", "parent", {
+          indicator: "waiting-for-input",
+          indicatorLabel: "Thread needs user input",
+        }),
+        child("c2", "parent", {
+          indicator: "waiting-for-input",
+          indicatorLabel: "Thread needs user input",
+        }),
+      ],
+      {
+        rpc: {
+          threadExecutions: () => {
+            throw new Error("backend unavailable");
+          },
+        },
+      },
+    );
+    fireEvent.click(chip());
+    await settle();
+
+    // The list is intact — a failed lookup never blanks the children.
+    expect(rows()).toHaveLength(2);
+    for (const row of rows()) {
+      expect(row.textContent).toMatch(/c[12]/);
+      expect(within(row).getByRole("img", { name: "claude" })).toBeTruthy();
+      expect(
+        within(row).getByRole("img", { name: "Thread needs user input" }),
+      ).toBeTruthy();
+    }
+    // B71.3: the metadata line is simply absent, and no spinner replaces it.
+    expect(screen.getByRole("list").textContent).not.toContain("·");
+    expect(executionCalls(slot)).toHaveLength(1);
+  });
+
+  it("renders no metadata line while the batch is still in flight (B71.3)", () => {
+    renderRich([thread("parent"), child("c1", "parent")]);
+    fireEvent.click(chip());
+    // Before `settle()`: loading. Title and glyph, nothing else.
+    expect(rows()[0].textContent).toContain("c1");
+    expect(rows()[0].textContent).not.toContain("claude-opus-5");
+    expect(rows()[0].textContent).not.toContain("·");
+  });
+});
+
+describe("child row metadata (B70)", () => {
+  it("renders model and effort verbatim (B70.2)", async () => {
+    renderRich([thread("parent"), child("c1", "parent")], {
+      rpc: {
+        threadExecutions: ({ threadIds }) => ({
+          executions: threadIds.map((threadId) => ({
+            threadId,
+            execution: {
+              model: "anthropic/claude-opus-5[1m]",
+              reasoningLevel: "xhigh",
+            },
+          })),
+        }),
+      },
+    });
+    fireEvent.click(chip());
+    await settle();
+    expect(rows()[0].textContent).toContain("anthropic/claude-opus-5[1m]");
+    expect(rows()[0].textContent).toContain("xhigh");
+  });
+
+  it("measures a running child from createdAt to now (B70.1)", async () => {
+    const base = nowMinute();
+    renderRich([
+      thread("parent"),
+      child("c1", "parent", {
+        indicator: "runtime",
+        createdAt: base - 47 * MINUTE,
+        // Time-since-activity would read 7m; the duration must read 47m.
+        updatedAt: base - 40 * MINUTE,
+      }),
+    ]);
+    fireEvent.click(chip());
+    await settle();
+    expect(rows()[0].textContent).toContain("47m");
+    expect(rows()[0].textContent).not.toContain("7m ·");
+  });
+
+  it("measures a finished child from createdAt to updatedAt (B70.1)", async () => {
+    const base = nowMinute();
+    renderRich([
+      thread("parent"),
+      child("c1", "parent", {
+        indicator: "none",
+        createdAt: base - 30 * HOUR,
+        updatedAt: base - 27 * HOUR,
+      }),
+    ]);
+    fireEvent.click(chip());
+    await settle();
+    // 3h of work, not the 30h since it started.
+    expect(rows()[0].textContent).toContain("3h");
+    expect(rows()[0].textContent).not.toContain("30h");
+  });
+
+  it("says '<1m' for a child that finished inside a minute (B70.5)", async () => {
+    const base = nowMinute();
+    renderRich([
+      thread("parent"),
+      child("c1", "parent", { createdAt: base, updatedAt: base }),
+    ]);
+    fireEvent.click(chip());
+    await settle();
+    expect(rows()[0].textContent).toContain("<1m");
+    // "now" is an age, and reads as nonsense as a duration.
+    expect(rows()[0].textContent).not.toContain("now");
+  });
+
+  it("names a fork and never names a plain thread (B70.3)", async () => {
+    renderRich([
+      thread("parent"),
+      child("c1", "parent", { originKind: "fork" }),
+      child("c2", "parent", { originKind: null }),
+    ]);
+    fireEvent.click(chip());
+    await settle();
+    expect(rows()[0].textContent).toContain("fork");
+    expect(screen.getByRole("list").textContent).not.toContain("thread");
+  });
+
+  it("drops the model and effort, and their separators, on a null execution (B70.4)", async () => {
+    const base = nowMinute();
+    renderRich(
+      [
+        thread("parent"),
+        child("c1", "parent", {
+          originKind: null,
+          createdAt: base - 5 * MINUTE,
+          updatedAt: base - 5 * MINUTE,
+        }),
+      ],
+      {
+        rpc: {
+          threadExecutions: ({ threadIds }) => ({
+            executions: threadIds.map((threadId) => ({
+              threadId,
+              execution: null,
+            })),
+          }),
+        },
+      },
+    );
+    fireEvent.click(chip());
+    await settle();
+
+    const text = rows()[0].textContent ?? "";
+    // The one surviving part stands alone: no leading, trailing or doubled
+    // separator, and no placeholder dash in the missing parts' place.
+    expect(text).toContain("<1m");
+    expect(text).not.toContain("·");
+    expect(text).not.toContain("claude-opus-5");
+  });
+});
+
+describe("settings gate (B72)", () => {
+  it("makes no call and shows no metadata at density compact (B72.1)", async () => {
+    const slot = renderRich(
+      [
+        thread("parent"),
+        child("c1", "parent", {
+          indicator: "waiting-for-input",
+          indicatorLabel: "Thread needs user input",
+        }),
+      ],
+      { settings: { density: "compact" } },
+    );
+    fireEvent.click(chip());
+    await settle();
+
+    // B60.1: compact performs no backend RPC of any kind.
+    expect(executionCalls(slot)).toHaveLength(0);
+    // The row is still a row: title, provider and status.
+    const row = rows()[0];
+    expect(row.textContent).toContain("c1");
+    expect(within(row).getByRole("img", { name: "claude" })).toBeTruthy();
+    expect(
+      within(row).getByRole("img", { name: "Thread needs user input" }),
+    ).toBeTruthy();
+    expect(row.textContent).not.toContain("claude-opus-5");
+  });
+
+  it("makes no call when the chip is hidden entirely (B72.2)", async () => {
+    const slot = renderRich([thread("parent"), child("c1", "parent")], {
+      settings: { showHeaderChip: "false" },
+    });
+    await settle();
+    expect(slot.container.innerHTML).toBe("");
+    expect(executionCalls(slot)).toHaveLength(0);
   });
 });
