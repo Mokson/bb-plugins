@@ -84,6 +84,44 @@ drift.
   any subtree inside the section. Assert exactly that: expand a parent, the section
   count does not change.
 
+## B57 — Row 1, second pass: no count, chevron after the title, no left inset
+
+Raised by the user against the running build. **B57 supersedes B51.1 and B53.2**;
+B53.1, B53.3, B53.4 and B53.5 (the section header count, right-aligned and counting
+roots only) are unaffected and stay exactly as they are.
+
+Row 1 becomes:
+
+```
+[provider] title [chevron, parents only] ……………… [status] [time]
+```
+
+- **B57.1** (auto) **The per-row child count is removed entirely.** The chevron alone
+  signals that a thread has children. This supersedes B53.2 — the count no longer
+  appears anywhere on the row, in the trailing cluster or otherwise.
+- **B57.2** (auto) **The chevron moves out of the left gutter to immediately after the
+  title text**, hugging the end of the title so it reads as belonging to that thread.
+  Its x position therefore varies row to row, which is correct: only parent rows carry
+  one, so there is no column for it to break. **This supersedes B51.1 — there is no
+  reserved chevron gutter any more, on any row.**
+- **B57.3** (auto) **No left inset on the row.** The provider glyph starts at the row's
+  left edge. The row's own horizontal padding on the left goes to zero.
+- **B57.4** (auto) **The trailing cluster's spacing is uniform.** Exactly one gap of
+  one size sits between adjacent *rendered* elements, so the distance between the
+  status glyph and the time reads the same on every row. A mounted but zero-width
+  element (`RowSignals`, which stays mounted because it owns the IntersectionObserver
+  ref) contributes **no** gap — today each element carries its own margin, so the
+  status-to-time distance changes depending on which siblings happen to draw.
+- **B57.5** (auto) With the gutter gone, a childless row's title starts at the same x
+  as a parent's, because neither reserves anything. B51.1's alignment goal is met by
+  removal rather than by reservation.
+
+> **Assumption, flagged for cheap correction.** "Remove paddings on left" is read as
+> the row's base left inset and the chevron gutter — **not** the per-depth indent that
+> makes nesting visible. B9 requires a child to render visibly beneath its parent, and
+> the screenshots show that indent working. If the intent was a fully flat list with no
+> nesting indent either, say so; it is a one-line change.
+
 ## B56 — Row 2 protects the project name from a long branch
 
 Reported by the user against the running build, with a screenshot: a row showing
