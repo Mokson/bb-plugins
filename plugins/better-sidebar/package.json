@@ -2,20 +2,21 @@
   "name": "bb-plugin-better-sidebar",
   "version": "0.1.0",
   "type": "module",
-  "description": "A replacement sidebar thread list.",
+  "description": "A sidebar thread list organised by activity date, with provider logos, minimal status glyphs and a hover dossier.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Mokson/bb-plugin-better-sidebar.git"
+    "url": "git+https://github.com/Mokson/bb-plugins.git",
+    "directory": "plugins/better-sidebar"
   },
-  "homepage": "https://github.com/Mokson/bb-plugin-better-sidebar#readme",
+  "homepage": "https://github.com/Mokson/bb-plugins/tree/main/plugins/better-sidebar#readme",
   "engines": {
     "bb": ">=0.40.0",
     "bbPluginSdk": ">=0.4.21"
   },
   "bb": {
     "name": "Better Sidebar",
-    "description": "A replacement sidebar thread list.",
+    "description": "A sidebar thread list organised by activity date, with provider logos, minimal status glyphs and a hover dossier.",
     "branding": {
       "icon": "PanelLeft"
     },
