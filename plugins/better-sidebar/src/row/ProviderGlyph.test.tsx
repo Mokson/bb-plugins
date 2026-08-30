@@ -10,10 +10,17 @@ import type { PluginProvidersState } from "@get-bb/plugin-sdk/app";
 installTestPluginRuntime();
 
 const { ProviderGlyph } = await import("./ProviderGlyph");
+const { resetCachedMarks } = await import("./provider-cache");
 
 type Provider = PluginProvidersState["providers"][number];
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  // A ready render caches its directory (B81), and that cache outlives the
+  // test that wrote it. Every case below states its own starting cache.
+  window.localStorage.clear();
+  resetCachedMarks();
+});
 
 /** The two fields B23-B25 turn on, over a minimal but valid `ProviderInfo`. */
 function provider(overrides: Partial<Provider> & { id: string }): Provider {
@@ -135,6 +142,73 @@ describe("ProviderGlyph", () => {
     expect(container.querySelector("[data-better-sidebar-provider]")).toBeNull();
     // The box survives, so the row does not reflow when the logo arrives.
     expect(getByRole("img").className).toContain("size-3.5");
+  });
+
+  /**
+   * B81. The directory is near-static and slow, so the previous answer is what
+   * a reload should draw. These two cases are one story split across a cleared
+   * store: write on ready, read on the next load's `loading`.
+   */
+  it("draws the cached logo while the directory is loading (B81)", () => {
+    render("acp-codex", [
+      provider({
+        id: "acp-codex",
+        displayName: "Codex",
+        logoUrl: "/api/v1/system/providers/acp-codex/logo",
+      }),
+    ]);
+    cleanup();
+    resetCachedMarks();
+
+    const { container, getByRole } = renderSlot(
+      { component: ProviderGlyph },
+      { providerId: "acp-codex" },
+      { providers: { status: "loading", providers: [] } },
+    );
+
+    expect(
+      container
+        .querySelector('[data-better-sidebar-provider="mask"]')
+        ?.getAttribute("style"),
+    ).toContain("/api/v1/system/providers/acp-codex/logo");
+    expect(getByRole("img").getAttribute("aria-label")).toBe("Codex");
+  });
+
+  /** A live answer overrides the cache, so an uninstalled provider stops drawing. */
+  it("prefers the live directory over a cached mark (B81)", () => {
+    render("acp-codex", [
+      provider({ id: "acp-codex", displayName: "Codex", logoUrl: "/logo.svg" }),
+    ]);
+    cleanup();
+    resetCachedMarks();
+
+    const { container, getByRole } = render("acp-codex", [
+      provider({ id: "acp-claude-code" }),
+    ]);
+
+    expect(container.querySelector('[data-better-sidebar-provider="mask"]')).toBeNull();
+    expect(getByRole("img").getAttribute("aria-label")).toBe("acp-codex");
+  });
+
+  /** An empty ready directory must not erase marks that are already drawing. */
+  it("keeps the cache when the directory answers with nothing (B81)", () => {
+    render("acp-codex", [
+      provider({ id: "acp-codex", displayName: "Codex", logoUrl: "/logo.svg" }),
+    ]);
+    cleanup();
+    resetCachedMarks();
+
+    render("acp-codex", []);
+    cleanup();
+    resetCachedMarks();
+
+    const { getByRole } = renderSlot(
+      { component: ProviderGlyph },
+      { providerId: "acp-codex" },
+      { providers: { status: "loading", providers: [] } },
+    );
+
+    expect(getByRole("img").getAttribute("aria-label")).toBe("Codex");
   });
 
   /**
