@@ -29,6 +29,45 @@ things, and the one thing you must never hide is the thread waiting on you.
 - **B64.6** (auto) Scoping to one project does not change the NEEDS YOU or PINNED
   bands' precedence (B1); it only removes threads outside the scope from every section.
 
+## B67 — a DONE band for completed, unread root threads
+
+**Extends B1's precedence.** A thread that finished while you were not looking should
+stay visible until you have seen it — the inbox property. bb already resolves exactly
+this signal, so no new data is needed.
+
+Section precedence becomes, top to bottom:
+
+```
+NEEDS YOU   ← hasPendingInteraction
+DONE        ← finished and unseen  (new)
+PINNED
+date buckets / project / host / status groups
+```
+
+- **B67.1** (auto) A root thread joins **DONE** when its `indicator` is
+  `unread-success` or `unread-error`. That is the host's own rolled-up "finished and
+  you have not looked" state, so a thread that is unread *but still running* correctly
+  stays out — it is working, not waiting for review.
+- **B67.2** (auto) **NEEDS YOU and DONE are two bands, not one.** A blocked agent is
+  burning time right now; a finished thread is only waiting for review. Merged, the
+  urgent one is buried among the merely unread — and finished threads will always
+  outnumber blocked ones in real use.
+- **B67.3** (auto) **Root threads only. A completed child never promotes its parent.**
+  A finished subagent is already visible nested under its parent. Promoting would
+  re-surface the same parent every time any seat completes, which in a real
+  multi-agent run is several times an hour — the band would stop being scannable.
+- **B67.4** (auto) A thread leaves DONE when the host clears its unread state, which
+  happens on open. The plugin does **not** implement its own read-tracking: `isUnread`
+  and `lastReadAt` are the host's, and a second source of truth would drift.
+- **B67.5** (auto) DONE obeys the same single-assignment rule as every other section
+  (B1): a thread that is both pending and unread appears **only** in NEEDS YOU.
+- **B67.6** (auto) DONE is collapsible with a count like the date buckets, and its
+  count follows B53.4 — roots only, which it already is by B67.3.
+- **B67.7** (auto) In `status` grouping mode the DONE band **merges into the Unread
+  status group**, exactly as NEEDS YOU merges into its own group per B65.5. Two
+  headings for one concept is the thing that rule exists to prevent.
+- **B67.8** (auto) Empty DONE renders nothing (B4).
+
 ## B65 — two more grouping modes
 
 `groupBy` extends from `date | project | none` to **`date | project | host | status |
