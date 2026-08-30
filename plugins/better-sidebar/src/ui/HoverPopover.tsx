@@ -24,7 +24,9 @@ export function HoverPopover({
     <HoverCard.Root open={open} onOpenChange={onOpenChange}>
       <HoverCard.Trigger asChild>{trigger}</HoverCard.Trigger>
       <HoverCard.Portal>
-        <HoverCard.Content side={side} {...portalScopeProps}>
+        {/* z-50 clears bb's z-10 sidebar, which otherwise paints over the
+            card where side="right" overlaps the sidebar's right edge. */}
+        <HoverCard.Content className="z-50" side={side} {...portalScopeProps}>
           {children}
         </HoverCard.Content>
       </HoverCard.Portal>
