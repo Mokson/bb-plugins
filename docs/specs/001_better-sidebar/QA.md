@@ -363,3 +363,53 @@ bb's gesture engine. This may also be intended behaviour under the documented
 all TS errors in the full run come from the sibling seat's uncommitted
 `src/header/ChildThreadsChip.test.tsx` (jest-dom matchers not registered), which
 is outside this wave's boundaries.
+
+---
+
+## Orchestrator control test — B45 is NOT-TESTABLE, not FAIL
+
+The fix seat proved every row-side obligation is met and concluded the
+split-vs-replace decision belongs to bb's gesture engine. I ran the control
+that settles it: **the same hit-tested synthetic drag against bb's own
+built-in thread list**, on the same build, viewport and coordinates.
+
+- Switched the provider preference to `__builtin__` and hard-reloaded;
+  confirmed 12 built-in shortcut targets and zero plugin rows.
+- Hit-tested the start point against `elementFromPoint` before using it, so the
+  press landed on a live row inside the scroll viewport's clip
+  (`160,460` → `thr_6n8evvuszg`).
+- Dragged out through four intermediate points to `1268,400`, the far right
+  edge of the main area, and released.
+
+**Result: no split, and the URL did not change — identical to the plugin's
+list.** bb's own rows do not split under a synthesised pointer drag either.
+
+So the harness cannot drive this gesture on any list, and B45's original
+**FAIL is withdrawn and replaced with NOT-TESTABLE**. The plugin spreads
+`splitProps` onto the anchor, the host's `onPointerDown` is verifiably invoked,
+and no row-side obligation is unmet. Confirming real drag-to-split needs a human
+with a real pointer, or a harness whose synthetic events satisfy the host's
+gesture recogniser.
+
+## Verdict correction
+
+The original **FAIL** rested on four defects. Three were artifacts of this QA
+run's own method:
+
+| Row | Original | Corrected | Cause of the false positive |
+| --- | --- | --- | --- |
+| B46/A5 menu targeting | FAIL (Blocker) | **PASS** | click points taken from `getBoundingClientRect` without hit-testing, so they landed outside the scroll viewport's clip and were clamped onto another row |
+| A1 rename | FAIL (Blocker) | **PASS** | same clamping; not downstream of B46 — it works independently |
+| A7/B37-B40 row signals | FAIL (High) | **PASS** | the QA run tested a stale bundle; after `bb plugin build .` the batch fires and returns 200 |
+| B45 drag to split | FAIL (High) | **NOT-TESTABLE** | see the control test above |
+
+**The stale bundle is my defect, not QA's.** The QA packet said *"Do not run
+`bb plugin install`, `build`, or `reload` — the plugin is already running and
+rebuilding it mid-QA invalidates everything you measured."* That instruction
+optimised for measurement stability and bought a whole run against stale code.
+The correct rule is: **build and reload once, up front, then hold the build
+frozen for the rest of the run.**
+
+The second lesson is QA's: **hit-test every synthetic coordinate against the
+scroll container's clip before clicking**, never trust `getBoundingClientRect`
+alone inside a scrollable list.
