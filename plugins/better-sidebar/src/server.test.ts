@@ -1,0 +1,406 @@
+import { describe, expect, it } from "vitest";
+import {
+  createFakePluginHost,
+  makeThreadResponse,
+  type CreateFakePluginHostOptions,
+  type FakePluginHost,
+} from "@get-bb/plugin-sdk/testing";
+import plugin from "./server";
+import { betterSidebarRpcContract, DOSSIER_CHANNEL } from "./server-contract";
+
+interface StoredEvent {
+  type: string;
+  seq: number;
+  data: unknown;
+}
+
+/** One stored thread event row, shaped like `ThreadEventRow`. */
+function event(type: string, seq: number, data: unknown): StoredEvent {
+  return { type, seq, data };
+}
+
+const tokenUsage = (total: number) =>
+  event("thread/tokenUsage/updated", 10, {
+    providerThreadId: "p",
+    tokenUsage: {
+      last: {
+        totalTokens: total,
+        inputTokens: total,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningOutputTokens: 0,
+      },
+      total: {
+        totalTokens: total,
+        inputTokens: total,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningOutputTokens: 0,
+      },
+      modelContextWindow: 200_000,
+    },
+  });
+
+const contextWindowUsage = (usedTokens: number | null, window: number | null) =>
+  event("thread/contextWindowUsage/updated", 11, {
+    providerThreadId: "p",
+    contextWindowUsage: { usedTokens, modelContextWindow: window, estimated: false },
+  });
+
+const modelFallback = (seq: number) =>
+  event("provider/modelFallback", seq, {
+    providerThreadId: "p",
+    originalModel: "opus",
+    fallbackModel: "sonnet",
+    reason: "provider",
+    message: "capacity",
+  });
+
+const rateLimits = (status: string) =>
+  event("provider/rateLimits/updated", 13, {
+    rateLimits: {
+      kind: "subscription-window",
+      overageReason: null,
+      overageStatus: null,
+      providerId: "anthropic",
+      reachedReason: null,
+      status,
+      windows: [],
+    },
+  });
+
+const goalUpdated = (seq: number) =>
+  event("thread/goal/updated", seq, {
+    providerThreadId: "p",
+    objective: "ship it",
+    status: "active",
+    timeUsedSeconds: 1,
+    tokenBudget: 50_000,
+    tokensUsed: 1_000,
+  });
+
+const goalCleared = (seq: number) =>
+  event("thread/goal/cleared", seq, { providerThreadId: "p" });
+
+/**
+ * A host whose `events.list` reproduces the server's filter semantics: filter
+ * by `types`, order by `seq`, then apply `limit` to the *filtered* list. That
+ * last step is what makes the combined-read regression observable.
+ */
+function hostWith(options: {
+  events?: Record<string, StoredEvent[]>;
+  execution?: unknown;
+}): FakePluginHost {
+  const byThread = options.events ?? {};
+  const sdk: CreateFakePluginHostOptions["sdk"] = {
+    threads: {
+      defaultExecutionOptions: async () => options.execution ?? null,
+      events: {
+        list: async (args) => {
+          const { threadId, types, order, limit } = args as {
+            threadId: string;
+            types?: readonly string[];
+            order?: "asc" | "desc";
+            limit?: string;
+          };
+          const rows = (byThread[threadId] ?? [])
+            .filter((row) => !types || types.includes(row.type))
+            .sort((a, b) => (order === "desc" ? b.seq - a.seq : a.seq - b.seq))
+            .map((row) => ({
+              id: `${row.type}:${row.seq}`,
+              scope: "thread",
+              threadId,
+              seq: row.seq,
+              createdAt: row.seq,
+              type: row.type,
+              data: row.data,
+            }));
+          return limit ? rows.slice(0, Number(limit)) : rows;
+        },
+      },
+    },
+  };
+  return createFakePluginHost({ pluginId: "better-sidebar", sdk });
+}
+
+const listCalls = (host: FakePluginHost) =>
+  host.harness.inspection.sdk.callsTo("threads.events.list").length;
+
+describe("threadDossier", () => {
+  it("returns economics: null for a thread with no token events, without throwing", async () => {
+    const host = hostWith({
+      events: { t1: [contextWindowUsage(1_000, 200_000)] },
+      execution: { model: "opus", reasoningLevel: "high" },
+    });
+    await plugin(host.bb);
+
+    const dossier = (await host.harness.callRpc("threadDossier", {
+      threadId: "t1",
+    })) as Record<string, unknown>;
+
+    expect(dossier.economics).toBeNull();
+    expect(dossier.execution).toEqual({ model: "opus", reasoningLevel: "high" });
+    expect(dossier.contextWindow).toEqual({
+      usedTokens: 1_000,
+      modelContextWindow: 200_000,
+      estimated: false,
+    });
+    expect(dossier.fetchedAt).toBeTypeOf("number");
+  });
+
+  it("returns execution: null when the thread never resolved execution options", async () => {
+    const host = hostWith({ events: { t1: [tokenUsage(500)] }, execution: null });
+    await plugin(host.bb);
+
+    const dossier = (await host.harness.callRpc("threadDossier", {
+      threadId: "t1",
+    })) as Record<string, unknown>;
+
+    expect(dossier.execution).toBeNull();
+    expect(dossier.economics).toEqual({
+      total: {
+        totalTokens: 500,
+        inputTokens: 500,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningOutputTokens: 0,
+      },
+      modelContextWindow: 200_000,
+    });
+  });
+
+  it("serves a second call inside the TTL from cache, and refetches after thread.idle", async () => {
+    const host = hostWith({ events: { t1: [tokenUsage(500)] } });
+    await plugin(host.bb);
+
+    await host.harness.callRpc("threadDossier", { threadId: "t1" });
+    const afterFirst = listCalls(host);
+    expect(afterFirst).toBe(2);
+
+    await host.harness.callRpc("threadDossier", { threadId: "t1" });
+    expect(listCalls(host)).toBe(afterFirst);
+
+    await host.harness.emitThreadEvent("thread.idle", {
+      thread: makeThreadResponse({ id: "t1" }),
+      lastAssistantText: null,
+    });
+
+    await host.harness.callRpc("threadDossier", { threadId: "t1" });
+    expect(listCalls(host)).toBe(afterFirst * 2);
+  });
+});
+
+describe("lifecycle invalidation (B28)", () => {
+  it("publishes the dossier channel with the thread id on active, idle and failed", async () => {
+    const host = hostWith({});
+    await plugin(host.bb);
+
+    const thread = makeThreadResponse({ id: "t1" });
+    await host.harness.emitThreadEvent("thread.active", { thread });
+    await host.harness.emitThreadEvent("thread.idle", { thread, lastAssistantText: null });
+    await host.harness.emitThreadEvent("thread.failed", { thread, error: null });
+
+    expect(host.harness.inspection.realtimeSignals).toEqual([
+      { channel: DOSSIER_CHANNEL, payload: { threadId: "t1" } },
+      { channel: DOSSIER_CHANNEL, payload: { threadId: "t1" } },
+      { channel: DOSSIER_CHANNEL, payload: { threadId: "t1" } },
+    ]);
+  });
+
+  it("evicts on thread.deleted without publishing", async () => {
+    const host = hostWith({ events: { t1: [tokenUsage(500)] } });
+    await plugin(host.bb);
+
+    await host.harness.callRpc("threadDossier", { threadId: "t1" });
+    const afterFirst = listCalls(host);
+
+    await host.harness.emitThreadEvent("thread.deleted", {
+      thread: makeThreadResponse({ id: "t1" }),
+    });
+
+    expect(host.harness.inspection.realtimeSignals).toEqual([]);
+
+    await host.harness.callRpc("threadDossier", { threadId: "t1" });
+    expect(listCalls(host)).toBe(afterFirst * 2);
+  });
+});
+
+describe("rowSignals", () => {
+  it("issues four events.list calls per thread and none on a second call inside the TTL", async () => {
+    const threadIds = Array.from({ length: 40 }, (_, index) => `t${index}`);
+    const host = hostWith({});
+    await plugin(host.bb);
+
+    await host.harness.callRpc("rowSignals", { threadIds });
+    expect(listCalls(host)).toBe(160);
+
+    await host.harness.callRpc("rowSignals", { threadIds });
+    expect(listCalls(host)).toBe(160);
+  });
+
+  it("returns an all-null row for a thread with no events rather than omitting it", async () => {
+    const host = hostWith({});
+    await plugin(host.bb);
+
+    const result = (await host.harness.callRpc("rowSignals", {
+      threadIds: ["t1"],
+    })) as { signals: unknown[] };
+
+    expect(result.signals).toEqual([
+      {
+        threadId: "t1",
+        contextPressure: null,
+        modelFallback: null,
+        isRateLimitPaused: false,
+        goal: null,
+      },
+    ]);
+  });
+
+  it("reads every signal a thread has", async () => {
+    const host = hostWith({
+      events: {
+        t1: [
+          contextWindowUsage(50_000, 200_000),
+          modelFallback(20),
+          rateLimits("blocked"),
+          goalUpdated(30),
+        ],
+      },
+    });
+    await plugin(host.bb);
+
+    const result = (await host.harness.callRpc("rowSignals", {
+      threadIds: ["t1"],
+    })) as { signals: Record<string, unknown>[] };
+
+    expect(result.signals[0]).toEqual({
+      threadId: "t1",
+      contextPressure: 0.25,
+      modelFallback: {
+        originalModel: "opus",
+        fallbackModel: "sonnet",
+        reason: "provider",
+        message: "capacity",
+      },
+      isRateLimitPaused: true,
+      goal: { status: "active", tokensUsed: 1_000, tokenBudget: 50_000 },
+    });
+  });
+
+  it("leaves contextPressure null when the model context window is unknown", async () => {
+    const host = hostWith({ events: { t1: [contextWindowUsage(50_000, null)] } });
+    await plugin(host.bb);
+
+    const result = (await host.harness.callRpc("rowSignals", {
+      threadIds: ["t1"],
+    })) as { signals: Record<string, unknown>[] };
+
+    expect(result.signals[0]?.contextPressure).toBeNull();
+  });
+
+  it("clears the goal when the newest of the two goal events is a clear", async () => {
+    const host = hostWith({ events: { t1: [goalUpdated(30), goalCleared(31)] } });
+    await plugin(host.bb);
+
+    const result = (await host.harness.callRpc("rowSignals", {
+      threadIds: ["t1"],
+    })) as { signals: Record<string, unknown>[] };
+
+    expect(result.signals[0]?.goal).toBeNull();
+  });
+
+  it("still returns an older modelFallback behind 30 newer goal rows", async () => {
+    // The regression guard for the per-type limit. A single combined read with
+    // limit:"25" would return 25 goal rows and drop this fallback entirely.
+    const host = hostWith({
+      events: {
+        t1: [
+          modelFallback(1),
+          ...Array.from({ length: 30 }, (_, index) => goalUpdated(100 + index)),
+        ],
+      },
+    });
+    await plugin(host.bb);
+
+    const result = (await host.harness.callRpc("rowSignals", {
+      threadIds: ["t1"],
+    })) as { signals: Record<string, unknown>[] };
+
+    expect(result.signals[0]?.modelFallback).toEqual({
+      originalModel: "opus",
+      fallbackModel: "sonnet",
+      reason: "provider",
+      message: "capacity",
+    });
+  });
+});
+
+describe("contract input validation", () => {
+  it("rejects more than 60 thread ids at the contract, before any handler runs", async () => {
+    const host = hostWith({});
+    await plugin(host.bb);
+
+    const threadIds = Array.from({ length: 61 }, (_, index) => `t${index}`);
+    await expect(host.harness.callRpc("rowSignals", { threadIds })).rejects.toThrow();
+    expect(listCalls(host)).toBe(0);
+  });
+
+  it("lets exactly 60 thread ids through to the handler", async () => {
+    const host = hostWith({});
+    await plugin(host.bb);
+
+    const threadIds = Array.from({ length: 60 }, (_, index) => `t${index}`);
+    const result = (await host.harness.callRpc("rowSignals", { threadIds })) as {
+      signals: unknown[];
+    };
+
+    expect(result.signals).toHaveLength(60);
+    expect(listCalls(host)).toBe(240);
+  });
+
+  it("rejects a blank thread id", async () => {
+    const host = hostWith({});
+    await plugin(host.bb);
+
+    await expect(
+      host.harness.callRpc("threadDossier", { threadId: "   " }),
+    ).rejects.toThrow();
+  });
+});
+
+describe("handler failure (ruling 10)", () => {
+  it("rejects the call rather than resolving with null fields when the SDK fails", async () => {
+    const host = hostWith({});
+    host.harness.inspection.sdk.stub("threads.events.list", () => {
+      throw new Error("server gone");
+    });
+    await plugin(host.bb);
+
+    await expect(
+      host.harness.callRpc("threadDossier", { threadId: "t1" }),
+    ).rejects.toThrow();
+
+    // The failure is not cached: the next call retries.
+    const before = listCalls(host);
+    await expect(
+      host.harness.callRpc("threadDossier", { threadId: "t1" }),
+    ).rejects.toThrow();
+    expect(listCalls(host)).toBeGreaterThan(before);
+  });
+});
+
+describe("registration", () => {
+  it("registers both contract methods and the three settings descriptors", async () => {
+    const host = hostWith({});
+    await plugin(host.bb);
+
+    expect(Object.keys(betterSidebarRpcContract)).toEqual(["threadDossier", "rowSignals"]);
+
+    const descriptors = host.harness.inspection.registrations.settingsDescriptors;
+    expect(Object.keys(descriptors)).toEqual(["groupBy", "secondRow", "tooltip"]);
+    expect(descriptors.groupBy?.default).toBe("date");
+    expect(descriptors.secondRow?.default).toBe("auto");
+    expect(descriptors.tooltip?.default).toBe("rich");
+  });
+});
