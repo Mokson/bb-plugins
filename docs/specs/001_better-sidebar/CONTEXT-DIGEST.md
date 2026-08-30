@@ -78,3 +78,12 @@ sandbox blocks vitest's `node_modules/.vite-temp` writes and `.git/index.lock`:
 - scoped: `npx vitest run src/<dir>/` — ~1s
 - `bb plugin build .` — ~3s
 - `bb plugin install . --yes` — ~3s
+
+## Radix menus under jsdom (added by the B76-B78 wave)
+
+- A `DropdownMenu` opens with `fireEvent.keyDown(trigger, {key: "Enter"})`.
+- A `DropdownMenu.Sub` opens with `fireEvent.click` on the sub trigger. `ArrowRight`
+  does **not** open it under jsdom, whatever the Radix docs say about real browsers.
+- Rows are keyed per section, so changing the grouping necessarily remounts them.
+  "No remount" assertions must target the scroll container's node identity plus
+  surviving collapse state, never a row node.
