@@ -24,6 +24,26 @@
           "tagPrefix": "better-sidebar/"
         }
       }
+    },
+    {
+      "id": "push-notify",
+      "displayName": "Push Notify",
+      "description": "Web Push notifications when a bb agent finishes, fails, or stops to ask you something, with server-wide filters for subagent threads, short turns, and muted projects.",
+      "icon": "Notification01",
+      "tags": ["notifications", "web-push", "productivity"],
+      "author": {
+        "name": "Maksym Moklyak",
+        "github": "Mokson",
+        "url": "https://github.com/Mokson"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/Mokson/bb-plugins.git",
+          "subdir": "plugins/push-notify",
+          "range": "^0.1.0",
+          "tagPrefix": "push-notify/"
+        }
+      }
     }
   ]
 }
