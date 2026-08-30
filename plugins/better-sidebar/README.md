@@ -13,8 +13,13 @@ branch, and state read without opening it.
   all. Each section header carries its own thread count and collapses on click.
 - **A second metadata row** — the project name, the git branch, and the host the
   thread runs on, under the title.
-- **A provider glyph** — the real provider mark for each thread, withheld while
-  the directory still loads rather than drawn as a placeholder.
+- **A provider glyph** — the real provider mark for each thread, served from a
+  `localStorage` cache of the last directory answer so a reload draws it at
+  once. Only a first run withholds the mark, and it withholds rather than
+  drawing a placeholder.
+- **A relative time per row** — when the thread last did anything, read from
+  its newest event. bb's `updatedAt` is a record write that lags a running
+  agent and moves for every thread at once on a bulk write.
 - **Status glyphs** — five row states (needs you, working, planning, draft,
   idle) plus unread, each with one glyph. Extra signals — an error, a warning, a
   paused thread, a token budget ring — sit in the row's signal cluster.

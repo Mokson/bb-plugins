@@ -70,6 +70,13 @@ export const threadExecutionSchema = z.object({
   execution: executionSchema,
 });
 
+/** B82: one entry per requested id. `at` is null when the thread has no events. */
+export const threadLastActivitySchema = z.object({
+  threadId: z.string(),
+  /** Epoch ms of the thread's newest event, of any type. */
+  at: z.number().nullable(),
+});
+
 export const betterSidebarRpcContract = defineRpcContract({
   /** One hovered thread's dossier. B31 returns nulls, never throws. */
   threadDossier: {
@@ -90,6 +97,19 @@ export const betterSidebarRpcContract = defineRpcContract({
     input: z.object({ threadIds: z.array(threadIdSchema).max(60) }),
     output: z.object({ executions: z.array(threadExecutionSchema) }),
   },
+  /**
+   * B82: when each thread last did anything, for the row's relative time.
+   *
+   * `thread.updatedAt` is a record write, not activity: it moves when the user
+   * sends a message or the thread is archived, and a bulk write stamps every
+   * thread at once. Measured on a running thread, `updatedAt` sat 111s behind
+   * the newest event while the agent worked. The newest event row is the
+   * activity, so the row reads that instead.
+   */
+  lastActivity: {
+    input: z.object({ threadIds: z.array(threadIdSchema).max(60) }),
+    output: z.object({ activity: z.array(threadLastActivitySchema) }),
+  },
 });
 
 export const DOSSIER_CHANNEL = "thread-dossier";
@@ -100,3 +120,5 @@ export type Dossier = z.infer<typeof dossierSchema>;
 export type RowSignal = z.infer<typeof rowSignalSchema>;
 /** One entry of the `threadExecutions` result. */
 export type ThreadExecution = z.infer<typeof threadExecutionSchema>;
+/** One entry of the `lastActivity` result. */
+export type ThreadLastActivity = z.infer<typeof threadLastActivitySchema>;

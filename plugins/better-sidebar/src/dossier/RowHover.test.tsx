@@ -81,6 +81,7 @@ function handlers(
     threadDossier: ({ threadId }) => dossier(threadId),
     rowSignals: () => ({ signals: [] }),
     threadExecutions: () => ({ executions: [] }),
+    lastActivity: () => ({ activity: [] }),
     ...overrides,
   };
 }

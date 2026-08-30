@@ -46,6 +46,12 @@ export interface ThreadRowProps {
   row: RenderRow;
   /** Quantized clock, shared by every row in one render. */
   now: number;
+  /**
+   * B82: epoch ms of the thread's newest event, from the list's batched
+   * lookup. `undefined` until it lands, or when the lookup failed, and the row
+   * falls back to `thread.updatedAt` — a record write, which lags real work.
+   */
+  lastActivityAt?: number;
   /** B19/B60, decided by the list from `density` and the group mode. */
   showSecondRow: boolean;
   /** B61.1: `false` skips `experimental_useSidebarThreadPullRequest` entirely. */
@@ -101,6 +107,7 @@ function RowWithPullRequest(props: ThreadRowProps) {
 function RowBody({
   row,
   now,
+  lastActivityAt,
   showSecondRow,
   showProviderGlyph = true,
   showRelativeTime = true,
@@ -304,7 +311,7 @@ function RowBody({
                     B51.5's fixed slot has no anchor left to pin. */}
                 {showRelativeTime ? (
                   <span className={cn(TRAILING_TEXT_CLASS, "ml-1.5 w-7")}>
-                    {relativeTimeLabel(thread.updatedAt, now)}
+                    {relativeTimeLabel(lastActivityAt ?? thread.updatedAt, now)}
                   </span>
                 ) : null}
               </div>

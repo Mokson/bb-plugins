@@ -502,6 +502,7 @@ function handlers(
         execution: { model: "claude-opus-5", reasoningLevel: "high" },
       })),
     }),
+    lastActivity: () => ({ activity: [] }),
     ...overrides,
   };
 }

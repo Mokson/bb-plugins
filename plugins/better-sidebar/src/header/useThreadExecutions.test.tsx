@@ -50,6 +50,7 @@ function handlers(
         execution: { model: `model-${threadId}`, reasoningLevel: "high" },
       })),
     }),
+    lastActivity: () => ({ activity: [] }),
     ...overrides,
   };
 }
