@@ -122,6 +122,41 @@ Row 1 becomes:
 > the screenshots show that indent working. If the intent was a fully flat list with no
 > nesting indent either, say so; it is a one-line change.
 
+## B63 — the PR chip is coloured by state, with breakage overriding
+
+**Supersedes B34.** B34 tinted the chip by `attention` — bb's rolled-up "does this
+need you" roll-up — with merged special-cased. The user asked for the PR's **state**,
+and the SDK carries that as a separate field. The two answer different questions:
+`state` is *what is this PR*, `attention` is *do I need to act*.
+
+Colour now follows **GitHub's own palette**, because that is the language the user
+already reads PRs in everywhere else, and a plugin that uses green and red to mean
+something different is worse than one that adds no colour at all.
+
+| `state` | Colour |
+| --- | --- |
+| `draft` | muted / grey |
+| `open` | green |
+| `merged` | purple |
+| `closed` | red |
+
+- **B63.1** (auto) **Breakage overrides state.** An `open` PR whose `attention` is
+  `checks_failed` or `conflicts` renders **red**, not green. This is the one case worth
+  interrupting a glance, and it is why pure state colouring was rejected.
+- **B63.2** (auto) `attention` keeps its full role **in words** on the hover card
+  (B35) — "Checks failed", "Changes requested", "Ready to merge". Nothing is lost by
+  moving colour to `state`; the actionable detail simply stops competing with the
+  identity signal.
+- **B63.3** (auto) Clicking the chip opens the PR through the host's `openUrl` and
+  never navigates the thread. Already built (`PrChip.tsx:74` via `ThreadRow`'s single
+  shared handler, §7's B36 ruling); restated here because the user named it as a
+  requirement.
+- **B63.4** (manual) **None of this has ever rendered.** QA found zero threads with a
+  pull request in the user's bb, so the chip, its colours, its hover card and its click
+  are all *untested in practice*. Any QA pass that can reach a thread with a real PR
+  must exercise all four states, and must confirm `openUrl` actually reaches GitHub
+  from a remote `getbb.app` session as well as from the desktop app.
+
 ## B56 — Row 2 protects the project name from a long branch
 
 Reported by the user against the running build, with a screenshot: a row showing
