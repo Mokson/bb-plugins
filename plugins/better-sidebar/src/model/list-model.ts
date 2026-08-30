@@ -15,13 +15,16 @@ import type {
   SectionKey,
 } from "./types";
 
-/** B13: `title ?? titleFallback ?? "Untitled"`, whitespace-only counting as absent. */
+/**
+ * B13: `title ?? titleFallback ?? "Untitled"`. The chain is **nullish**, not
+ * truthy: a thread that carries a title only ever shows that title, so a
+ * whitespace-only `"   "` renders as `"Untitled"` rather than borrowing the
+ * fallback of a thread the host already considers named.
+ */
 export function resolveTitle(thread: PluginSidebarThread): string {
-  const title = thread.title?.trim();
-  if (title) return title;
-  const fallback = thread.titleFallback?.trim();
-  if (fallback) return fallback;
-  return "Untitled";
+  const chosen = thread.title ?? thread.titleFallback ?? "";
+  const trimmed = chosen.trim();
+  return trimmed === "" ? "Untitled" : trimmed;
 }
 
 const WORKTREE_KINDS = new Set(["managed-worktree", "unmanaged-worktree"]);
@@ -89,13 +92,36 @@ function buildTree(input: ListModelInput): Tree {
 
   const visible = input.threads.filter((thread) => isVisible(thread, new Set()));
   const byId = new Map(visible.map((thread) => [thread.id, thread]));
+
+  /**
+   * B1: a `parentThreadId` cycle (`A→B`, `B→A`) would leave every member of the
+   * cycle unreachable from `roots`, and the whole ring would vanish from the
+   * list. The rule: **a thread that can reach itself by walking parents has no
+   * reachable visible root, so it is treated as a root.** Every cycle member
+   * qualifies, so every one of them renders exactly once, and the edges that
+   * survive into `childrenOf` are acyclic by construction.
+   */
+  const isOnParentCycle = (thread: PluginSidebarThread): boolean => {
+    const seen = new Set<string>([thread.id]);
+    let parentId = thread.parentThreadId;
+    while (parentId) {
+      if (parentId === thread.id) return true;
+      if (seen.has(parentId)) return false; // a ring the thread is not part of
+      seen.add(parentId);
+      parentId = byId.get(parentId)?.parentThreadId ?? null;
+    }
+    return false;
+  };
+
   const childrenOf = new Map<string, PluginSidebarThread[]>();
   const roots: PluginSidebarThread[] = [];
   for (const thread of visible) {
     // B9: a thread whose parent is not visible is its own root, so orphans stay
     // reachable rather than disappearing with their parent.
     const parentId =
-      thread.parentThreadId && byId.has(thread.parentThreadId)
+      thread.parentThreadId &&
+      byId.has(thread.parentThreadId) &&
+      !isOnParentCycle(thread)
         ? thread.parentThreadId
         : null;
     if (parentId === null) {
@@ -264,68 +290,129 @@ function buildLiveSections(
 }
 
 /**
- * Step 7 of §3 / §4: the overlay pins the WHOLE flattened sequence, not one
- * section at a time, so nothing the pointer is aiming at can move.
+ * A root row together with the visible subtree rendered beneath it, exactly as
+ * the live model laid it out.
+ *
+ * This is the unit the freeze orders, and it is what makes the overlay correct
+ * by construction rather than by enumerated cases. A child is never ordered
+ * independently of its parent, so a subtree expanded while frozen cannot be
+ * mistaken for a set of newly arrived threads — the situation that let expanding
+ * a node scatter its children to the bottom of the list.
+ */
+interface RootGroup {
+  readonly rootId: string;
+  readonly rows: readonly RenderRow[];
+}
+
+/** Splits a section's pre-order rows back into root subtrees, on `depth === 0`. */
+function groupRoots(rows: readonly RenderRow[]): RootGroup[] {
+  const groups: { rootId: string; rows: RenderRow[] }[] = [];
+  for (const row of rows) {
+    const current = groups[groups.length - 1];
+    if (row.depth === 0 || current === undefined) {
+      groups.push({ rootId: row.thread.id, rows: [row] });
+    } else {
+      current.rows.push(row);
+    }
+  }
+  return groups;
+}
+
+/** Re-homes a row into the section it is actually rendered in. */
+function inSection(row: RenderRow, key: SectionKey): RenderRow {
+  if (row.sectionKey === key) return row;
+  return { ...row, sectionKey: key, dimLevel: dimLevelFor(key) };
+}
+
+/**
+ * Step 7 of §3 / §4 — the overlay.
+ *
+ * **Everything structural comes from the live model**: which sections exist,
+ * their headers, labels, counts, collapsibility and collapse state, and the
+ * parent/child nesting inside every root subtree. The snapshot contributes one
+ * thing only — the ORDER of the root subtrees within the whole rendered
+ * sequence, plus which section each already-rendered root sits in.
+ *
+ * That split is the invariant: because the overlay never rebuilds structure, no
+ * structural change made while the pointer is over the list (expanding a
+ * subtree, collapsing a section, a bucket re-partition) can be misread as a
+ * reordering. It simply renders, in the position the snapshot already fixed.
  */
 function applyFreeze(
   live: readonly RenderSection[],
   input: ListModelInput,
-  projectNames: ReadonlyMap<string, string>,
 ): RenderSection[] {
   const frozen = input.frozen!;
-  const liveRows = new Map<string, RenderRow>();
+  const rankOf = new Map(frozen.ids.map((id, index) => [id, index]));
+  const liveByKey = new Map(live.map((section) => [section.key, section]));
+  const arrivalOf = new Map(input.threads.map((thread, index) => [thread.id, index]));
+
+  const known: { group: RootGroup; key: SectionKey; rank: number }[] = [];
+  const newcomers: RootGroup[] = [];
   for (const section of live) {
-    for (const row of section.rows) liveRows.set(row.thread.id, row);
+    for (const group of groupRoots(section.rows)) {
+      const rank = rankOf.get(group.rootId);
+      if (rank === undefined) {
+        newcomers.push(group);
+        continue;
+      }
+      // A frozen row never changes section, but only into a section the LIVE
+      // model still renders; otherwise it stays where the live model put it.
+      const frozenKey = frozen.sectionOf[group.rootId];
+      const key =
+        frozenKey !== undefined && liveByKey.has(frozenKey) ? frozenKey : section.key;
+      known.push({ group, key, rank });
+    }
   }
 
-  const rowsBySection = new Map<SectionKey, RenderRow[]>();
-  const claimed = new Set<string>();
-  const order: SectionKey[] = [...frozen.sectionOrder];
-  for (const id of frozen.ids) {
-    const row = liveRows.get(id);
-    if (!row) continue; // deleted, archived or filtered out: survivors close the gap
-    const key = frozen.sectionOf[id] ?? row.sectionKey;
-    if (!order.includes(key)) order.push(key);
-    const pinned: RenderRow = { ...row, sectionKey: key, dimLevel: dimLevelFor(key) };
-    const rows = rowsBySection.get(key);
-    if (rows) rows.push(pinned);
-    else rowsBySection.set(key, [pinned]);
-    claimed.add(id);
+  // Nothing pinned survives, so there is no order left to preserve. Releasing
+  // the freeze is the whole answer — a hybrid of live and frozen order is not.
+  if (known.length === 0) return [...live];
+
+  const rowsByKey = new Map<SectionKey, RenderRow[]>();
+  for (const entry of known.sort((a, b) => a.rank - b.rank)) {
+    let rows = rowsByKey.get(entry.key);
+    if (!rows) rowsByKey.set(entry.key, (rows = []));
+    for (const row of entry.group.rows) rows.push(inSection(row, entry.key));
   }
+
+  // §4 point 1: sections present at freeze time keep their relative order; a
+  // section the live model has since introduced is appended after them, where
+  // it cannot push an already-rendered row down.
+  const order: SectionKey[] = frozen.sectionOrder.filter((key) => liveByKey.has(key));
+  for (const section of live) if (!order.includes(section.key)) order.push(section.key);
 
   const sections: RenderSection[] = [];
   for (const key of order) {
-    const rows = rowsBySection.get(key) ?? [];
-    if (rows.length === 0) continue; // B4 still holds while frozen
-    sections.push(makeSection(key, rows, rows.length, input, projectNames));
+    const section = liveByKey.get(key)!;
+    const rows = section.isCollapsed ? [] : (rowsByKey.get(key) ?? []);
+    // B4 holds while frozen too, but a collapsed section is present by right:
+    // it has a live count to show even though it renders no rows.
+    if (rows.length === 0 && !section.isCollapsed) continue;
+    sections.push({ ...section, rows });
   }
 
-  // §4 point 4: a thread that arrived while frozen renders immediately at the very
-  // end of the entire list, in arrival order, with no section header of its own.
-  const newcomers: RenderRow[] = [];
-  for (const thread of input.threads) {
-    if (claimed.has(thread.id)) continue;
-    const row = liveRows.get(thread.id);
-    if (row) newcomers.push(row);
-  }
   if (newcomers.length === 0) return sections;
 
-  for (let index = sections.length - 1; index >= 0; index -= 1) {
-    const host = sections[index]!;
-    if (host.isCollapsed) continue;
-    sections[index] = {
-      ...host,
-      count: host.count + newcomers.length,
-      rows: [...host.rows, ...newcomers],
-    };
-    return sections;
-  }
-  // Nothing frozen survives to append to: fall back to the newcomers' live sections.
-  const keys = new Set(newcomers.map((row) => row.sectionKey));
-  for (const section of live) {
-    if (!keys.has(section.key)) continue;
-    sections.push(section);
-  }
+  // §4 point 4: a thread that genuinely arrived while frozen renders at the very
+  // end of the ENTIRE list, in arrival order — the only position that provably
+  // moves nothing above it. It gets no section header of its own.
+  newcomers.sort(
+    (a, b) => (arrivalOf.get(a.rootId) ?? 0) - (arrivalOf.get(b.rootId) ?? 0),
+  );
+  let hostIndex = sections.length - 1;
+  while (hostIndex >= 0 && sections[hostIndex]!.isCollapsed) hostIndex -= 1;
+  if (hostIndex === -1) return [...live]; // nowhere to append: release instead
+
+  const host = sections[hostIndex]!;
+  const appended = newcomers.flatMap((group) =>
+    group.rows.map((row) => inSection(row, host.key)),
+  );
+  sections[hostIndex] = {
+    ...host,
+    count: host.count + appended.length,
+    rows: [...host.rows, ...appended],
+  };
   return sections;
 }
 
@@ -336,7 +423,7 @@ export function buildListModel(input: ListModelInput): ListModel {
     input.searchQuery.trim() === ""
       ? buildLiveSections(tree, input, projectNames)
       : buildSearchSections(tree, input, projectNames);
-  const sections = input.frozen ? applyFreeze(live, input, projectNames) : live;
+  const sections = input.frozen ? applyFreeze(live, input) : live;
   let rowCount = 0;
   for (const section of sections) rowCount += section.rows.length;
   return { sections, rowCount };

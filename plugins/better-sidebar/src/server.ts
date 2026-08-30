@@ -6,43 +6,9 @@ import {
   type RowSignal,
 } from "./server-contract";
 
-/** TECH.md §5: threadDossier absorbs the re-hover burst; rowSignals a scroll. */
-const DOSSIER_TTL_MS = 10_000;
-const SIGNALS_TTL_MS = 30_000;
-
 type ThreadsApi = BbPluginApi["sdk"]["threads"];
 type EventRow = Awaited<ReturnType<ThreadsApi["events"]["list"]>>[number];
 type EventType = EventRow["type"];
-
-/** A TTL cache over in-flight promises, so a burst of hovers is one SDK read. */
-class TtlCache<T> {
-  readonly #entries = new Map<string, { promise: Promise<T>; expiresAt: number }>();
-  readonly #ttlMs: number;
-
-  constructor(ttlMs: number) {
-    this.#ttlMs = ttlMs;
-  }
-
-  get(key: string, load: () => Promise<T>): Promise<T> {
-    const cached = this.#entries.get(key);
-    if (cached && cached.expiresAt > Date.now()) return cached.promise;
-    this.#entries.delete(key);
-
-    const promise = load();
-    const entry = { promise, expiresAt: Date.now() + this.#ttlMs };
-    this.#entries.set(key, entry);
-    // A failure is the caller's to surface (ruling 10); it is never cached, so
-    // the next call retries. The catch only keeps the rejection from detaching.
-    promise.catch(() => {
-      if (this.#entries.get(key) === entry) this.#entries.delete(key);
-    });
-    return promise;
-  }
-
-  delete(key: string): void {
-    this.#entries.delete(key);
-  }
-}
 
 /**
  * The newest event row of the given types, or null when the thread has none.
@@ -148,10 +114,6 @@ async function loadRowSignal(threads: ThreadsApi, threadId: string): Promise<Row
 }
 
 export default function plugin(bb: BbPluginApi) {
-  // Caches live per load, so a reload starts cold and nothing outlives dispose.
-  const dossierCache = new TtlCache<Dossier>(DOSSIER_TTL_MS);
-  const signalsCache = new TtlCache<RowSignal>(SIGNALS_TTL_MS);
-
   // B48-B50
   bb.settings.define({
     groupBy: {
@@ -174,35 +136,32 @@ export default function plugin(bb: BbPluginApi) {
     },
   });
 
+  // These handlers do not cache. The frontend already caches both methods at
+  // the same TTLs, with in-flight de-duplication, and there is exactly one
+  // client per backend — so a backend copy absorbs nothing a single client can
+  // notice, while adding a second invalidation surface that can silently
+  // disagree with the first. One cache, on the side that serves the hover.
   bb.rpc.register(betterSidebarRpcContract, {
     // `bb.sdk.threads` is read per call, not captured: a disposed handle must
     // throw PluginContextStaleError rather than reach a dead runtime.
-    threadDossier: ({ threadId }) =>
-      dossierCache.get(threadId, () => loadDossier(bb.sdk.threads, threadId)),
+    threadDossier: ({ threadId }) => loadDossier(bb.sdk.threads, threadId),
     rowSignals: async ({ threadIds }) => ({
       signals: await Promise.all(
-        threadIds.map((threadId) =>
-          signalsCache.get(threadId, () => loadRowSignal(bb.sdk.threads, threadId)),
-        ),
+        threadIds.map((threadId) => loadRowSignal(bb.sdk.threads, threadId)),
       ),
     }),
   });
 
   // B28, re-worded by §7: `thread/tokenUsage/updated` is not subscribable, but
-  // `thread.idle` fires exactly when that turn's last usage event has landed.
-  for (const event of ["thread.active", "thread.idle", "thread.failed"] as const) {
+  // `thread.idle` fires exactly when that turn's last usage event has landed —
+  // which is why it, and not `thread.active`, is the moment to invalidate.
+  // `thread.active` fires at the START of a turn, when no new usage data exists
+  // yet; publishing there only doubles every visible row's refetch per turn.
+  for (const event of ["thread.idle", "thread.failed"] as const) {
     bb.events.on(event, ({ thread }) => {
-      dossierCache.delete(thread.id);
-      signalsCache.delete(thread.id);
       bb.realtime.publish(DOSSIER_CHANNEL, { threadId: thread.id });
     });
   }
-
-  // A deleted thread has no row left to refresh: evict, do not publish.
-  bb.events.on("thread.deleted", ({ thread }) => {
-    dossierCache.delete(thread.id);
-    signalsCache.delete(thread.id);
-  });
 
   bb.log.info(`loaded ${bb.pluginId}`);
 }

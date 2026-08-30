@@ -111,8 +111,14 @@ export function useFreeze(invalidators: FreezeInvalidators): FreezeHandle {
   return { frozen, observe, onPointerEnter, onPointerLeave, release };
 }
 
-/** Flattens the rendered model into the sequence a freeze pins (§4). */
-function snapshot(model: ListModel): FrozenOrder {
+/**
+ * Flattens the rendered model into the sequence a freeze pins (§4).
+ *
+ * Exported so the model's freeze tests drive the **real** machine output into
+ * the real overlay. A hand-copied stand-in in the test file is what let the
+ * overlay and the machine diverge unnoticed.
+ */
+export function snapshot(model: ListModel): FrozenOrder {
   const ids: string[] = [];
   const sectionOf: Record<string, SectionKey> = {};
   for (const section of model.sections) {

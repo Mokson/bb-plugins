@@ -169,73 +169,87 @@ describe("threadDossier", () => {
     });
   });
 
-  it("serves a second call inside the TTL from cache, and refetches after thread.idle", async () => {
+  // The backend does not cache (F9): the frontend caches both methods at the
+  // same TTLs with in-flight dedup, and a second copy here only adds a second
+  // invalidation surface. What the handler owes every caller is a correct
+  // payload, so that — not a call count — is what this asserts.
+  it("serves every repeat call the same payload, and picks up new data after a turn", async () => {
     const host = hostWith({ events: { t1: [tokenUsage(500)] } });
     await plugin(host.bb);
 
-    await host.harness.callRpc("threadDossier", { threadId: "t1" });
-    const afterFirst = listCalls(host);
-    expect(afterFirst).toBe(2);
-
-    await host.harness.callRpc("threadDossier", { threadId: "t1" });
-    expect(listCalls(host)).toBe(afterFirst);
+    const first = await host.harness.callRpc("threadDossier", { threadId: "t1" });
+    const second = await host.harness.callRpc("threadDossier", { threadId: "t1" });
+    expect((second as { economics: unknown }).economics).toEqual(
+      (first as { economics: unknown }).economics,
+    );
 
     await host.harness.emitThreadEvent("thread.idle", {
       thread: makeThreadResponse({ id: "t1" }),
       lastAssistantText: null,
     });
 
-    await host.harness.callRpc("threadDossier", { threadId: "t1" });
-    expect(listCalls(host)).toBe(afterFirst * 2);
+    const third = (await host.harness.callRpc("threadDossier", {
+      threadId: "t1",
+    })) as { economics: { total: { totalTokens: number } } };
+    expect(third.economics.total.totalTokens).toBe(500);
   });
 });
 
 describe("lifecycle invalidation (B28)", () => {
-  it("publishes the dossier channel with the thread id on active, idle and failed", async () => {
+  it("publishes the dossier channel on idle and failed — the moments data lands", async () => {
     const host = hostWith({});
     await plugin(host.bb);
 
     const thread = makeThreadResponse({ id: "t1" });
-    await host.harness.emitThreadEvent("thread.active", { thread });
     await host.harness.emitThreadEvent("thread.idle", { thread, lastAssistantText: null });
     await host.harness.emitThreadEvent("thread.failed", { thread, error: null });
 
     expect(host.harness.inspection.realtimeSignals).toEqual([
       { channel: DOSSIER_CHANNEL, payload: { threadId: "t1" } },
       { channel: DOSSIER_CHANNEL, payload: { threadId: "t1" } },
-      { channel: DOSSIER_CHANNEL, payload: { threadId: "t1" } },
     ]);
   });
 
-  it("evicts on thread.deleted without publishing", async () => {
-    const host = hostWith({ events: { t1: [tokenUsage(500)] } });
+  // F8: `thread.active` fires at the START of a turn, before any new usage
+  // event exists. Invalidating there refetches every visible row for no new
+  // data, doubling the per-turn cost of the whole list.
+  it("does not publish on thread.active, when no new usage data exists yet", async () => {
+    const host = hostWith({});
     await plugin(host.bb);
 
-    await host.harness.callRpc("threadDossier", { threadId: "t1" });
-    const afterFirst = listCalls(host);
+    await host.harness.emitThreadEvent("thread.active", {
+      thread: makeThreadResponse({ id: "t1" }),
+    });
+
+    expect(host.harness.inspection.realtimeSignals).toEqual([]);
+  });
+
+  it("does not publish on thread.deleted: a deleted row has nothing to refresh", async () => {
+    const host = hostWith({ events: { t1: [tokenUsage(500)] } });
+    await plugin(host.bb);
 
     await host.harness.emitThreadEvent("thread.deleted", {
       thread: makeThreadResponse({ id: "t1" }),
     });
 
     expect(host.harness.inspection.realtimeSignals).toEqual([]);
-
-    await host.harness.callRpc("threadDossier", { threadId: "t1" });
-    expect(listCalls(host)).toBe(afterFirst * 2);
   });
 });
 
 describe("rowSignals", () => {
-  it("issues four events.list calls per thread and none on a second call inside the TTL", async () => {
+  it("issues exactly four events.list calls per requested thread, and one row each", async () => {
     const threadIds = Array.from({ length: 40 }, (_, index) => `t${index}`);
     const host = hostWith({});
     await plugin(host.bb);
 
-    await host.harness.callRpc("rowSignals", { threadIds });
-    expect(listCalls(host)).toBe(160);
+    const result = (await host.harness.callRpc("rowSignals", { threadIds })) as {
+      signals: { threadId: string }[];
+    };
 
-    await host.harness.callRpc("rowSignals", { threadIds });
+    // §7's B37-B40 bound: four reads per thread, never more, and a row per id
+    // in the order asked for — the payload, not a cache hit, is the contract.
     expect(listCalls(host)).toBe(160);
+    expect(result.signals.map((signal) => signal.threadId)).toEqual(threadIds);
   });
 
   it("returns an all-null row for a thread with no events rather than omitting it", async () => {

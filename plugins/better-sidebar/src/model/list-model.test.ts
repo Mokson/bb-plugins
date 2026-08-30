@@ -4,7 +4,11 @@ import type {
   PluginSidebarThread,
 } from "@get-bb/plugin-sdk/app";
 import { buildListModel, resolveTitle, resolveWorkspaceLabel } from "./list-model";
-import type { FrozenOrder, ListModelInput, ListModel, SectionKey } from "./types";
+// The REAL freeze machine's snapshot, not a copy of it (F6). Every freeze test
+// below drives useFreeze's own output into buildListModel, so the machine and
+// the overlay can no longer diverge behind two agreeing stand-ins.
+import { snapshot } from "../useFreeze";
+import type { ListModelInput, ListModel, SectionKey } from "./types";
 
 /** Fixed local epochs — never Date.now(). */
 const NOW = new Date(2026, 7, 30, 12, 0, 0, 0).getTime();
@@ -218,15 +222,21 @@ describe("nesting (B9) and archived children (B11)", () => {
 describe("title resolution (B13)", () => {
   it("walks title, then titleFallback, then Untitled", () => {
     expect(resolveTitle(thread("a", { title: " Real " }))).toBe("Real");
-    expect(
-      resolveTitle(thread("a", { title: "   ", titleFallback: " Fallback " })),
-    ).toBe("Fallback");
+    expect(resolveTitle(thread("a", { title: null, titleFallback: " Fb " }))).toBe("Fb");
     expect(resolveTitle(thread("a", { title: null, titleFallback: "  " }))).toBe(
       "Untitled",
     );
     expect(resolveTitle(thread("a", { title: null, titleFallback: null }))).toBe(
       "Untitled",
     );
+  });
+
+  it("does not fall through to the fallback for a whitespace-only title (F5)", () => {
+    // The chain is nullish: a thread the host considers named never borrows
+    // another field's text just because its own title trims to nothing.
+    expect(
+      resolveTitle(thread("a", { title: "   ", titleFallback: " Fallback " })),
+    ).toBe("Untitled");
   });
 
   it("puts the resolved title on the row, not the raw field", () => {
@@ -363,20 +373,8 @@ describe("freeze overlay (B6, §4 points 1-5)", () => {
     thread("c", { isPinned: true, latestAttentionAt: NOW - 3000 }),
   ];
 
-  function freezeOf(model: ListModel): FrozenOrder {
-    const ids: string[] = [];
-    const sectionOf: Record<string, SectionKey> = {};
-    for (const section of model.sections) {
-      for (const row of section.rows) {
-        ids.push(row.thread.id);
-        sectionOf[row.thread.id] = section.key;
-      }
-    }
-    return { ids, sectionOf, sectionOrder: model.sections.map((s) => s.key) };
-  }
-
   it("keeps a frozen id at its index when its attention overtakes the row above", () => {
-    const frozen = freezeOf(buildListModel(input(base)));
+    const frozen = snapshot(buildListModel(input(base)));
     expect(frozen.ids).toEqual(["c", "a", "b"]);
     const bumped = base.map((t) =>
       t.id === "b" ? thread("b", { latestAttentionAt: NOW }) : t,
@@ -390,7 +388,7 @@ describe("freeze overlay (B6, §4 points 1-5)", () => {
   });
 
   it("omits a vanished frozen id and closes the gap without re-sorting", () => {
-    const frozen = freezeOf(buildListModel(input(base)));
+    const frozen = snapshot(buildListModel(input(base)));
     const model = buildListModel(
       input(base.filter((t) => t.id !== "a"), { frozen }),
     );
@@ -398,7 +396,7 @@ describe("freeze overlay (B6, §4 points 1-5)", () => {
   });
 
   it("drops a section that emptied rather than rendering a bare header", () => {
-    const frozen = freezeOf(buildListModel(input(base)));
+    const frozen = snapshot(buildListModel(input(base)));
     const model = buildListModel(
       input(base.filter((t) => t.id !== "c"), { frozen }),
     );
@@ -408,7 +406,7 @@ describe("freeze overlay (B6, §4 points 1-5)", () => {
 
   it("lands a newly arriving needs-you thread at the very END of the whole list, moving nothing", () => {
     const before = buildListModel(input(base));
-    const frozen = freezeOf(before);
+    const frozen = snapshot(before);
     const arrived = [
       ...base,
       thread("new", { hasPendingInteraction: true, latestAttentionAt: NOW + 5000 }),
@@ -425,7 +423,7 @@ describe("freeze overlay (B6, §4 points 1-5)", () => {
   });
 
   it("appends multiple newcomers in arrival order", () => {
-    const frozen = freezeOf(buildListModel(input(base)));
+    const frozen = snapshot(buildListModel(input(base)));
     const arrived = [
       ...base,
       thread("n1", { latestAttentionAt: NOW + 1 }),
@@ -442,17 +440,113 @@ describe("freeze overlay (B6, §4 points 1-5)", () => {
 
   it("still pins the order of a search result list", () => {
     const searching = input(base, { searchQuery: "a" });
-    const frozen = freezeOf(buildListModel(searching));
+    const frozen = snapshot(buildListModel(searching));
     expect(frozen.sectionOrder).toEqual(["search"]);
     expect(sequence(buildListModel({ ...searching, frozen }))).toEqual([
       ...frozen.ids,
     ]);
   });
 
-  it("falls back to live sections when no frozen row survives", () => {
-    const frozen = freezeOf(buildListModel(input(base)));
+  it("renders live when no frozen row survives, instead of a hybrid order (F7)", () => {
+    const frozen = snapshot(buildListModel(input(base)));
     const model = buildListModel(input([thread("z")], { frozen }));
     expect(sequence(model)).toEqual(["z"]);
     expect(keys(model)).toEqual(["today"]);
+  });
+
+  // --- F2/F3: structure is the live model's, order alone is the snapshot's ---
+
+  it("keeps children directly beneath their parent when a subtree is expanded while frozen (F2)", () => {
+    const threads = [
+      thread("p", { latestAttentionAt: NOW - 1000 }),
+      thread("kid1", { parentThreadId: "p", latestAttentionAt: NOW - 1100 }),
+      thread("kid2", { parentThreadId: "p", latestAttentionAt: NOW - 1200 }),
+      thread("tail", { latestAttentionAt: NOW - 5000 }),
+    ];
+    // Frozen while `p` is collapsed: the children are not in the snapshot at all.
+    const collapsed = { collapsedThreadIds: new Set(["p"]) };
+    const frozen = snapshot(buildListModel(input(threads, collapsed)));
+    expect(frozen.ids).toEqual(["p", "tail"]);
+
+    // The chevron is only reachable with the pointer over the list, so the
+    // freeze is ALWAYS engaged when a subtree is expanded.
+    const model = buildListModel(input(threads, { frozen }));
+
+    expect(sequence(model)).toEqual(["p", "kid1", "kid2", "tail"]);
+    const rows = model.sections[0]!.rows;
+    expect(rows.map((row) => row.depth)).toEqual([0, 1, 1, 0]);
+    // The children are not newcomers: they must not be appended past `tail`.
+    expect(sequence(model).indexOf("kid1")).toBeLessThan(
+      sequence(model).indexOf("tail"),
+    );
+  });
+
+  it("keeps a collapsed section present with its header and count while frozen (F3)", () => {
+    const threads = [
+      thread("t1"),
+      thread("t2"),
+      thread("old", { latestAttentionAt: NOW - 10 * DAY_MS }),
+    ];
+    const frozen = snapshot(buildListModel(input(threads)));
+    expect(keys(buildListModel(input(threads)))).toEqual(["today", "last-30"]);
+
+    const model = buildListModel(
+      input(threads, { frozen, collapsedSections: new Set<SectionKey>(["today"]) }),
+    );
+
+    const today = model.sections.find((section) => section.key === "today");
+    expect(today).toBeDefined();
+    expect(today!.isCollapsed).toBe(true);
+    expect(today!.label).toBe("TODAY");
+    expect(today!.count).toBe(2);
+    expect(today!.rows).toEqual([]);
+    expect(keys(model)).toEqual(["today", "last-30"]);
+    expect(sequence(model)).toEqual(["old"]);
+  });
+
+  it("takes section metadata from the live model, not from the snapshot", () => {
+    // `late` moves from `today` into `last-30` only in the live model; the
+    // header, its label and its count all come from that live section.
+    const threads = [thread("a"), thread("late")];
+    const frozen = snapshot(buildListModel(input(threads)));
+    const model = buildListModel(
+      input(
+        [thread("a"), thread("late", { latestAttentionAt: NOW - 10 * DAY_MS })],
+        { frozen },
+      ),
+    );
+    for (const section of model.sections) {
+      expect(section.label).toBe(section.key === "today" ? "TODAY" : "LAST 30 DAYS");
+    }
+    // Nothing already rendered moved: `a` is still first.
+    expect(sequence(model)[0]).toBe("a");
+  });
+});
+
+describe("parent cycles (B1, F4)", () => {
+  it("renders both members of an A→B→A cycle exactly once, as roots", () => {
+    const model = buildListModel(
+      input([
+        thread("a", { parentThreadId: "b", latestAttentionAt: NOW }),
+        thread("b", { parentThreadId: "a", latestAttentionAt: NOW - 1 }),
+      ]),
+    );
+    const ids = sequence(model);
+    expect(ids).toEqual(["a", "b"]);
+    expect(new Set(ids).size).toBe(2);
+    expect(model.sections[0]!.rows.every((row) => row.depth === 0)).toBe(true);
+    expect(model.sections[0]!.count).toBe(2);
+  });
+
+  it("keeps a non-cyclic child of a cycle member nested under it", () => {
+    const model = buildListModel(
+      input([
+        thread("a", { parentThreadId: "b", latestAttentionAt: NOW }),
+        thread("b", { parentThreadId: "a", latestAttentionAt: NOW - 2 }),
+        thread("kid", { parentThreadId: "a", latestAttentionAt: NOW - 1 }),
+      ]),
+    );
+    expect(sequence(model)).toEqual(["a", "kid", "b"]);
+    expect(model.sections[0]!.rows[1]!.depth).toBe(1);
   });
 });
