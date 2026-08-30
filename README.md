@@ -31,7 +31,6 @@ bb plugin install git:https://github.com/Mokson/bb-plugins \
   in `plugins[]`.
 - `plugins/<id>/` — one self-contained plugin package per directory. Each has its
   own `package.json`, tests, and release tags.
-- `docs/specs/` — design and delivery artifacts.
 
 ## Releasing
 

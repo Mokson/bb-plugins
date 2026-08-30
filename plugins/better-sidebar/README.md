@@ -14,5 +14,3 @@ npm install
 bb plugin install .
 bb plugin dev
 ```
-
-See `docs/specs/001_better-sidebar/` for the product and tech specs.
