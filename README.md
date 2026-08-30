@@ -16,6 +16,7 @@ under **Extensions → Plugins**, in `bb plugin search`, and installable by id.
 | Plugin | What it does |
 | --- | --- |
 | [`better-sidebar`](plugins/better-sidebar) | A sidebar thread list organised by activity date, with a second metadata row, real provider logos, five minimal status glyphs, a PR chip, and a hover dossier. |
+| [`push-notify`](plugins/push-notify) | Web Push notifications when an agent finishes, fails, or needs you, filtered by subagent threads, turn length, and muted projects. |
 
 Install one directly, without the marketplace:
 
@@ -40,6 +41,9 @@ tags via `tagPrefix`:
 ```sh
 git tag better-sidebar/v0.1.0
 git push origin better-sidebar/v0.1.0
+
+git tag push-notify/v0.1.0
+git push origin push-notify/v0.1.0
 ```
 
 A `range` entry resolves to the highest matching `<tagPrefix>vX.Y.Z` tag, so a
