@@ -425,6 +425,47 @@ describe("rowSignals", () => {
   });
 });
 
+describe("lastActivity (B82)", () => {
+  it("returns the newest event's createdAt whatever its type", async () => {
+    const host = hostWith({
+      events: { t1: [tokenUsage(1_000), goalUpdated(30), modelFallback(20)] },
+    });
+    await plugin(host.bb);
+
+    const result = (await host.harness.callRpc("lastActivity", {
+      threadIds: ["t1"],
+    })) as { activity: unknown[] };
+
+    // The fake stamps `createdAt` from `seq`, so 30 is the goal event — newer
+    // than the token usage the dossier reads and than the fallback.
+    expect(result.activity).toEqual([{ threadId: "t1", at: 30 }]);
+  });
+
+  it("returns null for a thread with no events rather than omitting it", async () => {
+    const host = hostWith({});
+    await plugin(host.bb);
+
+    const result = (await host.harness.callRpc("lastActivity", {
+      threadIds: ["t1"],
+    })) as { activity: unknown[] };
+
+    expect(result.activity).toEqual([{ threadId: "t1", at: null }]);
+  });
+
+  it("reads once per thread, in the order asked for", async () => {
+    const threadIds = Array.from({ length: 40 }, (_, index) => `t${index}`);
+    const host = hostWith({});
+    await plugin(host.bb);
+
+    const result = (await host.harness.callRpc("lastActivity", { threadIds })) as {
+      activity: { threadId: string }[];
+    };
+
+    expect(listCalls(host)).toBe(40);
+    expect(result.activity.map((row) => row.threadId)).toEqual(threadIds);
+  });
+});
+
 describe("contract input validation", () => {
   it("rejects more than 60 thread ids at the contract, before any handler runs", async () => {
     const host = hostWith({});
@@ -488,6 +529,7 @@ describe("registration", () => {
       "threadDossier",
       "rowSignals",
       "threadExecutions",
+      "lastActivity",
     ]);
 
     const descriptors = host.harness.inspection.registrations.settingsDescriptors;

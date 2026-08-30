@@ -767,6 +767,38 @@ describe("ThreadRow hidden elements skip their work (B59, B61)", () => {
     expect(rowElement(container).textContent).toContain("Ship the sidebar");
   });
 
+  /**
+   * Only the mark is hidden, never its box: with the setting off, row 1's
+   * first child still measures `size-3.5`, so the title and row 2 keep the x
+   * they have with the setting on.
+   */
+  it("keeps the provider column reserved when showProviderGlyph is off", () => {
+    const { container } = renderRow(row(), {}, { showProviderGlyph: false });
+
+    expect(rowOne(container).firstElementChild!.className).toContain("size-3.5");
+  });
+
+  /**
+   * B82. `thread.updatedAt` is a record write: it lags a running agent and a
+   * bulk write stamps every thread at once. The list resolves the newest event
+   * instead and hands it down; the row prefers it whenever it is present.
+   */
+  it("shows lastActivityAt over the thread's updatedAt (B82)", () => {
+    const { container } = renderRow(
+      row({ thread: thread({ updatedAt: NOW - DAY }) }),
+      {},
+      { lastActivityAt: NOW - 5 * MINUTE },
+    );
+
+    expect(rowOne(container).lastElementChild!.textContent).toBe("5m");
+  });
+
+  it("falls back to updatedAt until the lookup lands (B82)", () => {
+    const { container } = renderRow(row({ thread: thread({ updatedAt: NOW - DAY }) }));
+
+    expect(rowOne(container).lastElementChild!.textContent).toBe("1d");
+  });
+
   it("draws no relative time when showRelativeTime is off", () => {
     const { container } = renderRow(row(), {}, { showRelativeTime: false });
     expect(rowOne(container).lastElementChild!.textContent).not.toContain("1d");

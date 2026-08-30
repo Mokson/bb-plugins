@@ -6,12 +6,13 @@ import {
   type PluginThreadListProps,
 } from "@get-bb/plugin-sdk/app";
 import { cn } from "./lib/utils";
-import { parseSettings } from "./settings";
+import { useResolvedSettings } from "./useResolvedSettings";
 import { buildListModel, sectionKeyOf } from "./model/list-model";
 import { dimLevelFor } from "./model/buckets";
 import type { Density, GroupBy, RenderSection } from "./model/types";
 import { ALL_PROJECTS, DisplayMenu } from "./DisplayMenu";
 import { ThreadRow } from "./row/ThreadRow";
+import { useLastActivity } from "./row/useLastActivity";
 import { Glyph } from "./ui/Glyph";
 import { ListEmpty, ListError, ListLoading, ListNoMatches } from "./ui/ListStates";
 import { useCollapse } from "./useCollapse";
@@ -46,7 +47,9 @@ function ThreadListBody({
   onRetry,
 }: PluginThreadListProps & { onRetry: () => void }) {
   const { status, threads, projects } = useSidebarThreads();
-  const stored = parseSettings(useSettings().values);
+  // B83: the last known settings until the host's answer lands, so the list
+  // does not paint with defaults and re-lay-out seconds later.
+  const stored = useResolvedSettings(useSettings().values);
   // B77.3: the menu's stored choice wins, and the setting is the default this
   // device uses until its user picks one. Everything downstream reads the
   // resolved value, so no call site has to know which of the two it came from.
@@ -94,6 +97,15 @@ function ThreadListBody({
       collapse.collapsedThreadIds,
     ],
   );
+
+  // B82: one batched lookup for every rendered row, owned here rather than by
+  // the row, so a list of 130 threads issues three requests and not 130. The
+  // ids come from the model, so a collapsed subtree is not asked about.
+  const renderedThreadIds = useMemo(
+    () => model.sections.flatMap((section) => section.rows.map((row) => row.thread.id)),
+    [model],
+  );
+  const lastActivity = useLastActivity(renderedThreadIds);
 
   const headersRef = useRef<(HTMLElement | null)[]>([]);
   const jumpIndexRef = useRef(-1);
@@ -178,6 +190,8 @@ function ThreadListBody({
               key={row.thread.id}
               row={row}
               now={now}
+              // B82: the row's own `updatedAt` until the lookup lands.
+              lastActivityAt={lastActivity.get(row.thread.id)}
               showSecondRow={showSecondRow}
               // B61: each of these skips work, not pixels — the PR hook is
               // never called and the signal observer is never mounted.

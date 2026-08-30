@@ -52,6 +52,7 @@ function render(
         threadDossier: ({ threadId }) => dossier(threadId),
         rowSignals: () => ({ signals: [] }),
         threadExecutions: () => ({ executions: [] }),
+        lastActivity: () => ({ activity: [] }),
         ...rpc,
       },
     },

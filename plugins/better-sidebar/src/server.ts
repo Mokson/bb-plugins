@@ -5,6 +5,7 @@ import {
   type Dossier,
   type RowSignal,
   type ThreadExecution,
+  type ThreadLastActivity,
 } from "./server-contract";
 
 type ThreadsApi = BbPluginApi["sdk"]["threads"];
@@ -65,6 +66,25 @@ async function loadExecution(
     };
   } catch {
     return { threadId, execution: null };
+  }
+}
+
+/**
+ * B82: the newest event of ANY type, which is when the thread last did
+ * something. No `types` filter, `limit:"1"`, so it is one indexed read.
+ *
+ * A per-id rejection becomes `at: null` and the row falls back to
+ * `thread.updatedAt`, which is what it showed before this existed.
+ */
+async function loadLastActivity(
+  threads: ThreadsApi,
+  threadId: string,
+): Promise<ThreadLastActivity> {
+  try {
+    const rows = await threads.events.list({ threadId, order: "desc", limit: "1" });
+    return { threadId, at: rows[0]?.createdAt ?? null };
+  } catch {
+    return { threadId, at: null };
   }
 }
 
@@ -202,6 +222,12 @@ export default function plugin(bb: BbPluginApi) {
     threadExecutions: async ({ threadIds }) => ({
       executions: await Promise.all(
         threadIds.map((threadId) => loadExecution(bb.sdk.threads, threadId)),
+      ),
+    }),
+    // B82: the same one-round-trip fan-out, for the ids the list has rendered.
+    lastActivity: async ({ threadIds }) => ({
+      activity: await Promise.all(
+        threadIds.map((threadId) => loadLastActivity(bb.sdk.threads, threadId)),
       ),
     }),
   });

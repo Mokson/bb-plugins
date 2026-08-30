@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
-import { experimental_useProviders as useProviders } from "@get-bb/plugin-sdk/app";
 import { cn } from "../lib/utils";
 import { TRAILING_GLYPH_BOX_CLASS } from "./StatusGlyph";
+import { useProviderMark } from "./useProviderMark";
 
 function providerMaskStyle(logoUrl: string): CSSProperties {
   const maskImage = `url(${JSON.stringify(logoUrl)})`;
@@ -35,6 +35,9 @@ function providerMaskStyle(logoUrl: string): CSSProperties {
  * It reads the directory itself rather than taking a prop, because the
  * directory is a host-cached context read shared by every row, not a per-row
  * subscription — unlike the PR hook, which `ThreadRow` owns (§6).
+ *
+ * `useProviderMark` puts a localStorage cache in front of that read, so a
+ * reload draws last run's logos instead of waiting on the directory.
  */
 export function ProviderGlyph({
   providerId,
@@ -43,13 +46,12 @@ export function ProviderGlyph({
   providerId: string;
   className?: string;
 }) {
-  const { providers, status } = useProviders();
-  const provider = providers.find((entry) => entry.id === providerId) ?? null;
+  const { mark, status } = useProviderMark(providerId);
 
   const box = cn(TRAILING_GLYPH_BOX_CLASS, className);
-  const label = provider?.displayName ?? providerId;
-  const logoUrl = provider?.logoUrl ?? null;
-  const tint = provider?.strings?.iconTint;
+  const label = mark?.displayName ?? providerId;
+  const logoUrl = mark?.logoUrl ?? null;
+  const tint = mark?.iconTint;
 
   // B80. A loading directory is an EMPTY directory, so without this branch every
   // row falls into case 3 below — and that dot means "bb does not know this
@@ -60,6 +62,10 @@ export function ProviderGlyph({
   //
   // `error` still draws the dot on purpose: there the directory will never
   // answer, and "unknown provider" is then the true statement.
+  //
+  // With a cached mark for this provider the hook never reports `loading`, so
+  // this branch is now the cold-start case only: a first run, a cleared store,
+  // or a provider installed since the last reload.
   if (status === "loading") {
     return <span role="img" aria-label={label} className={box} />;
   }
