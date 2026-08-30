@@ -33,8 +33,27 @@ drift.
   row's right edge.
 - **B51.4** (auto) Time renders on **every** row, parents and children alike, and no
   longer appears on row 2.
-- **B51.5** (auto) The trailing cluster is fixed-width per element so the time column
-  aligns down the whole list, the same argument that governs the status slot today.
+- **B51.5** (auto) **Only the time slot is fixed-width.** Time is present on every
+  row, so it is the only element that can define a stable right-hand column, and the
+  only one worth aligning. The child count renders only when `childCount > 0` and the
+  status glyph only when the indicator draws something; **both occupy zero width when
+  absent.** The title is `min-w-0 flex-1` and truncates only once it genuinely runs out
+  of room after the present elements are laid out. On a row with no children and no
+  status glyph — the common case — the title runs all the way to the time.
+- **B51.6** (auto) Anything revealed on **hover** reserves no layout width and does not
+  shift the title when it appears. A hover affordance replaces or overlays the trailing
+  content rather than being appended beside it, the pattern
+  `.bb-refs/bb-plugin-t3sidebar/src/ThreadCard.tsx` uses (`group-hover/card:hidden` on
+  the status slot, with the hover buttons taking its place).
+
+  > **Superseded.** B51.5 originally read "the trailing cluster is fixed-width per
+  > element so the time column aligns down the whole list." That reserved count and
+  > status width on every row, including the majority that have neither, and titles
+  > truncated far earlier than necessary — reported by the user against the running
+  > build: *"The title is truncated too soon reserving the space to icons which are
+  > displayed only on hover."* Alignment of absent elements is not worth title width.
+  > B51.1's chevron gutter still reserves width on every row: that one exists to align
+  > titles across rows, which is a benefit the user asked for directly.
 
 ## B52 — Child threads have no second row
 
