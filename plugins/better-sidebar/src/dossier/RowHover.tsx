@@ -117,8 +117,11 @@ export function RowHover({
   children: ReactNode;
 }) {
   const threadId = row.thread.id;
-  const { tooltip } = parseSettings(useSettings().values);
-  const enabled = !isCompactViewport && tooltip !== "off";
+  const { density } = parseSettings(useSettings().values);
+  // B60: `compact` draws no hover card at any hover duration, which is also
+  // what keeps it free of every backend RPC (B60.1). B62.2: the viewport gate
+  // beside it is B32, a correctness rule, not a second preference.
+  const enabled = !isCompactViewport && density !== "compact";
 
   const [hovering, setHovering] = useState(false);
   const isSuppressed = useSyncExternalStore(
@@ -161,10 +164,10 @@ export function RowHover({
     };
   }, [enabled, hovering, isSuppressed]);
 
-  // B50: `minimal` shows the overflow fields the row itself truncated and
-  // performs **no** backend fetch. The gate belongs here rather than inside
-  // the dossier — by the time a payload is discarded the request is spent.
-  const state = useDossier(threadId, tooltip === "rich" && phase !== "idle");
+  // The fetch gate stays here rather than inside the dossier — by the time a
+  // payload is discarded the request is spent. `enabled` is part of it because
+  // `compact` must reach no backend at all (B60.1).
+  const state = useDossier(threadId, enabled && phase !== "idle");
 
   // B32: on a compact viewport the dossier does not render at any hover
   // duration, and no pointer handler — long-press or otherwise — is attached.
@@ -201,11 +204,11 @@ export function RowHover({
       {/* The card is part of the hover surface: without this the pointer can
           never reach the error branch's Retry button. */}
       <div onPointerEnter={enter} onPointerLeave={leave}>
-        <Dossier
-          row={row}
-          state={state}
-          variant={tooltip === "minimal" ? "minimal" : "rich"}
-        />
+        {/* B60: `default` and `detailed` both show the rich card. The
+            `minimal` variant is the state the compression dropped; it stays
+            available in `Dossier` for the settings level B60 offers to add
+            back. */}
+        <Dossier row={row} state={state} variant="rich" />
       </div>
     </HoverPopover>
   );

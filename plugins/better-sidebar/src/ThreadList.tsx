@@ -9,7 +9,7 @@ import { cn } from "./lib/utils";
 import { parseSettings } from "./settings";
 import { buildListModel, sectionKeyOf } from "./model/list-model";
 import { dimLevelFor } from "./model/buckets";
-import type { GroupBy, RenderSection, SecondRowMode } from "./model/types";
+import type { Density, GroupBy, RenderSection } from "./model/types";
 import { ALL_PROJECTS, ProjectFilter } from "./ProjectFilter";
 import { ThreadRow } from "./row/ThreadRow";
 import { Glyph } from "./ui/Glyph";
@@ -78,8 +78,8 @@ function ThreadListBody({
       threads,
       projects,
       settings.groupBy,
-      settings.secondRow,
-      settings.tooltip,
+      settings.density,
+      settings.showArchivedChildren,
       searchQuery,
       now,
       projectFilter,
@@ -139,7 +139,7 @@ function ThreadListBody({
     );
   }
 
-  const showSecondRow = showsSecondRow(settings.secondRow, settings.groupBy);
+  const showSecondRow = showsSecondRow(settings.density, settings.groupBy);
   // Rebuilt each render so the jump table cannot outlive the sections it indexes.
   headersRef.current = [];
 
@@ -165,6 +165,12 @@ function ThreadListBody({
               row={row}
               now={now}
               showSecondRow={showSecondRow}
+              // B61: each of these skips work, not pixels — the PR hook is
+              // never called and the signal observer is never mounted.
+              showPrChip={settings.showPrChip}
+              showProviderGlyph={settings.showProviderGlyph}
+              showRelativeTime={settings.showRelativeTime}
+              showSignals={settings.density === "detailed"}
               isCompactViewport={isCompactViewport}
               // B47: the host clears its search field and closes the mobile
               // drawer here, so every open path goes through it.
@@ -182,13 +188,14 @@ function ThreadListBody({
 }
 
 /**
- * B18: `auto` means "row 2 unless the grouping already says it". Grouping by
- * project puts the project name in the header, so repeating it under every
- * title is noise; `always` and `never` are the user overriding that judgement.
+ * B60: `default` means "row 2 unless the grouping already says it". Grouping
+ * by project puts the project name in the header, so repeating it under every
+ * title is noise; `detailed` and `compact` are the user overriding that
+ * judgement in each direction.
  */
-function showsSecondRow(mode: SecondRowMode, groupBy: GroupBy): boolean {
-  if (mode === "always") return true;
-  if (mode === "never") return false;
+function showsSecondRow(density: Density, groupBy: GroupBy): boolean {
+  if (density === "detailed") return true;
+  if (density === "compact") return false;
   return groupBy !== "project";
 }
 

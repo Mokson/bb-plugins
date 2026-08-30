@@ -74,7 +74,7 @@ function input(
   return {
     threads,
     projects: PROJECTS,
-    settings: { groupBy: "date", secondRow: "auto", tooltip: "rich" },
+    settings: DEFAULT_SETTINGS,
     searchQuery: "",
     now: NOW,
     projectFilter: null,
@@ -87,8 +87,12 @@ function input(
 
 const DEFAULT_SETTINGS: BetterSidebarSettings = {
   groupBy: "date",
-  secondRow: "auto",
-  tooltip: "rich",
+  density: "default",
+  showPrChip: true,
+  showProviderGlyph: true,
+  showRelativeTime: true,
+  showArchivedChildren: true,
+  showHeaderChip: true,
 };
 
 /**
@@ -174,7 +178,7 @@ describe("grouping modes (B8)", () => {
     for (const groupBy of ["date", "project", "none"] as const) {
       const model = buildListModel(
         input(threads, {
-          settings: { groupBy, secondRow: "auto", tooltip: "rich" },
+          settings: { ...DEFAULT_SETTINGS, groupBy },
         }),
       );
       expect(keys(model).slice(0, 2)).toEqual(["needs-you", "pinned"]);
@@ -185,7 +189,7 @@ describe("grouping modes (B8)", () => {
   it("replaces date buckets with one section per project", () => {
     const model = buildListModel(
       input(threads, {
-        settings: { groupBy: "project", secondRow: "auto", tooltip: "rich" },
+        settings: { ...DEFAULT_SETTINGS, groupBy: "project" },
       }),
     );
     expect(keys(model)).toEqual(["needs-you", "pinned", "project:p2"]);
@@ -195,7 +199,7 @@ describe("grouping modes (B8)", () => {
   it("collapses everything else into one flat section for groupBy none", () => {
     const model = buildListModel(
       input(threads, {
-        settings: { groupBy: "none", secondRow: "auto", tooltip: "rich" },
+        settings: { ...DEFAULT_SETTINGS, groupBy: "none" },
       }),
     );
     expect(keys(model)).toEqual(["needs-you", "pinned", "all"]);
@@ -272,6 +276,20 @@ describe("nesting (B9) and archived children (B11)", () => {
         ),
       ),
     ).toEqual(["parent"]);
+  });
+
+  it("drops the archived child when showArchivedChildren is off (B59)", () => {
+    const threads = [
+      thread("parent"),
+      thread("child", { parentThreadId: "parent", isArchived: true }),
+    ];
+    const model = buildListModel(
+      input(threads, {
+        settings: { ...DEFAULT_SETTINGS, showArchivedChildren: false },
+      }),
+    );
+    expect(sequence(model)).toEqual(["parent"]);
+    expect(model.sections[0]!.rows[0]!.childCount).toBe(0);
   });
 
   it("treats a thread whose parent is absent as its own root", () => {

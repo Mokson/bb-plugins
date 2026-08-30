@@ -3,10 +3,12 @@ import * as Popover from "@radix-ui/react-popover";
 import {
   experimental_useSidebarThreadActions as useSidebarThreadActions,
   experimental_useSidebarThreads as useSidebarThreads,
+  useSettings,
   type PluginSidebarThread,
   type PluginThreadHeaderActionProps,
 } from "@get-bb/plugin-sdk/app";
 import { cn } from "../lib/utils";
+import { parseSettings } from "../settings";
 import { usePortalScopeProps } from "../lib/portal-scope";
 import { resolveTitle } from "../model/list-model";
 import { ProviderGlyph } from "../row/ProviderGlyph";
@@ -29,6 +31,10 @@ const MAX_GLYPHS = 3;
  * child that needs you is worth surfacing on the parent you are reading.
  */
 export function ChildThreadsChip(props: PluginThreadHeaderActionProps) {
+  // B59: `showHeaderChip: false` returns before `ChipBody` mounts, so the
+  // thread-list subscription the chip reads is never opened either.
+  const { showHeaderChip } = parseSettings(useSettings().values);
+  if (!showHeaderChip) return null;
   return (
     <ChipBoundary>
       <ChipBody {...props} />

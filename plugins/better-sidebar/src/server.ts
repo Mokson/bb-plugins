@@ -114,25 +114,48 @@ async function loadRowSignal(threads: ThreadsApi, threadId: string): Promise<Row
 }
 
 export default function plugin(bb: BbPluginApi) {
-  // B48-B50
+  // B59: seven settings, server-backed so they follow the user across clients.
   bb.settings.define({
     groupBy: {
       type: "select",
       label: "Group by",
-      options: ["date", "project", "none"],
+      options: ["date", "project", "host", "status", "none"],
       default: "date",
     },
-    secondRow: {
+    density: {
       type: "select",
-      label: "Second row",
-      options: ["auto", "always", "never"],
-      default: "auto",
+      label: "Density",
+      description:
+        "compact hides row 2, the hover card and the signal glyphs, and makes no backend request. detailed adds row 2 in every group mode and the signal glyphs.",
+      options: ["compact", "default", "detailed"],
+      default: "default",
     },
-    tooltip: {
-      type: "select",
-      label: "Hover card",
-      options: ["rich", "minimal", "off"],
-      default: "rich",
+    showPrChip: {
+      type: "boolean",
+      label: "Show the pull-request chip",
+      description: "Off also skips the per-row pull-request subscription.",
+      default: true,
+    },
+    showProviderGlyph: {
+      type: "boolean",
+      label: "Show the provider logo",
+      default: true,
+    },
+    showRelativeTime: {
+      type: "boolean",
+      label: "Show the relative time",
+      default: true,
+    },
+    showArchivedChildren: {
+      type: "boolean",
+      label: "Show archived child threads",
+      description: "Archived children of an expanded parent.",
+      default: true,
+    },
+    showHeaderChip: {
+      type: "boolean",
+      label: "Show the child-threads chip in the thread header",
+      default: true,
     },
   });
 

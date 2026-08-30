@@ -405,16 +405,47 @@ describe("handler failure (ruling 10)", () => {
 });
 
 describe("registration", () => {
-  it("registers both contract methods and the three settings descriptors", async () => {
+  it("registers both contract methods and the seven settings descriptors (B59)", async () => {
     const host = hostWith({});
     await plugin(host.bb);
 
     expect(Object.keys(betterSidebarRpcContract)).toEqual(["threadDossier", "rowSignals"]);
 
     const descriptors = host.harness.inspection.registrations.settingsDescriptors;
-    expect(Object.keys(descriptors)).toEqual(["groupBy", "secondRow", "tooltip"]);
+    expect(Object.keys(descriptors)).toEqual([
+      "groupBy",
+      "density",
+      "showPrChip",
+      "showProviderGlyph",
+      "showRelativeTime",
+      "showArchivedChildren",
+      "showHeaderChip",
+    ]);
     expect(descriptors.groupBy?.default).toBe("date");
-    expect(descriptors.secondRow?.default).toBe("auto");
-    expect(descriptors.tooltip?.default).toBe("rich");
+    expect(descriptors.density?.default).toBe("default");
+    for (const key of [
+      "showPrChip",
+      "showProviderGlyph",
+      "showRelativeTime",
+      "showArchivedChildren",
+      "showHeaderChip",
+    ] as const) {
+      expect(descriptors[key]?.type).toBe("boolean");
+      expect(descriptors[key]?.default).toBe(true);
+    }
+  });
+
+  it("offers every B65 group mode as a select option", async () => {
+    const host = hostWith({});
+    await plugin(host.bb);
+
+    const groupBy = host.harness.inspection.registrations.settingsDescriptors.groupBy;
+    expect(groupBy?.type === "select" ? groupBy.options : []).toEqual([
+      "date",
+      "project",
+      "host",
+      "status",
+      "none",
+    ]);
   });
 });

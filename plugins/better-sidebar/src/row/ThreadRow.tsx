@@ -39,8 +39,16 @@ export interface ThreadRowProps {
   row: RenderRow;
   /** Quantized clock, shared by every row in one render. */
   now: number;
-  /** B18/B19, decided by the list from the `secondRow` setting and the mode. */
+  /** B19/B60, decided by the list from `density` and the group mode. */
   showSecondRow: boolean;
+  /** B61.1: `false` skips `experimental_useSidebarThreadPullRequest` entirely. */
+  showPrChip?: boolean;
+  /** B59: the provider logo at the row's left edge. */
+  showProviderGlyph?: boolean;
+  /** B59: the row's own relative time, at the right edge. */
+  showRelativeTime?: boolean;
+  /** B61.2: `false` mounts no `IntersectionObserver` and sends no `rowSignals`. */
+  showSignals?: boolean;
   /** The thread-list slot prop; the list owns it, the row only forwards it. */
   isCompactViewport: boolean;
   /** B47: called after every thread open, so the drawer closes and search clears. */
@@ -69,8 +77,9 @@ export const ThreadRow = memo(function ThreadRow(props: ThreadRowProps) {
   // skipped entirely for a thread with no environment — a thread with no
   // environment has no branch and therefore can have no PR. Two components,
   // chosen by a value that changes at most once in a thread's life, is how
-  // that gate is expressed without breaking the rules of hooks.
-  return props.row.thread.environment === null ? (
+  // that gate is expressed without breaking the rules of hooks. B61.1 rides
+  // the same gate: with `showPrChip: false` the hook has no call site at all.
+  return props.showPrChip === false || props.row.thread.environment === null ? (
     <RowBody {...props} pullRequest={null} />
   ) : (
     <RowWithPullRequest {...props} />
@@ -86,6 +95,9 @@ function RowBody({
   row,
   now,
   showSecondRow,
+  showProviderGlyph = true,
+  showRelativeTime = true,
+  showSignals = true,
   isCompactViewport,
   onNavigate,
   isSubtreeCollapsed = false,
@@ -190,7 +202,7 @@ function RowBody({
                 [provider] title [chevron, parents only] … [status] [time]. */}
             <div data-better-sidebar-row1="" className="flex h-7 min-w-0 items-center gap-2">
               {/* B51.2: leading, on every row. Its resolution is unchanged. */}
-              <ProviderGlyph providerId={thread.providerId} />
+              {showProviderGlyph ? <ProviderGlyph providerId={thread.providerId} /> : null}
 
               {renameEditor.isRenaming ? (
                 <input
@@ -268,12 +280,18 @@ function RowBody({
                   the same on every row whatever its siblings do. B57.1: the
                   child count is gone from here and from the row entirely. */}
               <div className="ml-auto flex shrink-0 items-center">
-                <RowSignals threadId={thread.id} />
+                {/* B61.2: at `compact` and `default` this is not mounted, so
+                    no observer exists and no `rowSignals` request is sent. */}
+                {showSignals ? <RowSignals threadId={thread.id} /> : null}
                 <StatusGlyph thread={thread} />
-                {/* B51.4: the row's own time, on every row, at the right edge. */}
-                <span className={cn(TRAILING_TEXT_CLASS, "ml-1.5 w-7")}>
-                  {relativeTimeLabel(thread.updatedAt, now)}
-                </span>
+                {/* B51.4: the row's own time, on every row, at the right edge.
+                    With time hidden the trailing cluster is fully intrinsic —
+                    B51.5's fixed slot has no anchor left to pin. */}
+                {showRelativeTime ? (
+                  <span className={cn(TRAILING_TEXT_CLASS, "ml-1.5 w-7")}>
+                    {relativeTimeLabel(thread.updatedAt, now)}
+                  </span>
+                ) : null}
               </div>
             </div>
 

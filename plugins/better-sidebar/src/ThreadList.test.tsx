@@ -416,29 +416,77 @@ describe("ThreadList — second row (B18, B19)", () => {
 
   it.each([
     ["date", true],
+    ["host", true],
+    ["status", true],
     ["none", true],
     ["project", false],
-  ] as const)("auto shows row 2 under groupBy %s: %s", (groupBy, expected) => {
+  ] as const)("default shows row 2 under groupBy %s: %s", (groupBy, expected) => {
     threadsState = ready([thread()]);
-    renderList({}, { groupBy, secondRow: "auto" });
+    renderList({}, { groupBy, density: "default" });
     expect(hasSecondRow()).toBe(expected);
   });
 
-  it.each(["date", "none", "project"] as const)("always overrides under groupBy %s", (groupBy) => {
-    threadsState = ready([thread()]);
-    renderList({}, { groupBy, secondRow: "always" });
-    expect(hasSecondRow()).toBe(true);
-  });
+  it.each(["date", "none", "project"] as const)(
+    "detailed shows row 2 under groupBy %s, where default does not (B60)",
+    (groupBy) => {
+      threadsState = ready([thread()]);
+      renderList({}, { groupBy, density: "detailed" });
+      expect(hasSecondRow()).toBe(true);
+    },
+  );
 
-  it.each(["date", "none", "project"] as const)("never overrides under groupBy %s", (groupBy) => {
-    threadsState = ready([thread()]);
-    renderList({}, { groupBy, secondRow: "never" });
-    expect(hasSecondRow()).toBe(false);
-  });
+  it.each(["date", "none", "project"] as const)(
+    "compact hides row 2 under groupBy %s",
+    (groupBy) => {
+      threadsState = ready([thread()]);
+      renderList({}, { groupBy, density: "compact" });
+      expect(hasSecondRow()).toBe(false);
+    },
+  );
 
-  it("still renders row 2 on a compact viewport (B19)", () => {
+  it("still renders row 2 on a compact viewport (B19, B62.1)", () => {
     threadsState = ready([thread()]);
     renderList({ isCompactViewport: true });
     expect(hasSecondRow()).toBe(true);
+  });
+
+  it("obeys density detailed on a compact viewport too (B62.1)", () => {
+    threadsState = ready([thread()]);
+    renderList({ isCompactViewport: true }, { groupBy: "project", density: "detailed" });
+    expect(hasSecondRow()).toBe(true);
+  });
+});
+
+describe("ThreadList — a hidden thing costs nothing (B61)", () => {
+  it("issues no rowSignals request and mounts no observer at density compact", () => {
+    const observe = vi.spyOn(globalThis.IntersectionObserver.prototype, "observe");
+    threadsState = ready([thread(), thread({ id: "t2" })]);
+
+    const slot = renderList({}, { density: "compact" });
+
+    expect(observe).toHaveBeenCalledTimes(0);
+    expect(
+      slot.inspection.rpcCalls.filter((call) => call.method === "rowSignals"),
+    ).toHaveLength(0);
+    expect(document.querySelectorAll("[data-better-sidebar-signals]")).toHaveLength(0);
+    observe.mockRestore();
+  });
+
+  it("observes one signal cluster per row at density detailed (B60.2)", () => {
+    const observe = vi.spyOn(globalThis.IntersectionObserver.prototype, "observe");
+    threadsState = ready([thread(), thread({ id: "t2" })]);
+
+    renderList({}, { density: "detailed" });
+
+    expect(observe).toHaveBeenCalledTimes(2);
+    observe.mockRestore();
+  });
+
+  it("draws no provider glyph and no time when their settings are off", () => {
+    threadsState = ready([thread()]);
+    renderList({}, { showProviderGlyph: "false", showRelativeTime: "false" });
+
+    expect(document.querySelectorAll("[data-better-sidebar-provider]")).toHaveLength(0);
+    expect(screen.getByText("Ship the sidebar")).not.toBeNull();
   });
 });

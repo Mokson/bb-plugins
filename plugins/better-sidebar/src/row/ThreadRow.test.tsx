@@ -25,8 +25,17 @@ const toastError = vi.fn();
 vi.mock("sonner", () => ({ toast: { error: toastError } }));
 
 const splitPointerDown = vi.fn();
+/**
+ * B61.3: the PR gate is asserted as a CALL COUNT. A DOM probe for the chip
+ * passes while the subscription still runs, which is the failure mode B61
+ * exists to prevent.
+ */
+const prHookCalls = vi.fn();
 vi.mock("@get-bb/plugin-sdk/app", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
+  const realPrHook = actual.experimental_useSidebarThreadPullRequest as (
+    threadId: string,
+  ) => unknown;
   return {
     ...actual,
     experimental_useSidebarThreadSplit: () => ({
@@ -34,6 +43,10 @@ vi.mock("@get-bb/plugin-sdk/app", async (importOriginal) => {
       isAvailable: true,
       pane: null,
     }),
+    experimental_useSidebarThreadPullRequest: (threadId: string) => {
+      prHookCalls(threadId);
+      return realPrHook(threadId);
+    },
   };
 });
 
@@ -133,7 +146,11 @@ function pr(
 
 const onNavigate = vi.fn();
 
-function renderRow(target: RenderRow, options: RenderSlotOptions = {}) {
+function renderRow(
+  target: RenderRow,
+  options: RenderSlotOptions = {},
+  propOverrides: Record<string, unknown> = {},
+) {
   return renderSlot(
     { component: ThreadRow },
     {
@@ -142,6 +159,7 @@ function renderRow(target: RenderRow, options: RenderSlotOptions = {}) {
       showSecondRow: true,
       isCompactViewport: false,
       onNavigate,
+      ...propOverrides,
     },
     options,
   );
@@ -181,6 +199,7 @@ beforeEach(() => {
   onNavigate.mockClear();
   splitPointerDown.mockClear();
   toastError.mockClear();
+  prHookCalls.mockClear();
 });
 
 afterEach(() => {
@@ -645,6 +664,18 @@ describe("ThreadRow pull request", () => {
     });
 
     expect(rowElement(container).textContent).toContain("#42");
+    expect(prHookCalls).toHaveBeenCalled();
+  });
+
+  it("never calls the PR hook when showPrChip is off (B61.1, B61.3)", () => {
+    const { container } = renderRow(
+      withEnvironment(),
+      { sidebarPullRequests: { t1: pr() } },
+      { showPrChip: false },
+    );
+
+    expect(prHookCalls).toHaveBeenCalledTimes(0);
+    expect(rowElement(container).textContent).not.toContain("#42");
   });
 
   it("subscribes to no PR for a thread with no environment (§6)", () => {
@@ -689,6 +720,15 @@ describe("ThreadRow pull request", () => {
     expect(toastError).toHaveBeenCalledWith("Could not open the pull request");
   });
 
+  it("hides the chip and its work together with showPrChip off, PR present", () => {
+    const { container } = renderRow(
+      withEnvironment(),
+      { sidebarPullRequests: { t1: pr() }, openUrl: () => true },
+      { showPrChip: false },
+    );
+    expect(container.querySelector("[data-better-sidebar-pr]")).toBeNull();
+  });
+
   it("stays quiet when openUrl succeeds (B36)", () => {
     // The harness leaves `openUrl` falsy unless told otherwise, so a real host
     // reporting success has to be stated explicitly — without this the refusal
@@ -700,5 +740,35 @@ describe("ThreadRow pull request", () => {
 
     fireEvent.click(prChip());
     expect(toastError).not.toHaveBeenCalled();
+  });
+});
+
+describe("ThreadRow hidden elements skip their work (B59, B61)", () => {
+  it("mounts no IntersectionObserver when showSignals is off (B61.2, B61.3)", () => {
+    const observe = vi.spyOn(globalThis.IntersectionObserver.prototype, "observe");
+    const { container } = renderRow(row(), {}, { showSignals: false });
+
+    expect(observe).toHaveBeenCalledTimes(0);
+    expect(container.querySelector("[data-better-sidebar-signals]")).toBeNull();
+    observe.mockRestore();
+  });
+
+  it("observes the signal cluster when showSignals is on", () => {
+    const observe = vi.spyOn(globalThis.IntersectionObserver.prototype, "observe");
+    renderRow(row(), {}, { showSignals: true });
+
+    expect(observe).toHaveBeenCalledTimes(1);
+    observe.mockRestore();
+  });
+
+  it("draws no provider glyph when showProviderGlyph is off", () => {
+    const { container } = renderRow(row(), {}, { showProviderGlyph: false });
+    expect(container.querySelector("[data-better-sidebar-provider]")).toBeNull();
+    expect(rowElement(container).textContent).toContain("Ship the sidebar");
+  });
+
+  it("draws no relative time when showRelativeTime is off", () => {
+    const { container } = renderRow(row(), {}, { showRelativeTime: false });
+    expect(rowOne(container).lastElementChild!.textContent).not.toContain("1d");
   });
 });

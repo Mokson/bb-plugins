@@ -3,14 +3,22 @@ import type {
   PluginSidebarThread,
 } from "@get-bb/plugin-sdk/app";
 
+/** B65: `host` and `status` join the modes an unknown value degrades to `date`. */
 export type GroupBy = "date" | "project" | "host" | "status" | "none";
-export type SecondRowMode = "auto" | "always" | "never";
-export type TooltipMode = "rich" | "minimal" | "off";
+/** B60: one axis for row 2, the hover card and the signal glyphs. */
+export type Density = "compact" | "default" | "detailed";
 
+/** B59: the seven settings, all server-backed through `bb.settings.define`. */
 export interface BetterSidebarSettings {
   groupBy: GroupBy;
-  secondRow: SecondRowMode;
-  tooltip: TooltipMode;
+  density: Density;
+  showPrChip: boolean;
+  showProviderGlyph: boolean;
+  showRelativeTime: boolean;
+  /** B11: archived children under an expanded parent. */
+  showArchivedChildren: boolean;
+  /** B58: the child-threads chip in bb's thread header. */
+  showHeaderChip: boolean;
 }
 
 export type DateBucketKey = "today" | "yesterday" | "last-7" | "last-30" | "older";

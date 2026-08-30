@@ -165,7 +165,10 @@ function buildTree(input: ListModelInput): Tree {
       const parent = thread.parentThreadId
         ? present.get(thread.parentThreadId)
         : undefined;
+      // B59: `showArchivedChildren: false` drops the archived child from the
+      // model, so its row is never built rather than built and hidden.
       result =
+        input.settings.showArchivedChildren &&
         parent !== undefined &&
         !input.collapsedThreadIds.has(parent.id) &&
         isVisible(parent, seen);

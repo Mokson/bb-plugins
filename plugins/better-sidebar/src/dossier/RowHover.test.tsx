@@ -254,30 +254,32 @@ describe("RowHover request accounting (B27, B28)", () => {
   });
 });
 
-describe("RowHover tooltip: minimal (B50)", () => {
+describe("RowHover density: compact (B60.1, B61.3)", () => {
   /**
-   * B50 says minimal is "the overflow fields only, with **no** backend fetch".
-   * It enabled `useDossier` anyway and spent three SDK reads per hover to
-   * render a card that discards the payload.
+   * The call-count assertion, not a DOM-absence one: a card that renders
+   * nothing while the fetch still runs is exactly the failure B61 forbids.
    */
-  it("shows the overflow fields and issues no backend call", async () => {
-    const slot = render(["t1"], { settings: { tooltip: "minimal" } });
-    hover("t1");
-    await advance(1_000);
-
-    // Full title, full branch, absolute time — the three things the row
-    // truncated or abbreviated.
-    expect(screen.getByText("Thread t1")).not.toBeNull();
+  it("draws no card at any hover duration and issues no backend call", async () => {
+    const slot = render(["t1"], { settings: { density: "compact" } });
+    // No trigger at all, so no pointer handler is attached either.
     expect(
-      screen.getByText("feat/t1-a-branch-row-two-truncates"),
-    ).not.toBeNull();
-    expect(screen.getAllByText(/UTC$/).length).toBeGreaterThan(0);
+      document.querySelector('[data-better-sidebar-hover-trigger="t1"]'),
+    ).toBeNull();
 
-    expect(
-      slot.inspection.rpcCalls.filter((c) => c.method === "threadDossier"),
-    ).toHaveLength(0);
-    // And no skeleton: nothing is loading, because nothing was asked for.
+    await advance(10_000);
+    expect(screen.queryByText("Thread t1")).toBeNull();
     expect(screen.queryByTestId("dossier-skeleton")).toBeNull();
+    expect(slot.inspection.rpcCalls).toHaveLength(0);
+  });
+
+  it("shows the rich card at density detailed", async () => {
+    const slot = render(["t1"], { settings: { density: "detailed" } });
+    hover("t1");
+    await advance(300);
+    expect(screen.getByText("claude-opus-5 · high")).not.toBeNull();
+    expect(
+      slot.inspection.rpcCalls.filter((c) => c.method === "threadDossier").length,
+    ).toBe(1);
   });
 
   it("carries the full branch in the rich variant too", async () => {
@@ -347,8 +349,8 @@ describe("RowHover on a compact viewport (B32)", () => {
     expect(slot.inspection.rpcCalls).toHaveLength(0);
   });
 
-  it("renders no dossier when the tooltip setting is off", async () => {
-    render(["t1"], { settings: { tooltip: "off" } });
+  it("renders no dossier at density compact either (B60)", async () => {
+    render(["t1"], { settings: { density: "compact" } });
     expect(
       document.querySelector('[data-better-sidebar-hover-trigger="t1"]'),
     ).toBeNull();

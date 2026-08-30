@@ -96,6 +96,26 @@ describe("registration (B58.1)", () => {
   });
 });
 
+describe("showHeaderChip (B59)", () => {
+  it("renders nothing when the setting is off, children present", () => {
+    const { container } = render(
+      [thread("parent"), child("c1", "parent")],
+      {},
+      { settings: { showHeaderChip: "false" } },
+    );
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("renders the chip when the setting is on", () => {
+    render(
+      [thread("parent"), child("c1", "parent")],
+      {},
+      { settings: { showHeaderChip: "true" } },
+    );
+    expect(chip().textContent).toContain("1 children");
+  });
+});
+
 describe("empty case (B58.2)", () => {
   it("renders nothing at all when the thread has no children", () => {
     const { container } = render([thread("parent"), thread("stranger")]);
