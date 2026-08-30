@@ -89,8 +89,16 @@ for information worth the row: **model, effort, duration**.
   this take*, which is the question when scanning seats you dispatched. It deliberately
   is **not** time-since-last-activity: row 1 in the sidebar already carries that, and
   repeating it here would spend the row on a signal the user has.
-- **B70.2** (auto) Model is the resolved model id, shortened for a narrow row the way
-  the dossier already shortens it. Effort is `reasoningLevel`.
+- **B70.2** (auto) Model is the resolved model id **verbatim**, effort is
+  `reasoningLevel` verbatim. **Correction:** an earlier draft of this line said the
+  dossier already shortens the model id. It does not - `Dossier.tsx:50` renders
+  `data.execution.model` whole. No shortener is invented here either; the row is a
+  flex child with `truncate` inside a 320px popover, which is the same treatment the
+  child title already gets.
+- **B70.5** (auto) Duration uses the units `relativeTimeLabel` already uses (`m`, `h`,
+  `d`, `w`), through a sibling `durationLabel` in `src/row/relative-time.ts`. It is a
+  **separate function**: `relativeTimeLabel` returns `"now"` under a minute, which is
+  an age and reads as nonsense as a duration. `durationLabel` returns `"<1m"` there.
 - **B70.3** (auto) The origin (`fork`) is kept **only when it is not the default** — a
   fork is worth naming, a plain thread is not. `"thread"` never renders.
 - **B70.4** (auto) Any of the three missing renders **nothing in its place**, and the
