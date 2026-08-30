@@ -323,7 +323,7 @@ describe("ThreadRow rename", () => {
    * applied the input still never mounts, so `isRenaming` is not becoming true
    * on the menu's `onSelect` path at all. Still skipped, still the finding.
    */
-  it.skip("renders the rename input in place of the title (B46)", async () => {
+  it("renders the rename input in place of the title (B46)", async () => {
     const { container } = renderRow(row());
 
     fireEvent.contextMenu(rowElement(container));

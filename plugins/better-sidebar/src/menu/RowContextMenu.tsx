@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
   experimental_useSidebarThreadActions as useSidebarThreadActions,
@@ -42,6 +42,9 @@ export function RowContextMenu({
   const actions = useSidebarThreadActions();
   const navigate = useBbNavigate();
   const portalScope = usePortalScopeProps();
+  // Set by the Rename item, drained by `onCloseAutoFocus`. See the comment on
+  // `ContextMenu.Content` for why the editor cannot open from `onSelect`.
+  const renameRequested = useRef(false);
 
   const open = (split: boolean) => {
     if (split) actions.open(thread.id, { split: true });
@@ -55,13 +58,27 @@ export function RowContextMenu({
       <ContextMenu.Portal>
         <ContextMenu.Content
           {...portalScope}
-          // Radix restores focus to the trigger when the menu closes. For
-          // Rename that lands one tick after the editor's input mounts, so the
-          // restore blurs it, the blur commits an unchanged title, and the
-          // editor's own no-op guard closes it again — Rename appeared to do
-          // nothing at all. The menu has no reason to reclaim focus: the item
-          // it just ran decides where focus belongs.
-          onCloseAutoFocus={(event) => event.preventDefault()}
+          // An item that hands focus to something outside the menu cannot do
+          // it from `onSelect`. Radix wraps `Content` in a FocusScope that
+          // *traps* focus for as long as the content is mounted, and `onSelect`
+          // runs while it still is: the editor's `autoFocus` input mounts in
+          // the same commit, FocusScope's `focusin` listener sees focus leave
+          // the scope and pulls it straight back onto the menu, and the
+          // resulting blur commits an unchanged title — which the editor's own
+          // no-op guard correctly treats as a cancel. Rename appeared to do
+          // nothing at all.
+          //
+          // `onCloseAutoFocus` runs from the FocusScope's own teardown, after
+          // the trap is gone, so the editor opened here keeps the focus it
+          // takes. Preventing the default matters only on that path: the menu
+          // has no reason to reclaim focus from the editor it just opened,
+          // while every other item still wants the trigger to get focus back.
+          onCloseAutoFocus={(event) => {
+            if (!renameRequested.current) return;
+            renameRequested.current = false;
+            event.preventDefault();
+            renameEditor.start(thread.title ?? "");
+          }}
           aria-label="Thread actions"
           className="z-50 min-w-48 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md"
         >
@@ -94,7 +111,9 @@ export function RowContextMenu({
           </Item>
           <Item
             glyph="pencil"
-            onSelect={() => renameEditor.start(thread.title ?? "")}
+            onSelect={() => {
+              renameRequested.current = true;
+            }}
           >
             Rename
           </Item>

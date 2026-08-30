@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import {
   installTestPluginRuntime,
   renderSlot,
@@ -203,13 +209,15 @@ describe("RowContextMenu", () => {
     ]);
   });
 
-  it("starts the inline editor for rename and never renames directly", () => {
+  it("starts the inline editor for rename and never renames directly", async () => {
     const start = vi.fn();
     const rendered = open({ renameEditor: renameEditor(start) });
     click("Rename");
     // `actions.rename` is silent and needs a finished title, so the menu opens
-    // the row's editor instead of acting.
-    expect(start).toHaveBeenCalledWith("Right click me");
+    // the row's editor instead of acting. It opens from the content's
+    // `onCloseAutoFocus`, once Radix's focus trap is torn down, so the call
+    // lands a commit after the click rather than inside it.
+    await waitFor(() => expect(start).toHaveBeenCalledWith("Right click me"));
     expect(rendered.inspection.sidebarActionCalls).toEqual([]);
   });
 
