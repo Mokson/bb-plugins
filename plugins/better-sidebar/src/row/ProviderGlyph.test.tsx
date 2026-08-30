@@ -119,4 +119,37 @@ describe("ProviderGlyph", () => {
 
     expect(getByRole("img").getAttribute("aria-label")).toBe("acp-claude-code");
   });
+
+  /**
+   * B80. The dot states "bb does not know this provider". A loading directory is
+   * empty, so drawing it there says something false about every row for as long
+   * as the request takes — measured at 5.97s on a real reload.
+   */
+  it("draws no mark at all while the directory is loading (B80)", () => {
+    const { container, getByRole } = renderSlot(
+      { component: ProviderGlyph },
+      { providerId: "acp-claude-code" },
+      { providers: { status: "loading", providers: [] } },
+    );
+
+    expect(container.querySelector("[data-better-sidebar-provider]")).toBeNull();
+    // The box survives, so the row does not reflow when the logo arrives.
+    expect(getByRole("img").className).toContain("size-3.5");
+  });
+
+  /**
+   * B80's other half: an errored directory will never answer, so "unknown
+   * provider" is then true and the dot is the right mark.
+   */
+  it("draws the dot when the directory errored (B80)", () => {
+    const { container } = renderSlot(
+      { component: ProviderGlyph },
+      { providerId: "acp-claude-code" },
+      { providers: { status: "error", providers: [] } },
+    );
+
+    expect(
+      container.querySelector('[data-better-sidebar-provider="dot"]'),
+    ).not.toBeNull();
+  });
 });

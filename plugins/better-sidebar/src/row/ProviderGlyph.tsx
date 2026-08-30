@@ -43,13 +43,26 @@ export function ProviderGlyph({
   providerId: string;
   className?: string;
 }) {
-  const { providers } = useProviders();
+  const { providers, status } = useProviders();
   const provider = providers.find((entry) => entry.id === providerId) ?? null;
 
   const box = cn(TRAILING_GLYPH_BOX_CLASS, className);
   const label = provider?.displayName ?? providerId;
   const logoUrl = provider?.logoUrl ?? null;
   const tint = provider?.strings?.iconTint;
+
+  // B80. A loading directory is an EMPTY directory, so without this branch every
+  // row falls into case 3 below — and that dot means "bb does not know this
+  // provider", not "bb has not answered yet". Measured on a real reload:
+  // `GET /api/v1/system/providers` took 5.97s, so 41 rows drew the wrong mark for
+  // six seconds and then flipped to logos. The box keeps its size, so nothing
+  // shifts when the answer lands; only the mark is withheld.
+  //
+  // `error` still draws the dot on purpose: there the directory will never
+  // answer, and "unknown provider" is then the true statement.
+  if (status === "loading") {
+    return <span role="img" aria-label={label} className={box} />;
+  }
 
   if (logoUrl === null) {
     return (
