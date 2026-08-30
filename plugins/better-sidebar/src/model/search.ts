@@ -6,6 +6,12 @@ export interface SearchCandidate {
   readonly title: string;
   /** Never null for a search row (B43): the project label shows on every result. */
   readonly projectName: string;
+  /**
+   * B69: the thread's entrance sequence, higher meaning "entered its section
+   * later". Ranking is by match, then this — not by a second recency signal
+   * that could disagree with the order the unsearched list already shows.
+   */
+  readonly sequence: number;
 }
 
 /**
@@ -26,8 +32,8 @@ export function matchScore(title: string, query: string): number | null {
 }
 
 /**
- * B43: one flat list ranked by match score, then `latestAttentionAt` descending,
- * with `id` breaking ties so the order is total and stable.
+ * B43: one flat list ranked by match score, then entrance order (B69), with
+ * `id` breaking ties so the order is total and stable.
  */
 export function rankSearch(
   candidates: readonly SearchCandidate[],
@@ -40,9 +46,8 @@ export function rankSearch(
   }
   scored.sort((a, b) => {
     if (a.score !== b.score) return b.score - a.score;
-    const attention =
-      b.candidate.thread.latestAttentionAt - a.candidate.thread.latestAttentionAt;
-    if (attention !== 0) return attention;
+    const entrance = b.candidate.sequence - a.candidate.sequence;
+    if (entrance !== 0) return entrance;
     return a.candidate.thread.id < b.candidate.thread.id ? -1 : 1;
   });
   return scored.map((entry) => entry.candidate);

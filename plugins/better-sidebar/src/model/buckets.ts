@@ -1,4 +1,5 @@
-import type { DateBucketKey, SectionKey } from "./types";
+import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
+import { NO_HOST_KEY, type DateBucketKey, type SectionKey, type StatusGroupKey } from "./types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -47,7 +48,17 @@ export function dimLevelFor(section: SectionKey): 0 | 1 | 2 | 3 {
 
 const STATIC_LABELS: Record<string, string> = {
   "needs-you": "NEEDS YOU",
+  done: "DONE",
   pinned: "PINNED",
+  // B65.4: the same five words the row's glyph legend uses, plus the `unread`
+  // state B67.7 folds the DONE band into.
+  "status:needs-you": "NEEDS YOU",
+  "status:unread": "UNREAD",
+  "status:working": "WORKING",
+  "status:planning": "PLANNING",
+  "status:draft": "DRAFT",
+  "status:idle": "IDLE",
+  [NO_HOST_KEY]: "NO MACHINE",
   today: "TODAY",
   yesterday: "YESTERDAY",
   "last-7": "LAST 7 DAYS",
@@ -57,20 +68,70 @@ const STATIC_LABELS: Record<string, string> = {
   search: "RESULTS",
 };
 
-/** `projectNames` resolves the `project:<id>` sections; unknown ids fall back to the id. */
+/**
+ * `dynamicLabels` resolves the `project:<id>` and `host:<id>` sections, keyed by
+ * the WHOLE section key so a project id and a host id can never collide.
+ * An unresolved key falls back to its own id.
+ */
 export function labelFor(
   section: SectionKey,
-  projectNames: ReadonlyMap<string, string>,
+  dynamicLabels: ReadonlyMap<SectionKey, string>,
 ): string {
   const staticLabel = STATIC_LABELS[section];
   if (staticLabel !== undefined) return staticLabel;
-  const projectId = section.slice("project:".length);
-  return (projectNames.get(projectId) ?? projectId).toUpperCase();
+  const resolved = dynamicLabels.get(section);
+  if (resolved !== undefined) return resolved.toUpperCase();
+  return section.slice(section.indexOf(":") + 1).toUpperCase();
 }
 
-/** B7: `NEEDS YOU` and `PINNED` are not collapsible; every other section is. */
+/**
+ * B7: `NEEDS YOU` and `PINNED` are not collapsible; every other section is,
+ * including the B67.6 `DONE` band and the B65 host and status groups.
+ */
 export function isCollapsibleSection(section: SectionKey): boolean {
   return section !== "needs-you" && section !== "pinned" && section !== "search";
+}
+
+/** B65.5/B67.7: the status groups, in the order they render. */
+export const STATUS_GROUP_ORDER: readonly StatusGroupKey[] = [
+  "needs-you",
+  "unread",
+  "working",
+  "planning",
+  "draft",
+  "idle",
+];
+
+/**
+ * B65.4. The row's own five-state vocabulary, read off the same `indicator`
+ * values `StatusGlyph` reads, so a user who learned the glyphs reads the same
+ * words here. `hasPendingInteraction` is the B1 needs-you signal and outranks
+ * the indicator, exactly as it does in the band.
+ */
+export function statusGroupOf(thread: PluginSidebarThread): StatusGroupKey {
+  if (thread.hasPendingInteraction) return "needs-you";
+  switch (thread.indicator) {
+    case "waiting-for-input":
+      return "needs-you";
+    case "unread-success":
+    case "unread-error":
+      return "unread";
+    case "runtime":
+    case "workflow":
+    case "background-agent":
+    case "background-command":
+      return "working";
+    case "plan-mode":
+    case "goal":
+      return "planning";
+    case "draft":
+    case "working-draft":
+      return "draft";
+    // B20: `none` and any future indicator kind read as idle rather than
+    // throwing or vanishing.
+    default:
+      return "idle";
+  }
 }
 
 /** Section render order within a group-by mode, ignoring emptiness. */

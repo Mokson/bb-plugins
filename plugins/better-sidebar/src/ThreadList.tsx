@@ -2,18 +2,20 @@ import { useCallback, useMemo, useRef, useState, type KeyboardEvent } from "reac
 import {
   experimental_useSidebarThreads as useSidebarThreads,
   useSettings,
+  type PluginSidebarThread,
   type PluginThreadListProps,
 } from "@get-bb/plugin-sdk/app";
 import { cn } from "./lib/utils";
 import { parseSettings } from "./settings";
-import { buildListModel } from "./model/list-model";
+import { buildListModel, sectionKeyOf } from "./model/list-model";
 import { dimLevelFor } from "./model/buckets";
 import type { GroupBy, RenderSection, SecondRowMode } from "./model/types";
+import { ALL_PROJECTS, ProjectFilter } from "./ProjectFilter";
 import { ThreadRow } from "./row/ThreadRow";
 import { Glyph } from "./ui/Glyph";
 import { ListEmpty, ListError, ListLoading, ListNoMatches } from "./ui/ListStates";
 import { useCollapse } from "./useCollapse";
-import { useFreeze } from "./useFreeze";
+import { useSectionOrder } from "./useSectionOrder";
 import { useNow } from "./useNow";
 import { matchBucketJump, nextSectionIndex } from "./keyboard/bucketJump";
 
@@ -46,11 +48,18 @@ function ThreadListBody({
   const settings = parseSettings(useSettings().values);
   const now = useNow();
   const collapse = useCollapse();
-  const freeze = useFreeze({
-    searchQuery,
-    groupBy: settings.groupBy,
-    secondRow: settings.secondRow,
-  });
+  // B64.2: session state. Never settings, never `localStorage`, never the
+  // backend — a filter that outlives the tab hides work the user forgot about.
+  const [projectFilter, setProjectFilter] = useState(ALL_PROJECTS);
+
+  // B68.5: the reconciler sees the UNFILTERED set. Scope and search are
+  // presentation, so a thread they hide has not left its section, and clearing
+  // one must not reshuffle the list.
+  const sectionOf = useCallback(
+    (thread: PluginSidebarThread) => sectionKeyOf(thread, settings, now),
+    [settings.groupBy, now],
+  );
+  const sectionOrder = useSectionOrder(threads, sectionOf);
 
   const model = useMemo(
     () =>
@@ -60,7 +69,8 @@ function ThreadListBody({
         settings,
         searchQuery,
         now,
-        frozen: freeze.frozen,
+        projectFilter: projectFilter === ALL_PROJECTS ? null : projectFilter,
+        sectionOrder,
         collapsedSections: collapse.collapsedSections,
         collapsedThreadIds: collapse.collapsedThreadIds,
       }),
@@ -72,21 +82,12 @@ function ThreadListBody({
       settings.tooltip,
       searchQuery,
       now,
-      freeze.frozen,
+      projectFilter,
+      sectionOrder,
       collapse.collapsedSections,
       collapse.collapsedThreadIds,
     ],
   );
-  // Records the sequence a later freeze pins; a no-op while already frozen.
-  freeze.observe(model);
-
-  // B47: the host clears its search field and closes the mobile drawer here, so
-  // every open path calls it. Opening also ends the freeze — the pointer's
-  // context is about to be navigated away from.
-  const handleNavigate = useCallback(() => {
-    freeze.release();
-    onNavigate();
-  }, [freeze, onNavigate]);
 
   const headersRef = useRef<(HTMLElement | null)[]>([]);
   const jumpIndexRef = useRef(-1);
@@ -105,8 +106,37 @@ function ThreadListBody({
 
   if (status === "loading") return <ListLoading />;
   if (status === "error") return <ListError onRetry={onRetry} />;
+
+  const scopedProject =
+    projectFilter === ALL_PROJECTS
+      ? undefined
+      : (projects.find((project) => project.id === projectFilter)?.name ?? projectFilter);
+
+  // B64.5: the control renders above every ready state, compact included —
+  // including the empty ones, which is the only place the user can undo a scope
+  // that hid everything.
+  const filter = (
+    <ProjectFilter
+      projects={projects}
+      value={projectFilter}
+      onChange={setProjectFilter}
+    />
+  );
+
   if (model.sections.length === 0) {
-    return searchQuery.trim() === "" ? <ListEmpty /> : <ListNoMatches query={searchQuery} />;
+    // B64.4: a scope or a search that matched nothing is never the generic
+    // "no threads yet", which would be a lie about an account that has plenty.
+    const narrowed = searchQuery.trim() !== "" || scopedProject !== undefined;
+    return (
+      <div data-better-sidebar-list="" className="flex h-full flex-col overflow-y-auto py-1">
+        {filter}
+        {narrowed ? (
+          <ListNoMatches query={searchQuery} projectName={scopedProject} />
+        ) : (
+          <ListEmpty />
+        )}
+      </div>
+    );
   }
 
   const showSecondRow = showsSecondRow(settings.secondRow, settings.groupBy);
@@ -117,10 +147,9 @@ function ThreadListBody({
     <div
       data-better-sidebar-list=""
       className="flex h-full flex-col overflow-y-auto py-1"
-      onPointerEnter={freeze.onPointerEnter}
-      onPointerLeave={freeze.onPointerLeave}
       onKeyDown={onKeyDown}
     >
+      {filter}
       {model.sections.map((section, index) => (
         <section key={section.key} data-sidebar-section={section.key}>
           <SectionHeader
@@ -137,7 +166,9 @@ function ThreadListBody({
               now={now}
               showSecondRow={showSecondRow}
               isCompactViewport={isCompactViewport}
-              onNavigate={handleNavigate}
+              // B47: the host clears its search field and closes the mobile
+              // drawer here, so every open path goes through it.
+              onNavigate={onNavigate}
               isSubtreeCollapsed={collapse.collapsedThreadIds.has(row.thread.id)}
               onToggleSubtree={
                 row.childCount > 0 ? () => collapse.toggleThread(row.thread.id) : undefined

@@ -1,10 +1,17 @@
 export interface BetterSidebarSettings {
-  groupBy: "date" | "project" | "none";
+  /** B65: `host` and `status` join the modes an unknown value degrades to `date`. */
+  groupBy: "date" | "project" | "host" | "status" | "none";
   secondRow: "auto" | "always" | "never";
   tooltip: "rich" | "minimal" | "off";
 }
 
-const GROUP_BY_VALUES: readonly string[] = ["date", "project", "none"];
+const GROUP_BY_VALUES: readonly string[] = [
+  "date",
+  "project",
+  "host",
+  "status",
+  "none",
+];
 const SECOND_ROW_VALUES: readonly string[] = ["auto", "always", "never"];
 const TOOLTIP_VALUES: readonly string[] = ["rich", "minimal", "off"];
 

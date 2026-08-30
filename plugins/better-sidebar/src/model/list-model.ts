@@ -1,18 +1,23 @@
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import {
   DATE_BUCKET_ORDER,
+  STATUS_GROUP_ORDER,
   bucketOf,
   dimLevelFor,
   isCollapsibleSection,
   labelFor,
+  statusGroupOf,
 } from "./buckets";
 import { rankSearch, type SearchCandidate } from "./search";
-import type {
-  ListModel,
-  ListModelInput,
-  RenderRow,
-  RenderSection,
-  SectionKey,
+import {
+  NO_HOST_KEY,
+  type BetterSidebarSettings,
+  type ListModel,
+  type ListModelInput,
+  type RenderRow,
+  type RenderSection,
+  type SectionKey,
+  type SectionOrder,
 } from "./types";
 
 /**
@@ -55,6 +60,78 @@ function byAttention(a: PluginSidebarThread, b: PluginSidebarThread): number {
   return a.id < b.id ? -1 : 1;
 }
 
+/** B67.1: the host's own rolled-up "finished, and you have not looked" state. */
+export function isDone(thread: PluginSidebarThread): boolean {
+  return thread.indicator === "unread-success" || thread.indicator === "unread-error";
+}
+
+/**
+ * B1 precedence, extended by B67 — the ONE place a thread's section is decided.
+ *
+ * `useSectionOrder` calls this over the unfiltered set (B68.5) and the model
+ * calls it over the roots it renders, so the entrance-order map and the
+ * rendered structure can never disagree about which section a thread is in.
+ *
+ * B65.9: `host` and `status` add section KEYS here and nothing else. The three
+ * band predicates and their order are identical in every mode; in `status` mode
+ * the two bands resolve to their own status group instead of a floating band
+ * (B65.5, B67.7), which is a different key for the same decision.
+ */
+export function sectionKeyOf(
+  thread: PluginSidebarThread,
+  settings: BetterSidebarSettings,
+  now: number,
+): SectionKey {
+  const merged = settings.groupBy === "status";
+  if (thread.hasPendingInteraction) return merged ? "status:needs-you" : "needs-you";
+  if (isDone(thread)) return merged ? "status:unread" : "done";
+  if (thread.isPinned) return "pinned";
+  switch (settings.groupBy) {
+    case "date":
+      return bucketOf(thread.latestAttentionAt, now);
+    case "project":
+      return `project:${thread.projectId}`;
+    case "host":
+      return thread.host ? `host:${thread.host.id}` : NO_HOST_KEY;
+    case "status":
+      return `status:${statusGroupOf(thread)}`;
+    default:
+      return "all";
+  }
+}
+
+/**
+ * B68.2: a thread's entrance sequence, higher meaning "entered later", which
+ * renders first.
+ *
+ * A thread with no entry falls back to `latestAttentionAt`, which covers both
+ * cases the fallback has. With no map at all every thread uses it, so the model
+ * renders the B5 order the hook seeds from. With a map that has not yet seen
+ * this thread, the epoch dwarfs every real sequence and the thread renders at
+ * the top of its section — which is what a thread nobody has recorded entering
+ * is: an arrival.
+ */
+function sequenceOf(
+  thread: PluginSidebarThread,
+  order: SectionOrder | null,
+): number {
+  return order?.entries.get(thread.id)?.sequence ?? thread.latestAttentionAt;
+}
+
+/**
+ * B68.2 ordering: newest entrant first, `id` making the order total.
+ *
+ * Applied to ROOTS only. B9/B69 keep a subtree together and its children on
+ * `latestAttentionAt`, so a descendant is never sequenced independently.
+ */
+function byEntrance(order: SectionOrder | null) {
+  return (a: PluginSidebarThread, b: PluginSidebarThread): number => {
+    const delta = sequenceOf(b, order) - sequenceOf(a, order);
+    if (delta !== 0) return delta;
+    return a.id < b.id ? -1 : 1;
+  };
+}
+
 interface Tree {
   readonly visible: readonly PluginSidebarThread[];
   readonly byId: ReadonlyMap<string, PluginSidebarThread>;
@@ -68,7 +145,14 @@ interface Tree {
  * collapse prunes them at render time, not here.
  */
 function buildTree(input: ListModelInput): Tree {
-  const present = new Map(input.threads.map((thread) => [thread.id, thread]));
+  // B64.6: the scope removes threads from every section; it changes nothing
+  // about precedence, and it is deliberately applied AFTER the entrance-order
+  // reconciler has already seen the unfiltered set (B68.5).
+  const scoped =
+    input.projectFilter === null
+      ? input.threads
+      : input.threads.filter((thread) => thread.projectId === input.projectFilter);
+  const present = new Map(scoped.map((thread) => [thread.id, thread]));
   const decided = new Map<string, boolean>();
 
   const isVisible = (thread: PluginSidebarThread, seen: Set<string>): boolean => {
@@ -90,7 +174,7 @@ function buildTree(input: ListModelInput): Tree {
     return result;
   };
 
-  const visible = input.threads.filter((thread) => isVisible(thread, new Set()));
+  const visible = scoped.filter((thread) => isVisible(thread, new Set()));
   const byId = new Map(visible.map((thread) => [thread.id, thread]));
 
   /**
@@ -132,14 +216,17 @@ function buildTree(input: ListModelInput): Tree {
     if (siblings) siblings.push(thread);
     else childrenOf.set(parentId, [thread]);
   }
+  // B9/B69: children stay on `latestAttentionAt`; only roots are sequenced.
   for (const siblings of childrenOf.values()) siblings.sort(byAttention);
-  roots.sort(byAttention);
+  // B68.2 for every section at once. Grouping preserves this order, so no
+  // section needs its own sort and the new B65 keys need no special case.
+  roots.sort(byEntrance(input.sectionOrder));
   return { visible, byId, childrenOf, roots };
 }
 
 /**
  * Step 4 of §3. One write per root into a single map, so a thread satisfying two
- * predicates cannot land in two sections (B1).
+ * predicates cannot land in two sections (B1, B67.5).
  */
 function assignSections(
   roots: readonly PluginSidebarThread[],
@@ -147,17 +234,26 @@ function assignSections(
 ): Map<string, SectionKey> {
   const assignment = new Map<string, SectionKey>();
   for (const root of roots) {
-    let key: SectionKey;
-    if (root.hasPendingInteraction) key = "needs-you";
-    else if (root.isPinned) key = "pinned";
-    else if (input.settings.groupBy === "date") {
-      key = bucketOf(root.latestAttentionAt, input.now);
-    } else if (input.settings.groupBy === "project") {
-      key = `project:${root.projectId}`;
-    } else key = "all";
-    assignment.set(root.id, key);
+    assignment.set(root.id, sectionKeyOf(root, input.settings, input.now));
   }
   return assignment;
+}
+
+/**
+ * Labels for the sections whose name comes from data, keyed by the whole
+ * section key so a project id and a host id can never collide.
+ */
+function dynamicLabelMap(input: ListModelInput): Map<SectionKey, string> {
+  const labels = new Map<SectionKey, string>();
+  for (const project of input.projects) {
+    labels.set(`project:${project.id}`, project.name);
+  }
+  // B65.1: the machine's name, taken off the threads because the SDK gives the
+  // sidebar no separate host list.
+  for (const thread of input.threads) {
+    if (thread.host) labels.set(`host:${thread.host.id}`, thread.host.name);
+  }
+  return labels;
 }
 
 function projectNameMap(input: ListModelInput): Map<string, string> {
@@ -204,11 +300,25 @@ function flattenSubtree(
 function sectionOrderFor(
   input: ListModelInput,
   present: ReadonlySet<SectionKey>,
+  dynamicLabels: ReadonlyMap<SectionKey, string>,
 ): SectionKey[] {
-  const order: SectionKey[] = ["needs-you", "pinned"];
+  // B67: DONE sits between NEEDS YOU and PINNED. In `status` mode neither band
+  // is emitted (B65.5/B67.7), so these two keys are simply never present.
+  const order: SectionKey[] = ["needs-you", "done", "pinned"];
   if (input.settings.groupBy === "date") order.push(...DATE_BUCKET_ORDER);
   else if (input.settings.groupBy === "none") order.push("all");
-  else {
+  else if (input.settings.groupBy === "status") {
+    for (const status of STATUS_GROUP_ORDER) order.push(`status:${status}`);
+  } else if (input.settings.groupBy === "host") {
+    // B65.2: machines by name, with `No machine` pinned last however it sorts.
+    const hosts = [...present].filter(
+      (key) => key !== NO_HOST_KEY && key.startsWith("host:"),
+    );
+    hosts.sort((a, b) =>
+      labelFor(a, dynamicLabels).localeCompare(labelFor(b, dynamicLabels)),
+    );
+    order.push(...hosts, NO_HOST_KEY);
+  } else {
     // B8: project sections follow the host's project order.
     for (const project of input.projects) order.push(`project:${project.id}`);
     for (const key of present) if (!order.includes(key)) order.push(key);
@@ -221,13 +331,13 @@ function makeSection(
   rows: readonly RenderRow[],
   count: number,
   input: ListModelInput,
-  projectNames: ReadonlyMap<string, string>,
+  dynamicLabels: ReadonlyMap<SectionKey, string>,
 ): RenderSection {
   const isCollapsible = isCollapsibleSection(key);
   const isCollapsed = isCollapsible && input.collapsedSections.has(key);
   return {
     key,
-    label: labelFor(key, projectNames),
+    label: labelFor(key, dynamicLabels),
     count,
     isCollapsible,
     isCollapsed,
@@ -240,23 +350,27 @@ function buildSearchSections(
   tree: Tree,
   input: ListModelInput,
   projectNames: ReadonlyMap<string, string>,
+  dynamicLabels: ReadonlyMap<SectionKey, string>,
 ): RenderSection[] {
   const candidates: SearchCandidate[] = tree.visible.map((thread) => ({
     thread,
     title: resolveTitle(thread),
     projectName: projectNames.get(thread.projectId) ?? thread.projectId,
+    // B69: search ranks by match, then entrance order.
+    sequence: sequenceOf(thread, input.sectionOrder),
   }));
   const rows = rankSearch(candidates, input.searchQuery).map((candidate) =>
     makeRow(candidate.thread, tree, "search", 0, projectNames, candidate.projectName),
   );
   if (rows.length === 0) return [];
-  return [makeSection("search", rows, rows.length, input, projectNames)];
+  return [makeSection("search", rows, rows.length, input, dynamicLabels)];
 }
 
 function buildLiveSections(
   tree: Tree,
   input: ListModelInput,
   projectNames: ReadonlyMap<string, string>,
+  dynamicLabels: ReadonlyMap<SectionKey, string>,
 ): RenderSection[] {
   const assignment = assignSections(tree.roots, input);
   const rowsBySection = new Map<SectionKey, RenderRow[]>();
@@ -273,154 +387,26 @@ function buildLiveSections(
     // collapse state cannot touch a number that never counted children.
     countBySection.set(key, (countBySection.get(key) ?? 0) + 1);
   }
-  const order = sectionOrderFor(input, new Set(rowsBySection.keys()));
+  const order = sectionOrderFor(input, new Set(rowsBySection.keys()), dynamicLabels);
   const sections: RenderSection[] = [];
   for (const key of order) {
     const count = countBySection.get(key) ?? 0;
     if (count === 0) continue; // B4: an empty section renders nothing at all
     sections.push(
-      makeSection(key, rowsBySection.get(key) ?? [], count, input, projectNames),
+      makeSection(key, rowsBySection.get(key) ?? [], count, input, dynamicLabels),
     );
   }
-  return sections;
-}
-
-/**
- * A root row together with the visible subtree rendered beneath it, exactly as
- * the live model laid it out.
- *
- * This is the unit the freeze orders, and it is what makes the overlay correct
- * by construction rather than by enumerated cases. A child is never ordered
- * independently of its parent, so a subtree expanded while frozen cannot be
- * mistaken for a set of newly arrived threads — the situation that let expanding
- * a node scatter its children to the bottom of the list.
- */
-interface RootGroup {
-  readonly rootId: string;
-  readonly rows: readonly RenderRow[];
-}
-
-/** Splits a section's pre-order rows back into root subtrees, on `depth === 0`. */
-function groupRoots(rows: readonly RenderRow[]): RootGroup[] {
-  const groups: { rootId: string; rows: RenderRow[] }[] = [];
-  for (const row of rows) {
-    const current = groups[groups.length - 1];
-    if (row.depth === 0 || current === undefined) {
-      groups.push({ rootId: row.thread.id, rows: [row] });
-    } else {
-      current.rows.push(row);
-    }
-  }
-  return groups;
-}
-
-/** Re-homes a row into the section it is actually rendered in. */
-function inSection(row: RenderRow, key: SectionKey): RenderRow {
-  if (row.sectionKey === key) return row;
-  return { ...row, sectionKey: key, dimLevel: dimLevelFor(key) };
-}
-
-/**
- * Step 7 of §3 / §4 — the overlay.
- *
- * **Everything structural comes from the live model**: which sections exist,
- * their headers, labels, counts, collapsibility and collapse state, and the
- * parent/child nesting inside every root subtree. The snapshot contributes one
- * thing only — the ORDER of the root subtrees within the whole rendered
- * sequence, plus which section each already-rendered root sits in.
- *
- * That split is the invariant: because the overlay never rebuilds structure, no
- * structural change made while the pointer is over the list (expanding a
- * subtree, collapsing a section, a bucket re-partition) can be misread as a
- * reordering. It simply renders, in the position the snapshot already fixed.
- */
-function applyFreeze(
-  live: readonly RenderSection[],
-  input: ListModelInput,
-): RenderSection[] {
-  const frozen = input.frozen!;
-  const rankOf = new Map(frozen.ids.map((id, index) => [id, index]));
-  const liveByKey = new Map(live.map((section) => [section.key, section]));
-  const arrivalOf = new Map(input.threads.map((thread, index) => [thread.id, index]));
-
-  const known: { group: RootGroup; key: SectionKey; rank: number }[] = [];
-  const newcomers: RootGroup[] = [];
-  for (const section of live) {
-    for (const group of groupRoots(section.rows)) {
-      const rank = rankOf.get(group.rootId);
-      if (rank === undefined) {
-        newcomers.push(group);
-        continue;
-      }
-      // A frozen row never changes section, but only into a section the LIVE
-      // model still renders; otherwise it stays where the live model put it.
-      const frozenKey = frozen.sectionOf[group.rootId];
-      const key =
-        frozenKey !== undefined && liveByKey.has(frozenKey) ? frozenKey : section.key;
-      known.push({ group, key, rank });
-    }
-  }
-
-  // Nothing pinned survives, so there is no order left to preserve. Releasing
-  // the freeze is the whole answer — a hybrid of live and frozen order is not.
-  if (known.length === 0) return [...live];
-
-  const rowsByKey = new Map<SectionKey, RenderRow[]>();
-  for (const entry of known.sort((a, b) => a.rank - b.rank)) {
-    let rows = rowsByKey.get(entry.key);
-    if (!rows) rowsByKey.set(entry.key, (rows = []));
-    for (const row of entry.group.rows) rows.push(inSection(row, entry.key));
-  }
-
-  // §4 point 1: sections present at freeze time keep their relative order; a
-  // section the live model has since introduced is appended after them, where
-  // it cannot push an already-rendered row down.
-  const order: SectionKey[] = frozen.sectionOrder.filter((key) => liveByKey.has(key));
-  for (const section of live) if (!order.includes(section.key)) order.push(section.key);
-
-  const sections: RenderSection[] = [];
-  for (const key of order) {
-    const section = liveByKey.get(key)!;
-    const rows = section.isCollapsed ? [] : (rowsByKey.get(key) ?? []);
-    // B4 holds while frozen too, but a collapsed section is present by right:
-    // it has a live count to show even though it renders no rows.
-    if (rows.length === 0 && !section.isCollapsed) continue;
-    sections.push({ ...section, rows });
-  }
-
-  if (newcomers.length === 0) return sections;
-
-  // §4 point 4: a thread that genuinely arrived while frozen renders at the very
-  // end of the ENTIRE list, in arrival order — the only position that provably
-  // moves nothing above it. It gets no section header of its own.
-  newcomers.sort(
-    (a, b) => (arrivalOf.get(a.rootId) ?? 0) - (arrivalOf.get(b.rootId) ?? 0),
-  );
-  let hostIndex = sections.length - 1;
-  while (hostIndex >= 0 && sections[hostIndex]!.isCollapsed) hostIndex -= 1;
-  if (hostIndex === -1) return [...live]; // nowhere to append: release instead
-
-  const host = sections[hostIndex]!;
-  const appended = newcomers.flatMap((group) =>
-    group.rows.map((row) => inSection(row, host.key)),
-  );
-  sections[hostIndex] = {
-    ...host,
-    // B53.4 again: one per newcomer ROOT, not one per appended row.
-    count: host.count + newcomers.length,
-    rows: [...host.rows, ...appended],
-  };
   return sections;
 }
 
 export function buildListModel(input: ListModelInput): ListModel {
   const tree = buildTree(input);
   const projectNames = projectNameMap(input);
-  const live =
+  const dynamicLabels = dynamicLabelMap(input);
+  const sections =
     input.searchQuery.trim() === ""
-      ? buildLiveSections(tree, input, projectNames)
-      : buildSearchSections(tree, input, projectNames);
-  const sections = input.frozen ? applyFreeze(live, input) : live;
+      ? buildLiveSections(tree, input, projectNames, dynamicLabels)
+      : buildSearchSections(tree, input, projectNames, dynamicLabels);
   let rowCount = 0;
   for (const section of sections) rowCount += section.rows.length;
   return { sections, rowCount };

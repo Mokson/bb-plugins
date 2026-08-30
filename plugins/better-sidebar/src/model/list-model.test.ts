@@ -3,12 +3,23 @@ import type {
   PluginSidebarProject,
   PluginSidebarThread,
 } from "@get-bb/plugin-sdk/app";
-import { buildListModel, resolveTitle, resolveWorkspaceLabel } from "./list-model";
-// The REAL freeze machine's snapshot, not a copy of it (F6). Every freeze test
-// below drives useFreeze's own output into buildListModel, so the machine and
-// the overlay can no longer diverge behind two agreeing stand-ins.
-import { snapshot } from "../useFreeze";
-import type { ListModelInput, ListModel, SectionKey } from "./types";
+import {
+  buildListModel,
+  resolveTitle,
+  resolveWorkspaceLabel,
+  sectionKeyOf,
+} from "./list-model";
+// The REAL reconciler, not a copy of it (F6). Every entrance-order test below
+// drives `useSectionOrder`'s own output into `buildListModel`, so the hook and
+// the model can no longer diverge behind two agreeing stand-ins.
+import { reconcileSectionOrder } from "../useSectionOrder";
+import type {
+  BetterSidebarSettings,
+  ListModelInput,
+  ListModel,
+  SectionKey,
+  SectionOrder,
+} from "./types";
 
 /** Fixed local epochs — never Date.now(). */
 const NOW = new Date(2026, 7, 30, 12, 0, 0, 0).getTime();
@@ -66,11 +77,32 @@ function input(
     settings: { groupBy: "date", secondRow: "auto", tooltip: "rich" },
     searchQuery: "",
     now: NOW,
-    frozen: null,
+    projectFilter: null,
+    sectionOrder: null,
     collapsedSections: new Set<SectionKey>(),
     collapsedThreadIds: new Set<string>(),
     ...overrides,
   };
+}
+
+const DEFAULT_SETTINGS: BetterSidebarSettings = {
+  groupBy: "date",
+  secondRow: "auto",
+  tooltip: "rich",
+};
+
+/**
+ * Mounts the entrance order over a thread set, exactly as `useSectionOrder`
+ * does: the model's own `sectionKeyOf`, over the UNFILTERED set (B68.5).
+ */
+function mount(
+  threads: readonly PluginSidebarThread[],
+  settings: BetterSidebarSettings = DEFAULT_SETTINGS,
+  current: SectionOrder | null = null,
+): SectionOrder {
+  return reconcileSectionOrder(current, threads, (thread) =>
+    sectionKeyOf(thread, settings, NOW),
+  );
 }
 
 /** The whole rendered sequence, flattened across sections — what B6 pins. */
@@ -407,132 +439,191 @@ describe("search (B43)", () => {
   });
 });
 
-describe("freeze overlay (B6, §4 points 1-5)", () => {
+describe("entrance order (B68, B69)", () => {
   const base = [
     thread("a", { latestAttentionAt: NOW - 1000 }),
     thread("b", { latestAttentionAt: NOW - 2000 }),
     thread("c", { isPinned: true, latestAttentionAt: NOW - 3000 }),
   ];
 
-  it("keeps a frozen id at its index when its attention overtakes the row above", () => {
-    const frozen = snapshot(buildListModel(input(base)));
-    expect(frozen.ids).toEqual(["c", "a", "b"]);
-    const bumped = base.map((t) =>
-      t.id === "b" ? thread("b", { latestAttentionAt: NOW }) : t,
-    );
-    expect(sequence(buildListModel(input(bumped)))).toEqual(["c", "b", "a"]);
-    expect(sequence(buildListModel(input(bumped, { frozen })))).toEqual([
+  it("seeds the first mount in the B5 order it replaces (B68.3)", () => {
+    const sectionOrder = mount(base);
+    expect(sequence(buildListModel(input(base, { sectionOrder })))).toEqual([
       "c",
       "a",
       "b",
     ]);
   });
 
-  it("omits a vanished frozen id and closes the gap without re-sorting", () => {
-    const frozen = snapshot(buildListModel(input(base)));
-    const model = buildListModel(
-      input(base.filter((t) => t.id !== "a"), { frozen }),
+  it("breaks a first-mount tie by createdAt, then id, so the seed is total (B68.3)", () => {
+    const tied = [
+      thread("b2", { latestAttentionAt: NOW, createdAt: NOW - 5 }),
+      thread("b1", { latestAttentionAt: NOW, createdAt: NOW - 5 }),
+      thread("older", { latestAttentionAt: NOW, createdAt: NOW - 50 }),
+    ];
+    const sectionOrder = mount(tied);
+    expect(sequence(buildListModel(input(tied, { sectionOrder })))).toEqual([
+      "b1",
+      "b2",
+      "older",
+    ]);
+  });
+
+  it("keeps a thread's index when its attention overtakes the row above it (B68.1)", () => {
+    const sectionOrder = mount(base);
+    const bumped = base.map((t) =>
+      t.id === "b" ? thread("b", { latestAttentionAt: NOW }) : t,
     );
-    expect(sequence(model)).toEqual(["c", "b"]);
+    // The same section, so no new entrance: the order is unmoved.
+    const after = mount(bumped, DEFAULT_SETTINGS, sectionOrder);
+    expect(sequence(buildListModel(input(bumped, { sectionOrder: after })))).toEqual([
+      "c",
+      "a",
+      "b",
+    ]);
+    // Without the order map the model falls back to attention, which is the
+    // very movement B68 exists to stop.
+    expect(sequence(buildListModel(input(bumped)))).toEqual(["c", "b", "a"]);
+  });
+
+  it("lands a new entrant at the TOP of its section, moving nothing below it (B68.2)", () => {
+    const sectionOrder = mount(base);
+    const arrived = [...base, thread("new", { latestAttentionAt: NOW - 9999 })];
+    const after = mount(arrived, DEFAULT_SETTINGS, sectionOrder);
+    // `new` has the OLDEST attention and still renders first in `today`: its
+    // position comes from when it entered, not from its timestamp.
+    expect(sequence(buildListModel(input(arrived, { sectionOrder: after })))).toEqual([
+      "c",
+      "new",
+      "a",
+      "b",
+    ]);
+  });
+
+  it("gives a thread that changes section a new entrance at the top of it (B68.1)", () => {
+    const sectionOrder = mount(base);
+    const promoted = base.map((t) =>
+      t.id === "b" ? thread("b", { hasPendingInteraction: true }) : t,
+    );
+    const after = mount(promoted, DEFAULT_SETTINGS, sectionOrder);
+    const model = buildListModel(input(promoted, { sectionOrder: after }));
+    expect(keys(model)).toEqual(["needs-you", "pinned", "today"]);
+    expect(sequence(model)).toEqual(["b", "c", "a"]);
+  });
+
+  it("drops a departed thread's entry, so returning is a new entrance (B68.6)", () => {
+    const seeded = mount(base);
+    const withoutA = base.filter((t) => t.id !== "a");
+    const afterExit = mount(withoutA, DEFAULT_SETTINGS, seeded);
+    expect(afterExit.entries.has("a")).toBe(false);
+    const afterReturn = mount(base, DEFAULT_SETTINGS, afterExit);
+    // `a` re-enters `today` and therefore renders above `b`, which never left.
+    expect(sequence(buildListModel(input(base, { sectionOrder: afterReturn })))).toEqual([
+      "c",
+      "a",
+      "b",
+    ]);
+    expect(afterReturn.entries.get("a")!.sequence).toBeGreaterThan(
+      afterReturn.entries.get("b")!.sequence,
+    );
+  });
+
+  it("leaves the order unchanged when a project filter is applied and then cleared (B68.5)", () => {
+    const mixed = [
+      thread("a1", { projectId: "p1", latestAttentionAt: NOW - 1000 }),
+      thread("b1", { projectId: "p2", latestAttentionAt: NOW - 2000 }),
+      thread("a2", { projectId: "p1", latestAttentionAt: NOW - 3000 }),
+    ];
+    const seeded = mount(mixed);
+    const before = sequence(buildListModel(input(mixed, { sectionOrder: seeded })));
+    expect(before).toEqual(["a1", "b1", "a2"]);
+
+    // Scoped: the reconciler still sees the UNFILTERED set, so nothing that the
+    // scope hides is treated as having left its section.
+    const scoped = mount(mixed, DEFAULT_SETTINGS, seeded);
+    expect(
+      sequence(buildListModel(input(mixed, { sectionOrder: scoped, projectFilter: "p1" }))),
+    ).toEqual(["a1", "a2"]);
+
+    const cleared = mount(mixed, DEFAULT_SETTINGS, scoped);
+    expect(sequence(buildListModel(input(mixed, { sectionOrder: cleared })))).toEqual(
+      before,
+    );
+  });
+
+  it("does not re-sequence a thread that a search is hiding (B68.5)", () => {
+    const seeded = mount(base);
+    const searching = mount(base, DEFAULT_SETTINGS, seeded);
+    expect(searching.entries).toEqual(seeded.entries);
+    expect(searching.nextSequence).toBe(seeded.nextSequence);
   });
 
   it("drops a section that emptied rather than rendering a bare header", () => {
-    const frozen = snapshot(buildListModel(input(base)));
+    const sectionOrder = mount(base);
     const model = buildListModel(
-      input(base.filter((t) => t.id !== "c"), { frozen }),
+      input(base.filter((t) => t.id !== "c"), { sectionOrder }),
     );
     expect(keys(model)).toEqual(["today"]);
     expect(sequence(model)).toEqual(["a", "b"]);
   });
 
-  it("lands a newly arriving needs-you thread at the very END of the whole list, moving nothing", () => {
-    const before = buildListModel(input(base));
-    const frozen = snapshot(before);
-    const arrived = [
-      ...base,
-      thread("new", { hasPendingInteraction: true, latestAttentionAt: NOW + 5000 }),
+  it("ranks a search by match, then entrance order (B69)", () => {
+    const threads = [
+      thread("m1", { title: "deploy one", latestAttentionAt: NOW - 1000 }),
+      thread("m2", { title: "deploy two", latestAttentionAt: NOW - 2000 }),
     ];
-    const after = buildListModel(input(arrived, { frozen }));
-    const seq = sequence(after);
-    // Every existing row's index is byte-identical; the newcomer is last.
-    expect(seq.slice(0, frozen.ids.length)).toEqual([...frozen.ids]);
-    expect(seq[frozen.ids.length]).toBe("new");
-    // It gets no section header of its own while frozen.
-    expect(keys(after)).toEqual(keys(before));
-    // On release it takes its sorted position at the top of needs-you.
-    expect(sequence(buildListModel(input(arrived)))).toEqual(["new", "c", "a", "b"]);
+    const seeded = mount(threads);
+    // `m2` re-enters its section and so outranks `m1`, whose attention is newer.
+    const moved = threads.map((t) =>
+      t.id === "m2" ? thread("m2", { title: "deploy two", isPinned: true }) : t,
+    );
+    const after = mount(moved, DEFAULT_SETTINGS, seeded);
+    expect(
+      sequence(
+        buildListModel(input(moved, { sectionOrder: after, searchQuery: "deploy" })),
+      ),
+    ).toEqual(["m2", "m1"]);
   });
 
-  it("appends multiple newcomers in arrival order", () => {
-    const frozen = snapshot(buildListModel(input(base)));
-    const arrived = [
-      ...base,
-      thread("n1", { latestAttentionAt: NOW + 1 }),
-      thread("n2", { latestAttentionAt: NOW + 9000 }),
-    ];
-    expect(sequence(buildListModel(input(arrived, { frozen })))).toEqual([
-      "c",
-      "a",
-      "b",
-      "n1",
-      "n2",
-    ]);
-  });
+  // --- Structure is the live model's; the sequence map orders, nothing more ---
 
-  it("still pins the order of a search result list", () => {
-    const searching = input(base, { searchQuery: "a" });
-    const frozen = snapshot(buildListModel(searching));
-    expect(frozen.sectionOrder).toEqual(["search"]);
-    expect(sequence(buildListModel({ ...searching, frozen }))).toEqual([
-      ...frozen.ids,
-    ]);
-  });
-
-  it("renders live when no frozen row survives, instead of a hybrid order (F7)", () => {
-    const frozen = snapshot(buildListModel(input(base)));
-    const model = buildListModel(input([thread("z")], { frozen }));
-    expect(sequence(model)).toEqual(["z"]);
-    expect(keys(model)).toEqual(["today"]);
-  });
-
-  // --- F2/F3: structure is the live model's, order alone is the snapshot's ---
-
-  it("keeps children directly beneath their parent when a subtree is expanded while frozen (F2)", () => {
+  it("keeps children directly beneath their parent when a subtree is expanded (B9, B69)", () => {
     const threads = [
       thread("p", { latestAttentionAt: NOW - 1000 }),
       thread("kid1", { parentThreadId: "p", latestAttentionAt: NOW - 1100 }),
       thread("kid2", { parentThreadId: "p", latestAttentionAt: NOW - 1200 }),
       thread("tail", { latestAttentionAt: NOW - 5000 }),
     ];
-    // Frozen while `p` is collapsed: the children are not in the snapshot at all.
+    // Mounted while `p` is collapsed: the children were never rendered.
     const collapsed = { collapsedThreadIds: new Set(["p"]) };
-    const frozen = snapshot(buildListModel(input(threads, collapsed)));
-    expect(frozen.ids).toEqual(["p", "tail"]);
+    const seeded = mount(threads);
+    expect(sequence(buildListModel(input(threads, { ...collapsed, sectionOrder: seeded })))).toEqual([
+      "p",
+      "tail",
+    ]);
 
-    // The chevron is only reachable with the pointer over the list, so the
-    // freeze is ALWAYS engaged when a subtree is expanded.
-    const model = buildListModel(input(threads, { frozen }));
+    const model = buildListModel(input(threads, { sectionOrder: seeded }));
 
     expect(sequence(model)).toEqual(["p", "kid1", "kid2", "tail"]);
-    const rows = model.sections[0]!.rows;
-    expect(rows.map((row) => row.depth)).toEqual([0, 1, 1, 0]);
-    // The children are not newcomers: they must not be appended past `tail`.
+    expect(model.sections[0]!.rows.map((row) => row.depth)).toEqual([0, 1, 1, 0]);
+    // The children are not entrants of their own: they move with the subtree.
     expect(sequence(model).indexOf("kid1")).toBeLessThan(
       sequence(model).indexOf("tail"),
     );
   });
 
-  it("keeps a collapsed section present with its header and count while frozen (F3)", () => {
+  it("keeps a collapsed section present with its header and count (B53.5)", () => {
     const threads = [
       thread("t1"),
       thread("t2"),
       thread("old", { latestAttentionAt: NOW - 10 * DAY_MS }),
     ];
-    const frozen = snapshot(buildListModel(input(threads)));
-    expect(keys(buildListModel(input(threads)))).toEqual(["today", "last-30"]);
-
+    const sectionOrder = mount(threads);
     const model = buildListModel(
-      input(threads, { frozen, collapsedSections: new Set<SectionKey>(["today"]) }),
+      input(threads, {
+        sectionOrder,
+        collapsedSections: new Set<SectionKey>(["today"]),
+      }),
     );
 
     const today = model.sections.find((section) => section.key === "today");
@@ -545,22 +636,200 @@ describe("freeze overlay (B6, §4 points 1-5)", () => {
     expect(sequence(model)).toEqual(["old"]);
   });
 
-  it("takes section metadata from the live model, not from the snapshot", () => {
-    // `late` moves from `today` into `last-30` only in the live model; the
-    // header, its label and its count all come from that live section.
+  it("takes section membership from the live model, never from the sequence map", () => {
+    // `late` ages out of `today` into `last-30`. The sequence map still holds
+    // its OLD section, and the live model's answer must win — inverting this
+    // is what shipped a blocker in the overlay this replaces.
     const threads = [thread("a"), thread("late")];
-    const frozen = snapshot(buildListModel(input(threads)));
-    const model = buildListModel(
-      input(
-        [thread("a"), thread("late", { latestAttentionAt: NOW - 10 * DAY_MS })],
-        { frozen },
-      ),
-    );
+    const stale = mount(threads);
+    expect(stale.entries.get("late")!.section).toBe("today");
+    const aged = [thread("a"), thread("late", { latestAttentionAt: NOW - 10 * DAY_MS })];
+    const model = buildListModel(input(aged, { sectionOrder: stale }));
+    expect(keys(model)).toEqual(["today", "last-30"]);
+    expect(model.sections[1]!.rows.map((row) => row.thread.id)).toEqual(["late"]);
     for (const section of model.sections) {
       expect(section.label).toBe(section.key === "today" ? "TODAY" : "LAST 30 DAYS");
     }
-    // Nothing already rendered moved: `a` is still first.
-    expect(sequence(model)[0]).toBe("a");
+  });
+});
+
+describe("DONE band (B67)", () => {
+  it("puts an unread-success root in DONE, between NEEDS YOU and PINNED", () => {
+    const threads = [
+      thread("pending", { hasPendingInteraction: true }),
+      thread("finished", { indicator: "unread-success", isUnread: true }),
+      thread("failed", { indicator: "unread-error", isUnread: true }),
+      thread("pin", { isPinned: true }),
+      thread("plain"),
+    ];
+    const model = buildListModel(input(threads, { sectionOrder: mount(threads) }));
+    expect(keys(model)).toEqual(["needs-you", "done", "pinned", "today"]);
+    const done = model.sections.find((section) => section.key === "done")!;
+    expect(done.rows.map((row) => row.thread.id).sort()).toEqual(["failed", "finished"]);
+    expect(done.label).toBe("DONE");
+    expect(done.isCollapsible).toBe(true);
+  });
+
+  it("leaves a thread that is unread but still running out of DONE (B67.1)", () => {
+    const threads = [thread("running", { indicator: "runtime", isUnread: true })];
+    expect(keys(buildListModel(input(threads)))).toEqual(["today"]);
+  });
+
+  it("never promotes a parent for a completed CHILD (B67.3)", () => {
+    const threads = [
+      thread("parent"),
+      thread("child", { parentThreadId: "parent", indicator: "unread-success" }),
+    ];
+    const model = buildListModel(input(threads, { sectionOrder: mount(threads) }));
+    // One section, and the child is still nested where it already was.
+    expect(keys(model)).toEqual(["today"]);
+    expect(model.sections[0]!.rows.map((row) => row.depth)).toEqual([0, 1]);
+  });
+
+  it("shows a pending AND unread thread only in NEEDS YOU (B67.5)", () => {
+    const threads = [
+      thread("both", { hasPendingInteraction: true, indicator: "unread-success" }),
+    ];
+    const model = buildListModel(input(threads, { sectionOrder: mount(threads) }));
+    expect(keys(model)).toEqual(["needs-you"]);
+    expect(sequence(model)).toEqual(["both"]);
+  });
+
+  it("counts roots only, and renders nothing when empty (B67.6, B67.8)", () => {
+    const threads = [
+      thread("finished", { indicator: "unread-success" }),
+      thread("kid", { parentThreadId: "finished", indicator: "unread-success" }),
+    ];
+    const model = buildListModel(input(threads, { sectionOrder: mount(threads) }));
+    expect(model.sections.find((section) => section.key === "done")!.count).toBe(1);
+    expect(keys(buildListModel(input([thread("plain")])))).not.toContain("done");
+  });
+});
+
+describe("host and status grouping (B65)", () => {
+  const HOST_SETTINGS: BetterSidebarSettings = { ...DEFAULT_SETTINGS, groupBy: "host" };
+  const STATUS_SETTINGS: BetterSidebarSettings = {
+    ...DEFAULT_SETTINGS,
+    groupBy: "status",
+  };
+
+  it("groups by host name and puts a null host under No machine, last (B65.1, B65.2)", () => {
+    const threads = [
+      thread("z", { host: { id: "h2", name: "zeta" } }),
+      thread("none1"),
+      thread("a", { host: { id: "h1", name: "alpha" } }),
+    ];
+    const model = buildListModel(
+      input(threads, { settings: HOST_SETTINGS, sectionOrder: mount(threads, HOST_SETTINGS) }),
+    );
+    expect(keys(model)).toEqual(["host:h1", "host:h2", "host:none"]);
+    expect(model.sections.map((section) => section.label)).toEqual([
+      "ALPHA",
+      "ZETA",
+      "NO MACHINE",
+    ]);
+    expect(sequence(model)).toEqual(["a", "z", "none1"]);
+  });
+
+  it("merges the NEEDS YOU band into the first status group (B65.5)", () => {
+    const threads = [
+      thread("pending", { hasPendingInteraction: true }),
+      thread("busy", { indicator: "runtime" }),
+    ];
+    const model = buildListModel(
+      input(threads, {
+        settings: STATUS_SETTINGS,
+        sectionOrder: mount(threads, STATUS_SETTINGS),
+      }),
+    );
+    // One heading for the concept, never a band AND a group (B65.5).
+    expect(keys(model)).toEqual(["status:needs-you", "status:working"]);
+    expect(keys(model)).not.toContain("needs-you");
+  });
+
+  it("merges the DONE band into the Unread status group (B67.7)", () => {
+    const threads = [
+      thread("finished", { indicator: "unread-success" }),
+      thread("idle1"),
+    ];
+    const model = buildListModel(
+      input(threads, {
+        settings: STATUS_SETTINGS,
+        sectionOrder: mount(threads, STATUS_SETTINGS),
+      }),
+    );
+    expect(keys(model)).toEqual(["status:unread", "status:idle"]);
+    expect(keys(model)).not.toContain("done");
+  });
+
+  it("still floats PINNED above every status group (B65.6)", () => {
+    const threads = [thread("pin", { isPinned: true }), thread("busy", { indicator: "runtime" })];
+    const model = buildListModel(
+      input(threads, {
+        settings: STATUS_SETTINGS,
+        sectionOrder: mount(threads, STATUS_SETTINGS),
+      }),
+    );
+    expect(keys(model)).toEqual(["pinned", "status:working"]);
+  });
+
+  it("renders empty status groups not at all (B65.7)", () => {
+    const threads = [thread("only", { indicator: "draft" })];
+    expect(
+      keys(buildListModel(input(threads, { settings: STATUS_SETTINGS }))),
+    ).toEqual(["status:draft"]);
+  });
+
+  it("counts roots only in the new modes too, exactly as the date buckets do (B65.9)", () => {
+    const threads = [
+      thread("root", { host: { id: "h1", name: "alpha" } }),
+      thread("kid", { parentThreadId: "root", host: { id: "h1", name: "alpha" } }),
+    ];
+    const model = buildListModel(
+      input(threads, { settings: HOST_SETTINGS, sectionOrder: mount(threads, HOST_SETTINGS) }),
+    );
+    expect(model.sections[0]!.count).toBe(1);
+    expect(model.sections[0]!.rows).toHaveLength(2);
+  });
+});
+
+describe("project scope filter (B64)", () => {
+  const mixed = [
+    thread("a1", { projectId: "p1", latestAttentionAt: NOW - 1000 }),
+    thread("b1", { projectId: "p2", latestAttentionAt: NOW - 2000 }),
+    thread("pin2", { projectId: "p2", isPinned: true }),
+  ];
+
+  it("removes out-of-scope threads from every section", () => {
+    const model = buildListModel(
+      input(mixed, { projectFilter: "p1", sectionOrder: mount(mixed) }),
+    );
+    expect(sequence(model)).toEqual(["a1"]);
+    expect(keys(model)).toEqual(["today"]);
+  });
+
+  it("does not change band precedence (B64.6)", () => {
+    const model = buildListModel(
+      input(mixed, { projectFilter: "p2", sectionOrder: mount(mixed) }),
+    );
+    expect(keys(model)).toEqual(["pinned", "today"]);
+    expect(sequence(model)).toEqual(["pin2", "b1"]);
+  });
+
+  it("composes with search (B64.3)", () => {
+    const threads = [
+      thread("hit", { projectId: "p1", title: "deploy here" }),
+      thread("other", { projectId: "p2", title: "deploy there" }),
+    ];
+    const model = buildListModel(
+      input(threads, { projectFilter: "p1", searchQuery: "deploy" }),
+    );
+    expect(keys(model)).toEqual(["search"]);
+    expect(sequence(model)).toEqual(["hit"]);
+  });
+
+  it("renders no sections at all when the scope matches nothing (B64.4)", () => {
+    expect(buildListModel(input(mixed, { projectFilter: "p3" })).sections).toEqual([]);
   });
 });
 

@@ -68,7 +68,11 @@ function thread(overrides: Partial<PluginSidebarThread> = {}): PluginSidebarThre
   };
 }
 
-const PROJECTS: PluginSidebarProject[] = [{ id: "p1", name: "bb-plugins", isPersonal: false }];
+const PROJECTS: PluginSidebarProject[] = [
+  { id: "p1", name: "bb-plugins", isPersonal: false },
+  // A second project, so B64's scope has something to scope to.
+  { id: "p2", name: "Beta", isPersonal: false },
+];
 
 function ready(threads: PluginSidebarThread[]): PluginSidebarThreadsState {
   return { status: "ready", threads, projects: PROJECTS };
@@ -248,53 +252,115 @@ describe("ThreadList — the clock (B3)", () => {
   });
 });
 
-describe("ThreadList — freeze (B6)", () => {
+describe("ThreadList — entrance order (B68)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(BEFORE_MIDNIGHT);
   });
 
-  it("a NEEDS YOU thread arriving while frozen changes no existing row's index", () => {
+  it("holds a mounted row's index when its attention overtakes the row above it", () => {
     threadsState = ready([
       thread({ id: "a", latestAttentionAt: BEFORE_MIDNIGHT }),
       thread({ id: "b", latestAttentionAt: BEFORE_MIDNIGHT - MINUTE }),
     ]);
     const slot = renderList();
-    const before = renderedIds();
-    expect(before).toEqual(["a", "b"]);
-
-    fireEvent.pointerOver(document.querySelector("[data-better-sidebar-list]")!);
-
-    // A pending-interaction thread would normally hoist itself to the top of
-    // the list, above both frozen rows, under the user's pointer.
-    threadsState = ready([
-      ...threadsState.threads,
-      thread({ id: "urgent", hasPendingInteraction: true, latestAttentionAt: BEFORE_MIDNIGHT }),
-    ]);
-    slot.lifecycle.rerender(<ThreadList {...props()} />);
-
-    const during = renderedIds();
-    expect(during.slice(0, before.length)).toEqual(before);
-    expect(during[before.length]).toBe("urgent");
-
-    // On release it takes its sorted position at the head of the list.
-    fireEvent.pointerOut(document.querySelector("[data-better-sidebar-list]")!);
-    act(() => void vi.advanceTimersByTime(1000));
-    act(() => void vi.advanceTimersByTime(1500));
-    expect(renderedIds()[0]).toBe("urgent");
-  });
-
-  it("a search-query change releases the freeze immediately", () => {
-    threadsState = ready([
-      thread({ id: "a", title: "alpha" }),
-      thread({ id: "b", title: "beta" }),
-    ]);
-    const slot = renderList();
-    fireEvent.pointerOver(document.querySelector("[data-better-sidebar-list]")!);
     expect(renderedIds()).toEqual(["a", "b"]);
 
-    slot.lifecycle.rerender(<ThreadList {...props({ searchQuery: "beta" })} />);
-    expect(renderedIds()).toEqual(["b"]);
+    // `b` is touched and would out-sort `a` — with no pointer anywhere near the
+    // list, which is the guarantee the freeze it replaces could not make.
+    threadsState = ready([
+      thread({ id: "a", latestAttentionAt: BEFORE_MIDNIGHT }),
+      thread({ id: "b", latestAttentionAt: BEFORE_MIDNIGHT + MINUTE }),
+    ]);
+    slot.lifecycle.rerender(<ThreadList {...props()} />);
+    expect(renderedIds()).toEqual(["a", "b"]);
+  });
+
+  it("lands a newly arriving thread at the top of its section, moving nothing below", () => {
+    threadsState = ready([
+      thread({ id: "a", latestAttentionAt: BEFORE_MIDNIGHT }),
+      thread({ id: "b", latestAttentionAt: BEFORE_MIDNIGHT - MINUTE }),
+    ]);
+    const slot = renderList();
+    expect(renderedIds()).toEqual(["a", "b"]);
+
+    // The oldest attention of the three, and still first: the position comes
+    // from when it entered TODAY, never from its timestamp.
+    threadsState = ready([
+      ...threadsState.threads,
+      thread({ id: "fresh", latestAttentionAt: BEFORE_MIDNIGHT - 10 * MINUTE }),
+    ]);
+    slot.lifecycle.rerender(<ThreadList {...props()} />);
+    expect(renderedIds()).toEqual(["fresh", "a", "b"]);
+  });
+
+  it("leaves the order unchanged after a project scope is applied and cleared (B68.5)", () => {
+    threadsState = ready([
+      thread({ id: "a", projectId: "p1", latestAttentionAt: BEFORE_MIDNIGHT }),
+      thread({ id: "b", projectId: "p2", latestAttentionAt: BEFORE_MIDNIGHT - MINUTE }),
+      thread({
+        id: "c",
+        projectId: "p1",
+        latestAttentionAt: BEFORE_MIDNIGHT - 2 * MINUTE,
+      }),
+    ]);
+    renderList();
+    const before = renderedIds();
+    expect(before).toEqual(["a", "b", "c"]);
+
+    const select = screen.getByLabelText(/filter by project/i);
+    fireEvent.change(select, { target: { value: "p1" } });
+    expect(renderedIds()).toEqual(["a", "c"]);
+
+    fireEvent.change(select, { target: { value: "" } });
+    expect(renderedIds()).toEqual(before);
+  });
+});
+
+describe("ThreadList — project scope filter (B64)", () => {
+  it("offers All projects, then every project by name (B64.1)", () => {
+    threadsState = ready([thread()]);
+    renderList();
+    const options = Array.from(
+      screen.getByLabelText(/filter by project/i).querySelectorAll("option"),
+    ).map((option) => option.textContent);
+    expect(options).toEqual(["All projects", "bb-plugins", "Beta"]);
+  });
+
+  it("names the project in the no-matches state when the scope is empty (B64.4)", () => {
+    threadsState = ready([thread({ id: "a", projectId: "p1" })]);
+    renderList();
+    fireEvent.change(screen.getByLabelText(/filter by project/i), {
+      target: { value: "p2" },
+    });
+    expect(screen.getByText(/no threads match/i).textContent).toContain("Beta");
+    // Never the generic empty state, which would be a lie about this account.
+    expect(screen.queryByText(/no threads yet/i)).toBeNull();
+    // The control survives, so the scope that hid everything can be undone.
+    expect(screen.getByLabelText(/filter by project/i)).toBeTruthy();
+  });
+
+  it("is present on a compact viewport too (B64.5)", () => {
+    threadsState = ready([thread()]);
+    renderList({ isCompactViewport: true });
+    expect(screen.getByLabelText(/filter by project/i)).toBeTruthy();
+  });
+
+  it("keeps the scope out of storage, and resets it on remount (B64.2)", () => {
+    threadsState = ready([thread({ id: "a", projectId: "p1" })]);
+    renderList();
+    fireEvent.change(screen.getByLabelText(/filter by project/i), {
+      target: { value: "p2" },
+    });
+    expect(renderedIds()).toEqual([]);
+    expect(window.localStorage.length).toBe(0);
+
+    cleanup();
+    renderList();
+    expect(
+      (screen.getByLabelText(/filter by project/i) as HTMLSelectElement).value,
+    ).toBe("");
+    expect(renderedIds()).toEqual(["a"]);
   });
 });
 
@@ -337,8 +403,15 @@ describe("ThreadList — host contract", () => {
 });
 
 describe("ThreadList — second row (B18, B19)", () => {
+  /**
+   * Row 2 only. The B64 scope control lists the same project names in its
+   * options, so a document-wide text probe would report row 2 present on every
+   * account that has a project.
+   */
   function hasSecondRow(): boolean {
-    return screen.queryAllByText("bb-plugins").length > 0;
+    return screen
+      .queryAllByText("bb-plugins")
+      .some((node) => node.closest("[data-better-sidebar-project-filter]") === null);
   }
 
   it.each([

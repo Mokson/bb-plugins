@@ -59,14 +59,36 @@ export function ListEmpty() {
   );
 }
 
-/** `status: "ready"` with a search that matched nothing — never the same as empty. */
-export function ListNoMatches({ query }: { query: string }) {
+/**
+ * `status: "ready"` with a search or a project scope that matched nothing —
+ * never the same as empty.
+ *
+ * B64.4: a scope that matches nothing names the project, because the generic
+ * "no threads yet" copy would be a lie about an account that has plenty. When
+ * both narrow the list the copy names both, so the user can tell which one to
+ * clear.
+ */
+export function ListNoMatches({
+  query,
+  projectName,
+}: {
+  query?: string;
+  projectName?: string;
+}) {
+  const trimmed = query?.trim() ?? "";
+  const [headline, hint] =
+    trimmed === ""
+      ? [`No threads match ${projectName}.`, "Choose All projects to see every thread."]
+      : projectName === undefined
+        ? [`No threads match “${trimmed}”.`, "Clear the search to see every thread."]
+        : [
+            `No threads match “${trimmed}” in ${projectName}.`,
+            "Clear the search, or choose All projects.",
+          ];
   return (
     <div className="flex flex-col gap-1 p-4 text-sm text-muted-foreground">
-      <span className="font-medium text-foreground">
-        No threads match “{query}”.
-      </span>
-      <span>Clear the search to see every thread.</span>
+      <span className="font-medium text-foreground">{headline}</span>
+      <span>{hint}</span>
     </div>
   );
 }

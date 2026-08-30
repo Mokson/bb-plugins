@@ -56,4 +56,19 @@ describe("list states", () => {
     expect(screen.getByText(/rebase/)).toBeTruthy();
     expectOnly("noMatches");
   });
+
+  it("no matches names the project when a scope hid everything (B64.4)", () => {
+    render(<ListNoMatches projectName="Acme" />);
+    expect(screen.getByText(/Acme/)).toBeTruthy();
+    // Never the empty state: the account has threads, just none in scope.
+    expectOnly("noMatches");
+  });
+
+  it("names both when a search and a scope narrow the list together (B64.3)", () => {
+    render(<ListNoMatches query="rebase" projectName="Acme" />);
+    const copy = screen.getByText(/no threads match/i).textContent ?? "";
+    expect(copy).toContain("rebase");
+    expect(copy).toContain("Acme");
+    expectOnly("noMatches");
+  });
 });

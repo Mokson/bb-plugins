@@ -4,15 +4,13 @@ import { matchScore, rankSearch, type SearchCandidate } from "./search";
 
 const BASE = new Date(2026, 7, 30, 12, 0, 0, 0).getTime();
 
-function candidate(
-  id: string,
-  title: string,
-  latestAttentionAt: number,
-): SearchCandidate {
+/** B69: `sequence` is the entrance order — higher entered its section later. */
+function candidate(id: string, title: string, sequence: number): SearchCandidate {
   return {
-    thread: { id, latestAttentionAt } as PluginSidebarThread,
+    thread: { id, latestAttentionAt: sequence } as PluginSidebarThread,
     title,
     projectName: "Acme",
+    sequence,
   };
 }
 
@@ -35,7 +33,7 @@ describe("matchScore", () => {
 });
 
 describe("rankSearch (B43)", () => {
-  it("orders by score, then latestAttentionAt descending, then id", () => {
+  it("orders by score, then entrance order descending, then id (B69)", () => {
     const ranked = rankSearch(
       [
         candidate("c", "fix the deploy", BASE + 3),
