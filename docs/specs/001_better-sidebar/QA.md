@@ -276,3 +276,90 @@ defect surfacing as a state gap, not a styling issue.
 ## Counts
 
 Pass 20 · Fail 5 · Blocked 2 · Paper cut 1 · Not tested 8
+
+---
+
+## Post-fix re-test (debug wave, 2026-08-30)
+
+Re-run of the four defects in a real browser against a **clean rebuild of HEAD
+source** (`bb plugin build .` + `bb plugin reload better-sidebar`, then
+`location.reload(true)`), 29 `[data-better-sidebar-row]` nodes confirmed each
+time. No source change was needed for any of them; the source is unchanged from
+`83214d4`.
+
+Method note that invalidates part of the original run: the list's scroll
+container ends at `y = 529` in this window, while `getBoundingClientRect()`
+reports un-clipped positions. Points computed for rows below that line are not
+over the row at all - `document.elementFromPoint` returns nothing there, and a
+synthesised mouse event at an out-of-viewport coordinate lands somewhere else.
+Two rows in this re-test (`thr_kz9bh6hjdn`, `thr_7h8mumntcv`) reproduced the
+original "menu acts on another row" shape for exactly that reason.
+
+### B46 / A5 - context menu targeting: NOT REPRODUCED
+
+Four rows, each hit-tested inside the scroll viewport first, real right-click
+(`move` -> `down right` -> `up right`), then `Open` clicked and
+`location.pathname` read:
+
+| Aimed at | `data-state="open"` | Navigated to |
+| --- | --- | --- |
+| `thr_e8kq8y95af` | `thr_e8kq8y95af` | `.../thr_e8kq8y95af` |
+| `thr_ubek848wxs` | `thr_ubek848wxs` | `.../thr_ubek848wxs` |
+| `thr_52yhq4j9h5` | `thr_52yhq4j9h5` | `.../thr_52yhq4j9h5` |
+| `thr_47nu4g4826` | `thr_47nu4g4826` | `.../thr_47nu4g4826` |
+
+Row geometry was also checked directly: 29 rows, zero nesting, zero overlap, and
+the row order is stable under a parked pointer over a 10s sample.
+
+### A1 - Rename: NOT REPRODUCED (and not downstream of B46)
+
+`MutationObserver` armed on `document.documentElement` before the action.
+Right-click `thr_n3v6acmnj2` -> `Rename`: `everInput: 2`, `everFocused: 2`,
+`document.activeElement` is the input, `aria-label="Rename thread"`, seeded with
+that row's own title. Escape cancelled it; the title is unchanged. No thread was
+mutated.
+
+### A7 / B37-B40 - rowSignals: NOT REPRODUCED
+
+After the rebuild a scroll of the list issues
+`POST /api/v1/plugins/better-sidebar/rpc/rowSignals` -> `200`. The spans are
+empty because the data says so, not because the batch is dead: every thread
+returns `contextPressure` below the 0.8 threshold with `modelFallback: null`,
+`isRateLimitPaused: false`, `goal: null`.
+
+Render path proved end-to-end by intercepting the RPC response with
+`contextPressure: 0.93, isRateLimitPaused: true`: the row drew
+`[data-signal="context-pressure"]` and `[data-signal="rate-limit-paused"]`.
+So observer -> batch -> RPC -> cache -> glyph all work in the browser.
+
+### B45 - drag to split: REPRODUCED, cause is host-side
+
+The original diagnosis is wrong on both counts. `PluginSidebarThreadSplit.splitProps`
+is typed `{ onPointerDown?: (e) => void }` - a React handler, which never appears
+as a DOM attribute, so "no drag attribute in the row's DOM" proves nothing.
+
+Instrumented in the browser, the row's contract is fully satisfied:
+
+- `useSidebarThreadSplit(thread.id)` returns `isAvailable: true` and
+  `splitProps` with `onPointerDown` of type `function`, on every row.
+- During a real drag the host's `onPointerDown` **is invoked** (counter: 1).
+- The row's own `openThread()` is **not** called (counter: 0), so the navigation
+  that follows is the host's own drop resolution, not a click leaking through.
+
+The native anchor drag was also ruled out: `a.draggable` is `true` and
+`dragstart` fires, but suppressing it (`a.draggable = false`, `dragstart` count
+0) changes nothing - still a replace, no split. Tested with a pane already open
+and with drops at x=1100 and x=1272 (far right edge) at 1280x800.
+
+Everything the plugin owns is correct; the split-vs-replace decision belongs to
+bb's gesture engine. This may also be intended behaviour under the documented
+"pane cap coerces a split into a replace" rule. Not fixable from
+`plugins/better-sidebar/src/**`.
+
+### Suite
+
+`npx vitest run` outside `src/header/`: 22 files, 237 tests, all passing.
+`npx tsc --noEmit` reports nothing outside `src/header/`. The 12 failures and
+all TS errors in the full run come from the sibling seat's uncommitted
+`src/header/ChildThreadsChip.test.tsx` (jest-dom matchers not registered), which
+is outside this wave's boundaries.
