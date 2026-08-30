@@ -49,6 +49,9 @@ const PATHS = {
   "git-branch":
     "M6 3v12m0 0a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm12-6a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm-3 3v1a5 5 0 0 1-5 5H9",
   monitor: "M3 4h18v12H3zM8 20h8m-4-4v4",
+  // B76.1: the display-options trigger. Three tracks with a handle each, so
+  // the button reads as "options for this view" rather than as a filter.
+  sliders: "M4 6h9m4 0h3M4 12h3m4 0h10M4 18h9m4 0h3M13 4v4M7 10v4M13 16v4",
 } as const;
 
 export type GlyphName = keyof typeof PATHS;

@@ -10,11 +10,12 @@ import { parseSettings } from "./settings";
 import { buildListModel, sectionKeyOf } from "./model/list-model";
 import { dimLevelFor } from "./model/buckets";
 import type { Density, GroupBy, RenderSection } from "./model/types";
-import { ALL_PROJECTS, ProjectFilter } from "./ProjectFilter";
+import { ALL_PROJECTS, DisplayMenu } from "./DisplayMenu";
 import { ThreadRow } from "./row/ThreadRow";
 import { Glyph } from "./ui/Glyph";
 import { ListEmpty, ListError, ListLoading, ListNoMatches } from "./ui/ListStates";
 import { useCollapse } from "./useCollapse";
+import { useGroupBy } from "./useGroupBy";
 import { useSectionOrder } from "./useSectionOrder";
 import { useNow } from "./useNow";
 import { matchBucketJump, nextSectionIndex } from "./keyboard/bucketJump";
@@ -45,7 +46,12 @@ function ThreadListBody({
   onRetry,
 }: PluginThreadListProps & { onRetry: () => void }) {
   const { status, threads, projects } = useSidebarThreads();
-  const settings = parseSettings(useSettings().values);
+  const stored = parseSettings(useSettings().values);
+  // B77.3: the menu's stored choice wins, and the setting is the default this
+  // device uses until its user picks one. Everything downstream reads the
+  // resolved value, so no call site has to know which of the two it came from.
+  const groupByState = useGroupBy(stored.groupBy);
+  const settings = { ...stored, groupBy: groupByState.groupBy };
   const now = useNow();
   const collapse = useCollapse();
   // B64.2: session state. Never settings, never `localStorage`, never the
@@ -115,11 +121,13 @@ function ThreadListBody({
   // B64.5: the control renders above every ready state, compact included —
   // including the empty ones, which is the only place the user can undo a scope
   // that hid everything.
-  const filter = (
-    <ProjectFilter
+  const displayMenu = (
+    <DisplayMenu
       projects={projects}
-      value={projectFilter}
-      onChange={setProjectFilter}
+      projectFilter={projectFilter}
+      onProjectFilterChange={setProjectFilter}
+      groupBy={settings.groupBy}
+      onGroupByChange={groupByState.setGroupBy}
     />
   );
 
@@ -129,7 +137,7 @@ function ThreadListBody({
     const narrowed = searchQuery.trim() !== "" || scopedProject !== undefined;
     return (
       <div data-better-sidebar-list="" className="flex h-full flex-col overflow-y-auto py-1">
-        {filter}
+        {displayMenu}
         {narrowed ? (
           <ListNoMatches query={searchQuery} projectName={scopedProject} />
         ) : (
@@ -153,7 +161,7 @@ function ThreadListBody({
       className="flex h-full flex-col overflow-y-auto px-2 py-1"
       onKeyDown={onKeyDown}
     >
-      {filter}
+      {displayMenu}
       {model.sections.map((section, index) => (
         <section key={section.key} data-sidebar-section={section.key}>
           <SectionHeader

@@ -106,6 +106,38 @@ function renderedIds(): string[] {
   );
 }
 
+/** Radix opens the display menu from the keyboard with no pointer shims. */
+function openDisplayMenu() {
+  fireEvent.keyDown(screen.getByLabelText("Display options"), { key: "Enter" });
+}
+
+/** Opens the menu, walks into one submenu, and picks one radio item. */
+function choose(submenu: string, item: string) {
+  openDisplayMenu();
+  fireEvent.click(screen.getByRole("menuitem", { name: submenu }));
+  fireEvent.click(screen.getByRole("menuitemradio", { name: item }));
+}
+
+function checkedItem(submenu: string): string {
+  openDisplayMenu();
+  fireEvent.click(screen.getByRole("menuitem", { name: submenu }));
+  const menu = screen.getByRole("menu", { name: submenu });
+  const checked = menu.querySelector('[aria-checked="true"]')?.textContent?.trim() ?? "";
+  fireEvent.keyDown(menu, { key: "Escape" });
+  return checked;
+}
+
+function submenuItems(submenu: string): string[] {
+  openDisplayMenu();
+  fireEvent.click(screen.getByRole("menuitem", { name: submenu }));
+  const menu = screen.getByRole("menu", { name: submenu });
+  const items = Array.from(menu.querySelectorAll('[role="menuitemradio"]')).map(
+    (node) => node.textContent?.trim() ?? "",
+  );
+  fireEvent.keyDown(menu, { key: "Escape" });
+  return items;
+}
+
 function sectionLabels(): string[] {
   return Array.from(document.querySelectorAll("[data-sidebar-section]")).map(
     (node) => node.querySelector("h2")?.textContent ?? node.textContent ?? "",
@@ -308,59 +340,153 @@ describe("ThreadList — entrance order (B68)", () => {
     const before = renderedIds();
     expect(before).toEqual(["a", "b", "c"]);
 
-    const select = screen.getByLabelText(/filter by project/i);
-    fireEvent.change(select, { target: { value: "p1" } });
+    choose("Filter", "bb-plugins");
     expect(renderedIds()).toEqual(["a", "c"]);
 
-    fireEvent.change(select, { target: { value: "" } });
+    choose("Filter", "All projects");
     expect(renderedIds()).toEqual(before);
   });
 });
 
-describe("ThreadList — project scope filter (B64)", () => {
-  it("offers All projects, then every project by name (B64.1)", () => {
+describe("ThreadList — project scope filter (B64, B78)", () => {
+  it("offers All projects, then every project by name (B64.1, B78.1)", () => {
     threadsState = ready([thread()]);
     renderList();
-    const options = Array.from(
-      screen.getByLabelText(/filter by project/i).querySelectorAll("option"),
-    ).map((option) => option.textContent);
-    expect(options).toEqual(["All projects", "bb-plugins", "Beta"]);
+    expect(submenuItems("Filter")).toEqual(["All projects", "bb-plugins", "Beta"]);
   });
 
   it("names the project in the no-matches state when the scope is empty (B64.4)", () => {
     threadsState = ready([thread({ id: "a", projectId: "p1" })]);
     renderList();
-    fireEvent.change(screen.getByLabelText(/filter by project/i), {
-      target: { value: "p2" },
-    });
+    choose("Filter", "Beta");
     expect(screen.getByText(/no threads match/i).textContent).toContain("Beta");
     // Never the generic empty state, which would be a lie about this account.
     expect(screen.queryByText(/no threads yet/i)).toBeNull();
     // The control survives, so the scope that hid everything can be undone.
-    expect(screen.getByLabelText(/filter by project/i)).toBeTruthy();
+    expect(screen.getByLabelText("Display options")).toBeTruthy();
   });
 
-  it("is present on a compact viewport too (B64.5)", () => {
+  it("is present on a compact viewport too (B64.5, B76.4)", () => {
     threadsState = ready([thread()]);
     renderList({ isCompactViewport: true });
-    expect(screen.getByLabelText(/filter by project/i)).toBeTruthy();
+    openDisplayMenu();
+    expect(screen.getByRole("menu", { name: "Display options" })).toBeTruthy();
   });
 
-  it("keeps the scope out of storage, and resets it on remount (B64.2)", () => {
+  it("keeps the scope out of storage, and resets it on remount (B64.2, B78.2)", () => {
     threadsState = ready([thread({ id: "a", projectId: "p1" })]);
     renderList();
-    fireEvent.change(screen.getByLabelText(/filter by project/i), {
-      target: { value: "p2" },
-    });
+    choose("Filter", "Beta");
     expect(renderedIds()).toEqual([]);
     expect(window.localStorage.length).toBe(0);
 
     cleanup();
     renderList();
-    expect(
-      (screen.getByLabelText(/filter by project/i) as HTMLSelectElement).value,
-    ).toBe("");
+    expect(checkedItem("Filter")).toBe("All projects");
     expect(renderedIds()).toEqual(["a"]);
+  });
+
+  /**
+   * B78.2 is the whole point of the pairing: the two values share a menu and
+   * nothing else. A grouping is a view preference worth keeping; a scope is a
+   * filter you forgot you set, and it must not outlive the tab.
+   */
+  it("persists a grouping but never the scope (B77.2, B78.2)", () => {
+    threadsState = ready([thread({ id: "a", projectId: "p1" })]);
+    renderList();
+
+    choose("Filter", "bb-plugins");
+    expect(window.localStorage.length).toBe(0);
+
+    choose("Group by", "Host");
+    expect(window.localStorage.getItem("better-sidebar:group-by")).toBe('"host"');
+    // Storing the grouping did not smuggle the scope in alongside it: the
+    // grouping key is the only key in the store.
+    expect(window.localStorage.length).toBe(1);
+  });
+
+  it("shows the active scope as a chip whose clear control restores it (B76.2)", () => {
+    threadsState = ready([
+      thread({ id: "a", projectId: "p1" }),
+      thread({ id: "b", projectId: "p2" }),
+    ]);
+    renderList();
+    // B76.3: the resting row is the trigger alone.
+    expect(document.querySelector("[data-better-sidebar-scope-chip]")).toBeNull();
+
+    choose("Filter", "Beta");
+    expect(
+      document.querySelector("[data-better-sidebar-scope-chip]")?.textContent,
+    ).toContain("Beta");
+    expect(renderedIds()).toEqual(["b"]);
+
+    fireEvent.click(screen.getByLabelText(/clear project filter/i));
+    expect(document.querySelector("[data-better-sidebar-scope-chip]")).toBeNull();
+    expect(renderedIds()).toEqual(["a", "b"]);
+  });
+});
+
+describe("ThreadList — grouping from the menu (B77)", () => {
+  it("groups by the setting while nothing is stored (B77.3)", () => {
+    threadsState = ready([thread({ id: "a", projectId: "p1" })]);
+    renderList({}, { groupBy: "project" });
+    expect(sectionLabels()[0]).toMatch(/bb-plugins/i);
+    expect(checkedItem("Group by")).toBe("Project");
+  });
+
+  it("lets the stored value override the setting (B77.3)", () => {
+    window.localStorage.setItem("better-sidebar:group-by", '"none"');
+    threadsState = ready([thread({ id: "a", projectId: "p1" })]);
+    renderList({}, { groupBy: "project" });
+    expect(sectionLabels()[0]).not.toMatch(/bb-plugins/i);
+    expect(checkedItem("Group by")).toBe("None");
+  });
+
+  it("falls back to the setting when the store holds a value outside the five (B77.4)", () => {
+    window.localStorage.setItem("better-sidebar:group-by", '"bogus"');
+    threadsState = ready([thread({ id: "a", projectId: "p1" })]);
+    renderList({}, { groupBy: "project" });
+    // The list still renders: a hand-edited store never blanks the sidebar.
+    expect(renderedIds()).toEqual(["a"]);
+    expect(sectionLabels()[0]).toMatch(/bb-plugins/i);
+    expect(checkedItem("Group by")).toBe("Project");
+  });
+
+  it("re-groups in place, keeping collapse state and the mounted rows (B77.1)", () => {
+    vi.setSystemTime(BEFORE_MIDNIGHT);
+    threadsState = ready([
+      thread({ id: "a", projectId: "p1", latestAttentionAt: BEFORE_MIDNIGHT - 3 * DAY }),
+      thread({ id: "b", projectId: "p2", latestAttentionAt: BEFORE_MIDNIGHT }),
+    ]);
+    renderList({}, { groupBy: "date" });
+    const scrollerBefore = document.querySelector("[data-better-sidebar-list]");
+    // Collapse a section before re-grouping, so there is state to lose.
+    fireEvent.click(screen.getAllByRole("button", { name: /last 7 days/i })[0]);
+    expect(renderedIds()).toEqual(["b"]);
+
+    choose("Group by", "Project");
+    expect(sectionLabels().join(" ")).toMatch(/bb-plugins/i);
+    // Same scroll container: the list re-grouped in place rather than
+    // remounting, so scroll position survives the choice.
+    expect(document.querySelector("[data-better-sidebar-list]")).toBe(scrollerBefore);
+    expect(renderedIds()).toEqual(["a", "b"]);
+
+    // Collapse state is keyed by section, so it is still there when the same
+    // grouping comes back.
+    choose("Group by", "Date");
+    expect(renderedIds()).toEqual(["b"]);
+  });
+
+  it("offers the five values and nothing else (B65, B76.6)", () => {
+    threadsState = ready([thread()]);
+    renderList();
+    expect(submenuItems("Group by")).toEqual([
+      "Date",
+      "Project",
+      "Host",
+      "Status",
+      "None",
+    ]);
   });
 });
 
@@ -470,6 +596,22 @@ describe("ThreadList — a hidden thing costs nothing (B61)", () => {
     ).toHaveLength(0);
     expect(document.querySelectorAll("[data-better-sidebar-signals]")).toHaveLength(0);
     observe.mockRestore();
+  });
+
+  /**
+   * B60.1 with amendment 7 in: the display menu writes `groupBy` to
+   * `localStorage` precisely so that opening it and using it stays free of
+   * backend traffic.
+   */
+  it("issues no rpc at all from mounting the list and opening the menu at compact", () => {
+    threadsState = ready([thread(), thread({ id: "t2" })]);
+
+    const slot = renderList({}, { density: "compact" });
+    openDisplayMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Group by" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Host" }));
+
+    expect(slot.inspection.rpcCalls).toHaveLength(0);
   });
 
   it("observes one signal cluster per row at density detailed (B60.2)", () => {
