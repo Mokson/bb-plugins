@@ -88,11 +88,25 @@ done-when:
 - n4 | environment-gap | npm cache write and git clone both blocked by the Bash sandbox, needing dangerouslyDisableSandbox retries | -
 
 ## slices
+- s1 | spawned | - | clean; list model, wave a, thr_8a5dzky7kr
+- s5 | spawned | - | clean; backend, wave a, thr_4vuge7cudi
+- s2a | spawned | - | clean; shared ui infra, wave a, thr_7h8mumntcv
+- s4 | pending | - | clean; dossier, wave b, packet written
+- s6 | pending | - | clean; menu and keyboard, wave b, packet written
+- s3 | pending | - | clean; row chrome, wave c, packet written
+- s2b | pending | - | clean; shell and freeze, wave d, packet written
 
 ## runlog
 - start | repo profile, preflight, PRODUCT.md, ledger | orchestrator | n/a | claude-opus-5[1m] | session | - | ~95k | n/a | 18 | n/a | - | accepted
 - scaffold | scaffold repo + verify SDK surface (killed on /goal parse) | bb-thread | thr_2dztxpixj9 | claude-sonnet-5 | low | - | 0 | n/a | 0 | 30 | 0m | killed; bb parsed /goal as a slash command
 - scaffold | scaffold repo + verify SDK surface | bb-thread | thr_t47q5xrcej | claude-sonnet-5 | low | - | n/a (bb) | n/a | n/a | 30 | ~14m | accepted; stopped once on the SDK version contradiction, steered, completed
 - restructure | marketplace layout + manifest + README | orchestrator | n/a | claude-opus-5[1m] | session | - | ~25k | n/a | 12 | n/a | - | accepted; inline deviation per d12
+- spec | TECH.md v1 + slice plan | bb-thread | thr_dnmhd2ri4e | claude-opus-5[1m] | low | - | n/a (bb) | n/a | n/a | 45 | ~21m | accepted
+- spec-review | cross-vendor spec review | bb-thread | thr_crd7bbf2ph | gpt-5.6-sol | medium | - | n/a (bb) | n/a | n/a | 40 | ~13m | accepted; 7 blocker 6 major 1 minor, all upheld
+- spec | TECH.md v2, 14 arbitration rulings applied | bb-thread | thr_dnmhd2ri4e | claude-opus-5[1m] | low | - | n/a (bb) | n/a | n/a | 45 | ~12m | accepted; resumed same seat
+- fanout | packets for 7 slice seats + branch + hook | orchestrator | n/a | claude-opus-5[1m] | session | - | ~55k | n/a | 22 | n/a | - | accepted
+- slice | slice 1 list model | bb-thread | thr_8a5dzky7kr | claude-opus-5[1m] | low | s1 | n/a (bb) | n/a | n/a | 40 | - | in flight
+- slice | slice 5 backend | bb-thread | thr_4vuge7cudi | claude-opus-5[1m] | low | s5 | n/a (bb) | n/a | n/a | 40 | - | in flight
+- slice | slice 2a shared ui infra | bb-thread | thr_7h8mumntcv | claude-sonnet-5 | low | s2a | n/a (bb) | n/a | n/a | 30 | - | in flight
 
 ## release
