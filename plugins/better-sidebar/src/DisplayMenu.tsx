@@ -8,6 +8,23 @@ import type { GroupBy } from "./model/types";
 
 export const ALL_PROJECTS = "";
 
+/**
+ * B79.1, B79.2 and B79.5. Radix publishes the space it measured between the
+ * trigger and the collision boundary as these two CSS variables, so the cap is
+ * the viewport itself and needs no pixel constant. `min-w-40` stays the floor,
+ * the variable is the ceiling, and a long project name truncates inside it
+ * instead of widening the menu. The height cap plus `overflow-y-auto` keeps the
+ * last item of a twenty-project list reachable.
+ */
+const MENU_SURFACE = cn(
+  "z-50 min-w-40 max-w-[var(--radix-dropdown-menu-content-available-width)]",
+  "max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto",
+  "rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md",
+);
+
+/** Keeps every edge of the menu off every edge of the viewport (B79.1). */
+const COLLISION_PADDING = 8;
+
 /** B65's five values, in the order the settings form lists them. */
 const GROUP_BY_OPTIONS: readonly { value: GroupBy; label: string }[] = [
   { value: "date", label: "Date" },
@@ -45,6 +62,7 @@ export function DisplayMenu({
   onProjectFilterChange,
   groupBy,
   onGroupByChange,
+  isCompactViewport = false,
 }: {
   projects: readonly PluginSidebarProject[];
   /** A project id, or `ALL_PROJECTS` for no scope. */
@@ -52,8 +70,34 @@ export function DisplayMenu({
   onProjectFilterChange: (value: string) => void;
   groupBy: GroupBy;
   onGroupByChange: (value: GroupBy) => void;
+  /** B79.3: a narrow panel gets the flat shape, with no `Sub` mounted. */
+  isCompactViewport?: boolean;
 }) {
   const portalScope = usePortalScopeProps();
+  const groupByItems = (
+    <DropdownMenu.RadioGroup
+      value={groupBy}
+      onValueChange={(value) => onGroupByChange(value as GroupBy)}
+    >
+      {GROUP_BY_OPTIONS.map((option) => (
+        <RadioItem key={option.value} value={option.value}>
+          {option.label}
+        </RadioItem>
+      ))}
+    </DropdownMenu.RadioGroup>
+  );
+  // B78.4: the checked item answers "what am I looking at" without closing the
+  // menu.
+  const filterItems = (
+    <DropdownMenu.RadioGroup value={projectFilter} onValueChange={onProjectFilterChange}>
+      <RadioItem value={ALL_PROJECTS}>All projects</RadioItem>
+      {projects.map((project) => (
+        <RadioItem key={project.id} value={project.id}>
+          {project.name}
+        </RadioItem>
+      ))}
+    </DropdownMenu.RadioGroup>
+  );
   const scopedProject =
     projectFilter === ALL_PROJECTS
       ? null
@@ -103,36 +147,29 @@ export function DisplayMenu({
             {...portalScope}
             align="end"
             sideOffset={4}
+            collisionPadding={COLLISION_PADDING}
             aria-label="Display options"
-            className="z-50 min-w-40 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md"
+            className={MENU_SURFACE}
           >
-            <Sub label="Group by" portalScope={portalScope}>
-              <DropdownMenu.RadioGroup
-                value={groupBy}
-                onValueChange={(value) => onGroupByChange(value as GroupBy)}
-              >
-                {GROUP_BY_OPTIONS.map((option) => (
-                  <RadioItem key={option.value} value={option.value}>
-                    {option.label}
-                  </RadioItem>
-                ))}
-              </DropdownMenu.RadioGroup>
-            </Sub>
-            <Sub label="Filter" portalScope={portalScope}>
-              {/* B78.4: the checked item answers "what am I looking at"
-                  without closing the menu. */}
-              <DropdownMenu.RadioGroup
-                value={projectFilter}
-                onValueChange={onProjectFilterChange}
-              >
-                <RadioItem value={ALL_PROJECTS}>All projects</RadioItem>
-                {projects.map((project) => (
-                  <RadioItem key={project.id} value={project.id}>
-                    {project.name}
-                  </RadioItem>
-                ))}
-              </DropdownMenu.RadioGroup>
-            </Sub>
+            {isCompactViewport ? (
+              // B79.3: a menu beside a menu does not fit a 320px panel, so the
+              // compact shape mounts no `Sub` at all — the two sets become two
+              // labelled groups in the one menu, separated by a rule.
+              <>
+                <Section label="Group by">{groupByItems}</Section>
+                <DropdownMenu.Separator className="-mx-1 my-1 h-px bg-border" />
+                <Section label="Filter">{filterItems}</Section>
+              </>
+            ) : (
+              <>
+                <Sub label="Group by" portalScope={portalScope}>
+                  {groupByItems}
+                </Sub>
+                <Sub label="Filter" portalScope={portalScope}>
+                  {filterItems}
+                </Sub>
+              </>
+            )}
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
@@ -158,15 +195,16 @@ function Sub({
           "data-[state=open]:bg-accent data-[state=open]:text-accent-foreground",
         )}
       >
-        <span className="flex-1">{label}</span>
+        <span className="flex-1 truncate">{label}</span>
         <Glyph name="chevron-right" aria-hidden="true" className="size-3" />
       </DropdownMenu.SubTrigger>
       <DropdownMenu.Portal>
         <DropdownMenu.SubContent
           {...portalScope}
           sideOffset={2}
+          collisionPadding={COLLISION_PADDING}
           aria-label={label}
-          className="z-50 min-w-40 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md"
+          className={MENU_SURFACE}
         >
           {children}
         </DropdownMenu.SubContent>
@@ -175,12 +213,28 @@ function Sub({
   );
 }
 
+/**
+ * One labelled group of the flat compact menu (B79.3). It carries the label as
+ * its accessible name, so a test and a screen reader address it the same way a
+ * submenu is addressed in the nested shape.
+ */
+function Section({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <DropdownMenu.Group aria-label={label}>
+      <DropdownMenu.Label className="truncate px-2 py-1 text-[11px] font-medium text-muted-foreground">
+        {label}
+      </DropdownMenu.Label>
+      {children}
+    </DropdownMenu.Group>
+  );
+}
+
 function RadioItem({ value, children }: { value: string; children: ReactNode }) {
   return (
     <DropdownMenu.RadioItem
       value={value}
       className={cn(
-        "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none",
+        "flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none",
         "data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground",
       )}
     >

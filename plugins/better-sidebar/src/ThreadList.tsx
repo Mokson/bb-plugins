@@ -128,6 +128,8 @@ function ThreadListBody({
       onProjectFilterChange={setProjectFilter}
       groupBy={settings.groupBy}
       onGroupByChange={groupByState.setGroupBy}
+      // B79.4: a 320px panel gets the flat menu, which fits it.
+      isCompactViewport={isCompactViewport}
     />
   );
 

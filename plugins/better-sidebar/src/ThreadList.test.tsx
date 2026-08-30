@@ -111,26 +111,35 @@ function openDisplayMenu() {
   fireEvent.keyDown(screen.getByLabelText("Display options"), { key: "Enter" });
 }
 
-/** Opens the menu, walks into one submenu, and picks one radio item. */
-function choose(submenu: string, item: string) {
+/**
+ * Opens the menu and returns the element holding one label's radio items:
+ * a submenu at a wide viewport, a labelled group in the flat compact shape
+ * (B79.3). The helper reads which shape rendered rather than taking it as an
+ * argument, so every caller works at either viewport.
+ */
+function section(label: string): HTMLElement {
   openDisplayMenu();
-  fireEvent.click(screen.getByRole("menuitem", { name: submenu }));
+  const trigger = screen.queryByRole("menuitem", { name: label });
+  if (trigger === null) return screen.getByRole("group", { name: label });
+  fireEvent.click(trigger);
+  return screen.getByRole("menu", { name: label });
+}
+
+/** Opens the menu, walks to one section, and picks one radio item. */
+function choose(submenu: string, item: string) {
+  section(submenu);
   fireEvent.click(screen.getByRole("menuitemradio", { name: item }));
 }
 
 function checkedItem(submenu: string): string {
-  openDisplayMenu();
-  fireEvent.click(screen.getByRole("menuitem", { name: submenu }));
-  const menu = screen.getByRole("menu", { name: submenu });
+  const menu = section(submenu);
   const checked = menu.querySelector('[aria-checked="true"]')?.textContent?.trim() ?? "";
   fireEvent.keyDown(menu, { key: "Escape" });
   return checked;
 }
 
 function submenuItems(submenu: string): string[] {
-  openDisplayMenu();
-  fireEvent.click(screen.getByRole("menuitem", { name: submenu }));
-  const menu = screen.getByRole("menu", { name: submenu });
+  const menu = section(submenu);
   const items = Array.from(menu.querySelectorAll('[role="menuitemradio"]')).map(
     (node) => node.textContent?.trim() ?? "",
   );
@@ -371,6 +380,22 @@ describe("ThreadList — project scope filter (B64, B78)", () => {
     renderList({ isCompactViewport: true });
     openDisplayMenu();
     expect(screen.getByRole("menu", { name: "Display options" })).toBeTruthy();
+  });
+
+  it("hands the compact viewport down, so the phone gets the flat menu (B79.4)", () => {
+    threadsState = ready([thread()]);
+    renderList({ isCompactViewport: true });
+
+    // The flat shape mounts no submenu trigger; both sets sit in the one menu.
+    expect(submenuItems("Group by")).toEqual([
+      "Date",
+      "Project",
+      "Host",
+      "Status",
+      "None",
+    ]);
+    expect(screen.queryByRole("menuitem", { name: "Group by" })).toBeNull();
+    expect(submenuItems("Filter")).toEqual(["All projects", "bb-plugins", "Beta"]);
   });
 
   it("keeps the scope out of storage, and resets it on remount (B64.2, B78.2)", () => {
