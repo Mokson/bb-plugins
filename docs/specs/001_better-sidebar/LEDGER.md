@@ -52,7 +52,7 @@ done-when:
 
 ## assumptions
 - a1 | bb serves its web UI at http://127.0.0.1:38886 for the run's duration | validated
-- a2 | agent-browser can drive that UI and persist screenshots to disk | open
+- a2 | agent-browser can drive that UI and persist screenshots to disk | validated - see e10
 - a3 | experimental_useProviders exists in the running SDK with logoUrl and strings.iconTint | validated - bb-plugin-sdk-app.d.ts:227-265, :998-1001, :2266; logoUrl is nullable and strings.iconTint optional, so B24's fallback is load-bearing
 - a4 | a plugin backend can read per-thread tokenUsage | validated with correction - not via threads.get; only via thread/tokenUsage/updated and thread/contextWindowUsage/updated events, bb-plugin-sdk.d.ts:2147-2176
 - a5 | experimental_useSidebarThreadPullRequest exists in 0.4.21 | validated - bb-plugin-sdk-app.d.ts:2172, :2264
@@ -69,6 +69,9 @@ done-when:
 - e5 | bb plugin build . | emitted dist server and app bundles, no SDK mismatch warning | pass | unit | c22
 - e6 | bb plugin install and list after marketplace restructure | better-sidebar@0.1.0 running from path plugins/better-sidebar | pass | live | c22
 - e7 | marketplace restructure commit | git log 8a438f7 | pass | static | c27
+- e8 | wave a integration gate, orchestrator re-run | npx tsc --noEmit clean; npx vitest run 69 passed (6 files) | pass | unit | c3
+- e9 | ruling 9 regression proven | server.test.ts:305 - 30 goal rows do not bury an older fallback event | pass | unit | c2
+- e10 | agent-browser drives bb web ui and persists png | screenshot written to evidence/, view-verified, sidebar renders, no auth wall | pass | live | c20
 
 ## risks
 - r1 | user chose everything-in-one-pass over layered v1/v2/v3; large first diff, long stretch before it is viewable | accepted
@@ -88,11 +91,11 @@ done-when:
 - n4 | environment-gap | npm cache write and git clone both blocked by the Bash sandbox, needing dangerouslyDisableSandbox retries | -
 
 ## slices
-- s1 | spawned | - | clean; list model, wave a, thr_8a5dzky7kr
-- s5 | spawned | - | clean; backend, wave a, thr_4vuge7cudi
-- s2a | spawned | - | clean; shared ui infra, wave a, thr_7h8mumntcv
-- s4 | pending | - | clean; dossier, wave b, packet written
-- s6 | pending | - | clean; menu and keyboard, wave b, packet written
+- s1 | merged | f62c153 | clean; list model, 69-test suite green at collect
+- s5 | merged | cfbd5af,fa01efd | clean; backend, contract landed first to unblock s4
+- s2a | merged | 4b1dc88 | clean; shared ui infra
+- s4 | spawned | - | clean; dossier, thr_v7ugq8n44i
+- s6 | spawned | - | clean; menu and keyboard, thr_fvd2sv2ske
 - s3 | pending | - | clean; row chrome, wave c, packet written
 - s2b | pending | - | clean; shell and freeze, wave d, packet written
 
@@ -105,8 +108,12 @@ done-when:
 - spec-review | cross-vendor spec review | bb-thread | thr_crd7bbf2ph | gpt-5.6-sol | medium | - | n/a (bb) | n/a | n/a | 40 | ~13m | accepted; 7 blocker 6 major 1 minor, all upheld
 - spec | TECH.md v2, 14 arbitration rulings applied | bb-thread | thr_dnmhd2ri4e | claude-opus-5[1m] | low | - | n/a (bb) | n/a | n/a | 45 | ~12m | accepted; resumed same seat
 - fanout | packets for 7 slice seats + branch + hook | orchestrator | n/a | claude-opus-5[1m] | session | - | ~55k | n/a | 22 | n/a | - | accepted
-- slice | slice 1 list model | bb-thread | thr_8a5dzky7kr | claude-opus-5[1m] | low | s1 | n/a (bb) | n/a | n/a | 40 | - | in flight
-- slice | slice 5 backend | bb-thread | thr_4vuge7cudi | claude-opus-5[1m] | low | s5 | n/a (bb) | n/a | n/a | 40 | - | in flight
-- slice | slice 2a shared ui infra | bb-thread | thr_7h8mumntcv | claude-sonnet-5 | low | s2a | n/a (bb) | n/a | n/a | 30 | - | in flight
+- slice | slice 1 list model | bb-thread | thr_8a5dzky7kr | claude-opus-5[1m] | low | s1 | n/a (bb) | n/a | n/a | 40 | ~19m | accepted
+- slice | slice 5 backend | bb-thread | thr_4vuge7cudi | claude-opus-5[1m] | low | s5 | n/a (bb) | n/a | n/a | 40 | ~24m | accepted
+- slice | slice 2a shared ui infra | bb-thread | thr_7h8mumntcv | claude-sonnet-5 | low | s2a | n/a (bb) | n/a | n/a | 30 | ~11m | accepted
+
+- glyphs | serial extension of the shared Glyph index | orchestrator | n/a | claude-opus-5[1m] | session | - | ~10k | n/a | 5 | n/a | - | accepted; inline deviation, shared index takes one writer
+- slice | slice 4 dossier + row signals | bb-thread | thr_v7ugq8n44i | claude-opus-5[1m] | low | s4 | n/a (bb) | n/a | n/a | 45 | - | in flight
+- slice | slice 6 context menu + keyboard | bb-thread | thr_fvd2sv2ske | claude-opus-5[1m] | low | s6 | n/a (bb) | n/a | n/a | 35 | - | in flight
 
 ## release
