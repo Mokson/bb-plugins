@@ -1,0 +1,29 @@
+{
+  "$schema": "https://getbb.app/schemas/marketplace.schema.json",
+  "schemaVersion": 1,
+  "name": "mokson",
+  "displayName": "Mokson's Plugins",
+  "description": "Personal bb plugins by Maksym Moklyak.",
+  "plugins": [
+    {
+      "id": "better-sidebar",
+      "displayName": "Better Sidebar",
+      "description": "A sidebar thread list organised by activity date, with a second metadata row carrying project and workspace, real provider logos, five minimal status glyphs, a pull-request chip, and a hover dossier showing model, effort, tokens and context pressure.",
+      "icon": "PanelLeft",
+      "tags": ["interface", "sidebar", "threads", "productivity"],
+      "author": {
+        "name": "Maksym Moklyak",
+        "github": "Mokson",
+        "url": "https://github.com/Mokson"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/Mokson/bb-plugins.git",
+          "subdir": "plugins/better-sidebar",
+          "range": "^0.1.0",
+          "tagPrefix": "better-sidebar/"
+        }
+      }
+    }
+  ]
+}

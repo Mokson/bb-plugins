@@ -1,18 +1,50 @@
-# bb-plugin-better-sidebar
+# Mokson's bb plugins
 
-A bb plugin that replaces bb's sidebar thread list via
-`app.slots.experimental_threadList`.
+A personal [bb](https://github.com/get-bb/bb) plugin marketplace.
 
-This repository is currently a scaffold: `app.tsx` and `src/server.ts` are
-placeholders proving the build and install pipeline. The sidebar feature
-itself has not been implemented yet.
-
-## Development
+## Add the marketplace
 
 ```sh
-npm install
-bb plugin install .
-bb plugin dev
+bb marketplace add git:https://github.com/Mokson/bb-plugins
 ```
 
-See `docs/specs/001_better-sidebar/` for the product and tech specs.
+Adding a marketplace installs nothing — it only makes these plugins discoverable
+under **Extensions → Plugins**, in `bb plugin search`, and installable by id.
+
+## Plugins
+
+| Plugin | What it does |
+| --- | --- |
+| [`better-sidebar`](plugins/better-sidebar) | A sidebar thread list organised by activity date, with a second metadata row, real provider logos, five minimal status glyphs, a PR chip, and a hover dossier. |
+
+Install one directly, without the marketplace:
+
+```sh
+bb plugin install git:https://github.com/Mokson/bb-plugins \
+  --subdirectory plugins/better-sidebar
+```
+
+## Layout
+
+- `marketplace.json` — the catalog bb reads. Hand-maintained; one entry per plugin
+  in `plugins[]`.
+- `plugins/<id>/` — one self-contained plugin package per directory. Each has its
+  own `package.json`, tests, and release tags.
+- `docs/specs/` — design and delivery artifacts.
+
+## Releasing
+
+Each plugin is tagged independently, so `marketplace.json` ranges over its own
+tags via `tagPrefix`:
+
+```sh
+git tag better-sidebar/v0.1.0
+git push origin better-sidebar/v0.1.0
+```
+
+A `range` entry resolves to the highest matching `<tagPrefix>vX.Y.Z` tag, so a
+plugin with no release tag yet is listed but not installable.
+
+## Licence
+
+MIT. Each plugin carries its own `LICENSE`.
