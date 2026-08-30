@@ -48,6 +48,10 @@ done-when:
 - d11 | root marketplace.json hand-maintained as one file with a plugins array | the bb-community entries/ split exists to avoid multi-contributor PR conflicts, which a single-author repo does not have; user choice
 - d12 | restructure to plugins/better-sidebar plus root marketplace.json done inline by the orchestrator | ~10 file moves and 2 small files; a packet would have cost more than the work, and it blocked every downstream packet's paths
 - d13 | model and reasoning effort ARE retrievable, correcting the scaffold seat's Q3 answer | bb.sdk.threads.defaultExecutionOptions returns model and reasoningLevel; the seat checked only threads.get - bb-plugin-sdk.d.ts:3098-3126, :15436
+- d15 | scope delta: user reviewed the plugin running on his phone and raised 4 layout items | amendment B51-B55, dispatched as a design wave after the review fix waves land, never concurrently with them
+- d16 | provider glyph moves from trailing-on-row-2 to leading-before-title | reverses the round-3 Q6 answer; its premise (pinning row 2's right edge) died when B52 removed row 2 from child rows - user's call, premise changed
+- d17 | B44 was never satisfied: bb's host collector accepts only HTMLAnchorElement | orchestrator verified in the compiled host bundle; 210 tests passed because they assert attributes, not element type
+- d18 | freeze machine and freeze overlay were only ever tested against each other's stand-ins | list-model.test.ts hand-copied useFreeze's snapshot(); this is why the expand-while-frozen blocker shipped
 - d14 | parked: adopt cron-parser devDependency and approve better-sqlite3 install scripts [accept, vendor differently, drop SDK testing harness] | default: accept - both are undeclared peers of @get-bb/plugin-sdk/testing, not discretionary additions
 
 ## assumptions
@@ -60,6 +64,11 @@ done-when:
 
 ## specs
 - docs/specs/001_better-sidebar/PRODUCT.md
+- docs/specs/001_better-sidebar/PRODUCT-AMENDMENT-1.md
+- docs/specs/001_better-sidebar/TECH.md
+- docs/specs/001_better-sidebar/CONTEXT-DIGEST.md
+- docs/specs/001_better-sidebar/REVIEW-SPECS.md + REVIEW-SPECS-ARBITRATION.md
+- docs/specs/001_better-sidebar/review-crossvendor.json + review-scrutinize.json + REVIEW-CODE-ARBITRATION.md
 
 ## evidence
 - e1 | git init and initial commit | git rev-parse --short HEAD = 1ec0331 | pass | static | -
@@ -74,6 +83,8 @@ done-when:
 - e10 | agent-browser drives bb web ui and persists png | screenshot written to evidence/, view-verified, sidebar renders, no auth wall | pass | live | c20
 
 ## risks
+- r6 | 9 Radix/DOM runtime assumptions cannot be proven in jsdom; one already shipped broken | open - mandatory browser QA rows
+- r7 | amendment B51-B55 arrived after implementation; it reshapes row 1 for every row | accepted
 - r1 | user chose everything-in-one-pass over layered v1/v2/v3; large first diff, long stretch before it is viewable | accepted
 - r2 | precedence moves a pinned thread out of PINNED when it needs input | accepted
 - r3 | oversized change likely past the ~500 line gate | open
