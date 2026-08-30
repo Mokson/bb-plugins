@@ -170,14 +170,17 @@ function SectionHeader({
   onToggle: () => void;
   ref: (node: HTMLElement | null) => void;
 }) {
+  // B53.1: the count sits at the far right of the header row. Left-adjacent it
+  // read as part of the label — `TODAY 22` looked like a title, not a tally.
   const label = (
     <>
-      <span className="truncate">{section.label}</span>
+      <span className="flex-1 truncate text-left">{section.label}</span>
       <span className="tabular-nums text-muted-foreground/70">{section.count}</span>
     </>
   );
   const className = cn(
-    "flex w-full items-center gap-1.5 px-3 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide",
+    // B54.3: `px-2`, the same 8px inset as the rows and as the host's chrome.
+    "flex w-full items-center gap-1.5 px-2 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide",
     "text-muted-foreground",
     dimClassFor(section),
   );

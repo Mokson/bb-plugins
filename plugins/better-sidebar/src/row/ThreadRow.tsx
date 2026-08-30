@@ -14,11 +14,32 @@ import { RowSignals } from "../dossier/RowSignals";
 import { RowContextMenu } from "../menu/RowContextMenu";
 import { useRenameEditor } from "../menu/useRenameEditor";
 import type { RenderRow } from "../model/types";
+import { ProviderGlyph } from "./ProviderGlyph";
+import { relativeTimeLabel } from "./relative-time";
 import { SecondRow } from "./SecondRow";
 import { StatusGlyph } from "./StatusGlyph";
 
 /** B9: one indent step per parent hop, in px so the truncation stays honest. */
 const DEPTH_INDENT_PX = 12;
+
+/**
+ * B54.3: the row's own left inset, matching bb's own row (`0 0 0 8px`) and the
+ * host's `px-2` "New thread" chrome above the list, so the two do not step.
+ */
+const ROW_INSET_PX = 8;
+
+/**
+ * B51.1: the chevron's gutter, reserved on every row whether or not it has
+ * children, so every title at a given depth starts on one vertical line. It is
+ * the same measure as the trailing glyph box, so both edges of the row are set
+ * on one ruler.
+ */
+const CHEVRON_GUTTER_CLASS =
+  "relative flex size-3.5 shrink-0 items-center justify-center";
+
+/** B51.5: a fixed slot per trailing element, so the time column aligns down the list. */
+const TRAILING_TEXT_CLASS =
+  "shrink-0 text-right text-[11px] tabular-nums text-muted-foreground";
 
 export interface ThreadRowProps {
   row: RenderRow;
@@ -130,11 +151,14 @@ function RowBody({
         <RowHover
           row={row}
           isCompactViewport={isCompactViewport}
+          // B54: bb's own row is 28px tall with `0 0 0 8px` padding and a 13px
+          // text size. Row 1 carries the height itself, so a root row with no
+          // second row measures exactly one bb row.
           className={cn(
-            "relative w-full min-w-0 rounded-md px-2 py-1.5 text-left",
+            "relative w-full min-w-0 rounded-md pr-2 text-left text-[13px]",
             "hover:bg-accent/60 focus-within:ring-1 focus-within:ring-ring",
           )}
-          style={{ paddingLeft: 8 + row.depth * DEPTH_INDENT_PX }}
+          style={{ paddingLeft: ROW_INSET_PX + row.depth * DEPTH_INDENT_PX }}
         >
           <a
             href="#"
@@ -164,30 +188,39 @@ function RowBody({
           {/* Above the anchor and transparent to the pointer, so a click
               anywhere on the row reaches it. The few genuinely interactive
               children opt back in individually. */}
-          <div className="pointer-events-none relative flex min-w-0 flex-col gap-0.5">
-            <div className="flex min-w-0 items-center gap-1">
-              {row.childCount === 0 ? null : (
-                <span
-                  role="button"
-                  tabIndex={-1}
-                  aria-label={
-                    isSubtreeCollapsed
-                      ? `Expand ${row.childCount} child threads`
-                      : `Collapse ${row.childCount} child threads`
-                  }
-                  aria-expanded={!isSubtreeCollapsed}
-                  className="pointer-events-auto flex shrink-0 items-center gap-0.5 text-2xs tabular-nums text-muted-foreground"
-                  onClick={toggleSubtree}
-                  onPointerDown={(event) => event.stopPropagation()}
-                >
-                  <Glyph
-                    name={isSubtreeCollapsed ? "chevron-right" : "chevron-down"}
-                    className="size-3"
-                    aria-hidden
-                  />
-                  {row.childCount}
-                </span>
-              )}
+          <div className="pointer-events-none relative flex min-w-0 flex-col">
+            {/* B51: one row-1 layout for every row —
+                [chevron gutter] [provider] title … [child count] [status] [time]. */}
+            <div data-better-sidebar-row1="" className="flex h-7 min-w-0 items-center gap-2">
+              <span className={CHEVRON_GUTTER_CLASS}>
+                {row.childCount === 0 ? null : (
+                  <span
+                    role="button"
+                    tabIndex={-1}
+                    aria-label={
+                      isSubtreeCollapsed
+                        ? `Expand ${row.childCount} child threads`
+                        : `Collapse ${row.childCount} child threads`
+                    }
+                    aria-expanded={!isSubtreeCollapsed}
+                    // B55.4: the hit area is grown with `-inset-1.5` rather
+                    // than with padding, so a thumb-sized target costs the
+                    // layout nothing and the row's own tap survives beside it.
+                    className="pointer-events-auto absolute -inset-1.5 flex items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+                    onClick={toggleSubtree}
+                    onPointerDown={(event) => event.stopPropagation()}
+                  >
+                    <Glyph
+                      name={isSubtreeCollapsed ? "chevron-right" : "chevron-down"}
+                      className="size-3"
+                      aria-hidden
+                    />
+                  </span>
+                )}
+              </span>
+
+              {/* B51.2: leading, on every row. Its resolution is unchanged. */}
+              <ProviderGlyph providerId={thread.providerId} />
 
               {renameEditor.isRenaming ? (
                 <input
@@ -202,7 +235,7 @@ function RowBody({
                 // as disabled. B15: no pin glyph; the PINNED section says it.
                 <span
                   className={cn(
-                    "min-w-0 flex-1 truncate text-xs",
+                    "min-w-0 flex-1 truncate",
                     thread.isUnread ? "font-semibold" : "font-normal",
                   )}
                 >
@@ -210,18 +243,36 @@ function RowBody({
                 </span>
               )}
 
-              <RowSignals threadId={thread.id} />
-              <StatusGlyph thread={thread} />
+              {/* B51.3: the trailing cluster, in order, each element in a slot
+                  of its own width. B55.2: it never wraps — the title truncates
+                  into it instead. */}
+              <div className="flex shrink-0 items-center gap-1.5">
+                <RowSignals threadId={thread.id} />
+                {/* B53.2: the child count belongs here, never before the title,
+                    where a number reads as part of the title. */}
+                <span className={cn(TRAILING_TEXT_CLASS, "w-4")}>
+                  {row.childCount === 0 ? null : row.childCount}
+                </span>
+                <StatusGlyph thread={thread} />
+                {/* B51.4: the row's own time, on every row, at the right edge. */}
+                <span className={cn(TRAILING_TEXT_CLASS, "w-7")}>
+                  {relativeTimeLabel(thread.updatedAt, now)}
+                </span>
+              </div>
             </div>
 
-            {showSecondRow ? (
-              <SecondRow
-                row={row}
-                now={now}
-                pullRequest={pullRequest}
-                isCompactViewport={isCompactViewport}
-                onOpenPullRequest={openPullRequest}
-              />
+            {/* B52.1: a child renders row 1 only — its project and workspace
+                repeat its parent's. Row 2 is indented to the provider column so
+                the two lines share a left edge. */}
+            {showSecondRow && row.depth === 0 ? (
+              <div className="pb-1 pl-[22px]">
+                <SecondRow
+                  row={row}
+                  pullRequest={pullRequest}
+                  isCompactViewport={isCompactViewport}
+                  onOpenPullRequest={openPullRequest}
+                />
+              </div>
             ) : null}
           </div>
         </RowHover>

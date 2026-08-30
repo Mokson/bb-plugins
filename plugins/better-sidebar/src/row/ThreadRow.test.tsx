@@ -154,6 +154,13 @@ function rowElement(container: HTMLElement): HTMLElement {
   return element;
 }
 
+/** Row 1: the one fixed layout every row draws (B51). */
+function rowOne(container: HTMLElement): HTMLElement {
+  const element = container.querySelector<HTMLElement>("[data-better-sidebar-row1]");
+  if (element === null) throw new Error("no row 1 rendered");
+  return element;
+}
+
 /** The PR chip. The row overlay is an anchor now, so `role="link"` is plural. */
 function prChip(): HTMLElement {
   const chip = document.querySelector<HTMLElement>("[data-better-sidebar-pr]");
@@ -344,6 +351,91 @@ describe("ThreadRow chrome", () => {
     expect(rowElement(container).textContent).not.toContain("bb-plugins");
   });
 });
+
+/**
+ * The amendment's layout: one row-1 shape for every row —
+ * `[chevron gutter] [provider] title … [child count] [status] [time]`.
+ *
+ * The user raised all of this from a screenshot of the running plugin: a count
+ * left-adjacent to a title read as part of the title, and titles with and
+ * without a chevron did not start on the same line.
+ */
+describe("ThreadRow row 1 layout (B51-B53)", () => {
+  it("orders the trailing cluster count, status, then time (B51.3, B53.2)", () => {
+    const { container } = renderRow(
+      row({
+        thread: thread({ updatedAt: NOW - 5 * MINUTE }),
+        childCount: 3,
+      }),
+    );
+
+    // The count follows the title and precedes the time; nothing precedes the
+    // title but the gutter and the glyph, neither of which renders text.
+    expect(rowOne(container).textContent).toBe("Ship the sidebar35m");
+  });
+
+  it("draws the provider glyph immediately left of the title (B51.2)", () => {
+    const { container } = renderRow(row());
+    const one = rowOne(container);
+    const provider = one.querySelector("[data-better-sidebar-provider]")!;
+    const title = one.querySelector(".truncate")!;
+
+    expect(provider.compareDocumentPosition(title)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  /**
+   * B51.1. The gutter is reserved whether or not the row has children, so a
+   * childless title starts on the same vertical line as a parent's. Asserted
+   * as the title's position in row 1, which is the thing that has to be equal
+   * — jsdom lays nothing out, so widths would prove nothing.
+   */
+  it("reserves the chevron gutter on a childless row (B51.1)", () => {
+    const { container: withChildren } = renderRow(row({ childCount: 2 }));
+    const parentIndex = titleIndex(rowOne(withChildren));
+    cleanup();
+
+    const { container: childless } = renderRow(row({ childCount: 0 }));
+
+    expect(titleIndex(rowOne(childless))).toBe(parentIndex);
+    expect(
+      rowOne(childless).querySelector('[aria-label*="child threads"]'),
+    ).toBeNull();
+  });
+
+  it("renders row 1 only on a child, time included (B52.1, B51.4)", () => {
+    const { container } = renderRow(
+      row({
+        thread: thread({
+          id: "child",
+          parentThreadId: "t1",
+          updatedAt: NOW - 5 * MINUTE,
+        }),
+        depth: 1,
+        workspaceLabel: "maxbook",
+      }),
+    );
+
+    const element = rowElement(container);
+    expect(element.textContent).toContain("5m");
+    expect(element.textContent).not.toContain("bb-plugins");
+    expect(element.textContent).not.toContain("maxbook");
+  });
+
+  it("still renders row 2 on a root row (B52.2)", () => {
+    const { container } = renderRow(row());
+    expect(rowElement(container).textContent).toContain("bb-plugins");
+    // B51.4: and the time is no longer on it.
+    expect(rowOne(container).textContent).toContain("1d");
+  });
+});
+
+/** Which child of row 1 the title is, so the gutter's reservation is testable. */
+function titleIndex(one: HTMLElement): number {
+  const title = one.querySelector(".truncate")!;
+  return Array.from(one.children).indexOf(title);
+}
 
 /**
  * Slice 6 owns the editor state and the `actions.rename` call; slice 3 owns

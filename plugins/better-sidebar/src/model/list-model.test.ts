@@ -182,7 +182,48 @@ describe("nesting (B9) and archived children (B11)", () => {
     expect(sequence(model)).toEqual(["parent", "child"]);
     expect(model.sections[0]!.rows[1]!.depth).toBe(1);
     expect(model.sections[0]!.rows[0]!.childCount).toBe(1);
-    expect(model.sections[0]!.count).toBe(2);
+    // B53.4: two rows, one root — the section counts the root only.
+    expect(model.sections[0]!.count).toBe(1);
+  });
+
+  /**
+   * The motivating complaint: "the group counter is jumping". Subagents spawn
+   * and finish under a parent continuously, and while the section counted them
+   * the header churned although the user had started nothing new.
+   */
+  it("counts a section's root rows only, however many subagents spawn (B53.4)", () => {
+    const roots = [thread("a"), thread("b")];
+    const withSubagents = [
+      ...roots,
+      ...Array.from({ length: 16 }, (_, index) =>
+        thread(`sub${index}`, { parentThreadId: "a" }),
+      ),
+    ];
+
+    expect(buildListModel(input(roots)).sections[0]!.count).toBe(2);
+    const busy = buildListModel(input(withSubagents));
+    expect(busy.sections[0]!.count).toBe(2);
+    expect(busy.sections[0]!.rows).toHaveLength(18);
+    // The volume is reported where it belongs: on the parent (B53.2).
+    expect(busy.sections[0]!.rows[0]!.childCount).toBe(16);
+  });
+
+  it("keeps a section's count invariant across collapsing a subtree in it (B53.5)", () => {
+    const threads = [
+      thread("parent"),
+      thread("child", { parentThreadId: "parent" }),
+      thread("grandchild", { parentThreadId: "child" }),
+      thread("other"),
+    ];
+    const expanded = buildListModel(input(threads));
+    const collapsed = buildListModel(
+      input(threads, { collapsedThreadIds: new Set(["parent"]) }),
+    );
+
+    expect(expanded.sections[0]!.rows).toHaveLength(4);
+    expect(collapsed.sections[0]!.rows).toHaveLength(2);
+    expect(collapsed.sections[0]!.count).toBe(expanded.sections[0]!.count);
+    expect(expanded.sections[0]!.count).toBe(2);
   });
 
   it("hides an archived root but shows an archived child of an expanded parent", () => {

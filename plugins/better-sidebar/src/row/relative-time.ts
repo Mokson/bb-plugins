@@ -3,7 +3,7 @@ const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
 /**
- * The coarse age label on row 2: "now", "5m", "2h", "3d", "2w".
+ * The coarse age label at row 1's right edge: "now", "5m", "2h", "3d", "2w".
  *
  * Deliberately coarse. The exact minute does not help you decide what to look
  * at next, and a precise label would change on every render. B12 turns on it

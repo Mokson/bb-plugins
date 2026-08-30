@@ -69,7 +69,11 @@ export interface RenderRow {
 export interface RenderSection {
   readonly key: SectionKey;
   readonly label: string;
-  /** B7: threads contained, counting nested children. */
+  /**
+   * B53.4: ROOT rows in the section, never nested children, expanded or not.
+   * A subagent is not a thread the user started, and counting them made the
+   * number churn while the section's own contents were unchanged.
+   */
   readonly count: number;
   readonly isCollapsible: boolean;
   readonly isCollapsed: boolean;

@@ -3,8 +3,6 @@ import { cn } from "../lib/utils";
 import { Glyph } from "../ui/Glyph";
 import type { RenderRow } from "../model/types";
 import { PrChip } from "./PrChip";
-import { ProviderGlyph } from "./ProviderGlyph";
-import { relativeTimeLabel } from "./relative-time";
 
 /**
  * B41, resolved against B14 by §7: the stale gradient lives on row 2 and the
@@ -20,23 +18,20 @@ const DIM_CLASS: Record<RenderRow["dimLevel"], string> = {
 };
 
 /**
- * Row 2: `project · workspace · ⟨spacer⟩ · relative time · PR chip ·
- * provider glyph`.
+ * Row 2: `project · workspace · PR chip`, on root rows only (B52).
  *
- * The provider glyph always closes the line (B17), so the right edge is fixed
- * across every row even on a thread with no branch and no pull request — the
- * eye tracks one column instead of a ragged one.
+ * Time and the provider glyph both left this line for row 1 (B51.2, B51.4).
+ * The provider glyph closed row 2 under B17 to pin its right edge across rows
+ * with no branch and no PR; children have no row 2 to pin any more, so the
+ * line simply reads left to right and ends where its content ends.
  */
 export function SecondRow({
   row,
-  now,
   pullRequest,
   isCompactViewport,
   onOpenPullRequest,
 }: {
   row: RenderRow;
-  /** Quantized clock, shared by every row in one render. */
-  now: number;
   pullRequest: PluginSidebarPullRequest | null;
   isCompactViewport: boolean;
   onOpenPullRequest: () => void;
@@ -59,14 +54,6 @@ export function SecondRow({
         </span>
       )}
 
-      <span className="flex-1" />
-
-      {/* B12: the row's own `updatedAt`, so a recent child under an old
-          parent reads as recent rather than inheriting the parent's age. */}
-      <span className="shrink-0 tabular-nums">
-        {relativeTimeLabel(row.thread.updatedAt, now)}
-      </span>
-
       {pullRequest === null ? null : (
         <PrChip
           pullRequest={pullRequest}
@@ -74,8 +61,6 @@ export function SecondRow({
           onOpen={onOpenPullRequest}
         />
       )}
-
-      <ProviderGlyph providerId={row.thread.providerId} />
     </div>
   );
 }

@@ -15,11 +15,11 @@ const SKELETON_ROWS = 6;
 /** `status: "loading"` — the shape of the list, before it has content. */
 export function ListLoading() {
   return (
-    <div className="flex flex-col gap-1 p-2" aria-busy="true" aria-label="Loading threads">
+    <div className="flex flex-col py-1" aria-busy="true" aria-label="Loading threads">
       {Array.from({ length: SKELETON_ROWS }, (_, index) => (
-        <div key={index} data-testid="thread-skeleton" className="flex flex-col gap-1 px-2 py-1.5">
+        // B54.1: one 28px line each, so the list does not resize as it loads.
+        <div key={index} data-testid="thread-skeleton" className="flex h-7 items-center px-2">
           <div className="h-3 w-3/4 animate-pulse rounded bg-muted" />
-          <div className="h-2 w-1/2 animate-pulse rounded bg-muted/60" />
         </div>
       ))}
     </div>

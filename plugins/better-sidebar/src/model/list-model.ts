@@ -201,15 +201,6 @@ function flattenSubtree(
   }
 }
 
-/** Every visible thread in the subtree, collapse notwithstanding (B7's count). */
-function subtreeSize(root: PluginSidebarThread, tree: Tree): number {
-  let total = 1;
-  for (const child of tree.childrenOf.get(root.id) ?? []) {
-    total += subtreeSize(child, tree);
-  }
-  return total;
-}
-
 function sectionOrderFor(
   input: ListModelInput,
   present: ReadonlySet<SectionKey>,
@@ -275,7 +266,12 @@ function buildLiveSections(
     let rows = rowsBySection.get(key);
     if (!rows) rowsBySection.set(key, (rows = []));
     flattenSubtree(root, tree, input, key, projectNames, rows);
-    countBySection.set(key, (countBySection.get(key) ?? 0) + subtreeSize(root, tree));
+    // B53.4: root rows only, never nested children. Counting the whole subtree
+    // made the number churn continuously as subagents spawned and finished,
+    // while nothing the user put in the section had changed. Root-only is also
+    // what makes the count invariant under expanding a subtree (B53.5) —
+    // collapse state cannot touch a number that never counted children.
+    countBySection.set(key, (countBySection.get(key) ?? 0) + 1);
   }
   const order = sectionOrderFor(input, new Set(rowsBySection.keys()));
   const sections: RenderSection[] = [];
@@ -410,7 +406,8 @@ function applyFreeze(
   );
   sections[hostIndex] = {
     ...host,
-    count: host.count + appended.length,
+    // B53.4 again: one per newcomer ROOT, not one per appended row.
+    count: host.count + newcomers.length,
     rows: [...host.rows, ...appended],
   };
   return sections;
