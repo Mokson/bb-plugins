@@ -2,7 +2,7 @@ goal: build the better-sidebar bb plugin - a date-grouped sidebar thread list wi
 ticket: none
 route: deep
 mode: autonomous
-branch: main @ /Users/mokson/Projects/Personal/bb-plugins
+branch: feat/better-sidebar @ /Users/mokson/Projects/Personal/bb-plugins
 repo: ship path pr; tracker none; deployment publish (git tag better-sidebar/vX.Y.Z); conventions git-conventions skill, conventional commits
 budget: - | tokens_total: -
 done-when:

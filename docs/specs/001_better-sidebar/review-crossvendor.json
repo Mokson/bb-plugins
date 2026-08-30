@@ -1,0 +1,104 @@
+```json
+{
+  "verdict": "block",
+  "coverage": "The branch currently reports 58 changed files, not 60. Fully read all 35 changed non-test implementation and configuration files under plugins/better-sidebar, plus the corrected specifications. Skimmed all 22 added test files by case inventory; read PrChip.test.tsx fully and the relevant setup and assertion regions of RowHover.test.tsx, RowContextMenu.test.tsx, list-model.test.ts, and ThreadList.test.tsx. Did not open the deleted scaffold.test.ts beyond its deletion diff. Also traced integration through the actual host implementations sidebarThreadShortcuts.ts, AppSidebar.tsx, plugin-sidebar-split.ts, plugin-sdk-app-impl.tsx, and useThreadRowSplitDrag.ts.",
+  "findings": [
+    {
+      "severity": "BLOCKER",
+      "file": "plugins/better-sidebar/src/row/ThreadRow.tsx:120",
+      "invariant": "B44",
+      "defect": "Rows use a div, but the host shortcut collector accepts data-sidebar-thread-shortcut-target elements only when they are HTMLAnchorElement instances.",
+      "scenario": "With any rendered thread list, the host collector sees each attributed div, rejects it as neither an anchor nor a windowed-navigation placeholder, and returns zero targets, so numbered, next, and previous thread shortcuts never open a thread."
+    },
+    {
+      "severity": "MAJOR",
+      "file": "plugins/better-sidebar/src/model/list-model.ts:297",
+      "invariant": "B7",
+      "defect": "The freeze overlay reconstructs sections only from rendered rows and drops frozen sections that currently have zero rows.",
+      "scenario": "Collapse an OLDER section and then move the pointer into the list; its snapshot contains the section but no row ids, so applyFreeze drops the entire section and its persisted collapsed header disappears until freeze release. A collapsed subtree similarly makes the displayed section count shrink when freezing."
+    },
+    {
+      "severity": "MAJOR",
+      "file": "plugins/better-sidebar/src/model/list-model.ts:303",
+      "invariant": "B9",
+      "defect": "Expanding a collapsed subtree while frozen treats its existing children as newly arrived threads and appends them at the end of the entire list.",
+      "scenario": "Freeze a list containing a collapsed parent, then click its chevron; the children were absent from frozen.ids, so they render beneath the final section instead of immediately beneath their parent until the pointer leaves."
+    },
+    {
+      "severity": "MAJOR",
+      "file": "plugins/better-sidebar/src/model/list-model.ts:97",
+      "invariant": "B1",
+      "defect": "A parent cycle leaves every participating non-archived thread with a visible parent and therefore produces no root from which either thread can render.",
+      "scenario": "Given thread A with parentThreadId B and thread B with parentThreadId A, both enter byId and childrenOf, neither enters roots, and both disappear from every section instead of appearing exactly once."
+    },
+    {
+      "severity": "MAJOR",
+      "file": "plugins/better-sidebar/src/dossier/RowHover.tsx:168",
+      "invariant": "B50",
+      "defect": "The minimal tooltip mode still enables useDossier and performs the backend threadDossier RPC after hover intent.",
+      "scenario": "Set tooltip to minimal and hover any row for 200 ms; phase becomes fetching and issues three backend SDK reads even though B50 requires minimal mode to perform no backend fetch."
+    },
+    {
+      "severity": "MAJOR",
+      "file": "plugins/better-sidebar/src/dossier/Dossier.tsx:34",
+      "invariant": "B50",
+      "defect": "The minimal dossier is not restricted to overflow fields and never renders the full branch.",
+      "scenario": "Hover a thread with a truncated title, branch feat/long-branch, activity counts, and cached fallback data while tooltip is minimal; the card shows indicator, activity, timestamps, and fallback information but omits feat/long-branch."
+    },
+    {
+      "severity": "MAJOR",
+      "file": "plugins/better-sidebar/src/menu/RowContextMenu.tsx:94",
+      "invariant": "B36",
+      "defect": "The context-menu pull-request action ignores openUrl's boolean result and silently discards a refusal.",
+      "scenario": "When the host returns false from openUrl, selecting Open pull request closes the menu, opens nothing, and shows no toast, despite the corrected B36 requirement that a falsy result be surfaced."
+    },
+    {
+      "severity": "MAJOR",
+      "file": "plugins/better-sidebar/src/dossier/RowHover.tsx:188",
+      "invariant": null,
+      "defect": "Leaving the row trigger immediately clears hover state, so the portalled dossier closes before its Retry control can be reached.",
+      "scenario": "Let threadDossier fail, then move the pointer from the row toward the rendered Retry button; the trigger receives pointerleave, phase resets to idle, and Radix unmounts the card before the button can be clicked."
+    },
+    {
+      "severity": "MINOR",
+      "file": "plugins/better-sidebar/src/model/list-model.ts:20",
+      "invariant": "B13",
+      "defect": "Title resolution trims values and treats whitespace-only strings as absent instead of applying the specified nullish fallback chain exactly.",
+      "scenario": "For title equal to three spaces and titleFallback equal to Fallback, B13 resolves the non-null title, while the implementation displays Fallback."
+    },
+    {
+      "severity": "MINOR",
+      "file": "plugins/better-sidebar/src/ThreadList.tsx:221",
+      "invariant": "B41",
+      "defect": "A collapsed section header derives its dim level from rows[0], which is absent, and therefore becomes fully opaque.",
+      "scenario": "Collapse LAST 30 DAYS or OLDER; its header uses dimLevel 0 instead of opacity-70 even though the corrected B41 wording explicitly applies the gradient to section headers."
+    },
+    {
+      "severity": "MINOR",
+      "file": "plugins/better-sidebar/src/dossier/useDossier.ts:42",
+      "invariant": null,
+      "defect": "Expired frontend dossier entries have no eviction or plugin-unmount teardown and the exported reset is used only by tests.",
+      "scenario": "Hover a thread, delete it, and reload the plugin in place; thread.deleted is not published to the frontend channel, so the settled entry remains in the module map indefinitely."
+    },
+    {
+      "severity": "MINOR",
+      "file": "plugins/better-sidebar/src/dossier/useRowSignals.ts:121",
+      "invariant": null,
+      "defect": "The singleton IntersectionObserver, RPC function, caches, and pending batch state are disconnected only through a test-only reset rather than when the last row unmounts.",
+      "scenario": "Scroll through rows and reload the plugin in place; React unobserves individual elements, but the module retains the observer callback, old RPC function, and cached signal entries across the reload."
+    }
+  ],
+  "untestable_runtime_assumptions": [
+    "plugins/better-sidebar/src/menu/RowContextMenu.tsx:76 assumes Radix onCloseAutoFocus runs after FocusScope releases its trap and that the React state update mounting the autoFocus input wins over trigger-focus restoration; jsdom cannot prove the native focus ordering.",
+    "plugins/better-sidebar/src/lib/portal-scope.ts:12 assumes the three attributes on portalled Radix content restore real host theme scoping and prevent host outside-click or focus dismissal; attribute assertions in jsdom cannot prove either behavior.",
+    "plugins/better-sidebar/src/ui/HoverPopover.tsx:24 assumes Radix controlled HoverCard timing and its cloned trigger handlers compose predictably with the caller's independent pointer state machine.",
+    "plugins/better-sidebar/src/row/PrChip.tsx:92 assumes bubbling pointerover and pointerout events across the chip's SVG descendants do not produce close-and-reopen flicker in the controlled Radix card.",
+    "plugins/better-sidebar/src/row/ThreadRow.tsx:108 assumes the nested context-menu trigger, hover-card trigger, split-drag pointer handler, and row click handler preserve one another's native event ownership in a real browser.",
+    "plugins/better-sidebar/src/dossier/RowHover.tsx:101 assumes document capture listeners receive every pointerup or pointercancel from split drags and context-menu aiming, including releases outside the document; jsdom event dispatch cannot prove this.",
+    "plugins/better-sidebar/src/dossier/useRowSignals.ts:121 assumes IntersectionObserver reports the initially empty signal span correctly inside the sidebar overflow container and delivers its first callback only after the passive effect installs the RPC function.",
+    "plugins/better-sidebar/src/ThreadList.tsx:102 assumes scrollIntoView and programmatic focus on tabIndex -1 section headings work inside the host scroll container without host shortcut interception; jsdom has no layout or real scrolling.",
+    "plugins/better-sidebar/src/row/ProviderGlyph.tsx:66 assumes CSS mask rendering, server-relative logo URLs, dark-theme selection, and plugin-scoped Tailwind classes produce the intended glyph in the shipped browser; jsdom verifies attributes and styles only."
+  ],
+  "simplification": "applyFreeze is more complex than the job requires because it rebuilds section and tree structure from a row-only snapshot; preserving live section metadata while overlaying only the frozen global id order would remove the collapsed-header, count, and expanded-child failure modes."
+}
+```
