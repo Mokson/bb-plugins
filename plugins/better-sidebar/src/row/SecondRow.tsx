@@ -43,12 +43,19 @@ export function SecondRow({
         DIM_CLASS[row.dimLevel],
       )}
     >
+      {/* B56.2: `shrink-0` takes the project name out of the proportional
+          shrink that was starving it, and `max-w-[45%]` is the whole of its
+          claim — it renders in full inside that share and truncates only when
+          it alone exceeds it, never because the branch beside it is long. */}
       {row.projectName === null ? null : (
-        <span className="truncate">{row.projectName}</span>
+        <span className="max-w-[45%] shrink-0 truncate">{row.projectName}</span>
       )}
 
+      {/* B56.1: the only shrinkable child left, so it absorbs the whole
+          deficit. It is the longest label, the most repetitive down the list
+          and the least identifying, so its tail is the right thing to lose. */}
       {row.workspaceLabel === null ? null : (
-        <span className="flex min-w-0 items-center gap-0.5">
+        <span className="flex min-w-0 shrink items-center gap-0.5">
           <Glyph name="git-branch" className="size-3 shrink-0" aria-hidden />
           <span className="truncate">{row.workspaceLabel}</span>
         </span>

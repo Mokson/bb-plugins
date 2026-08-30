@@ -18,43 +18,67 @@ export const TRAILING_GLYPH_BOX_CLASS =
   "flex size-3.5 shrink-0 items-center justify-center";
 
 /**
- * B22: colour carries Needs-you and error, and nothing else. "Working" is
- * distinguished by motion (`animate-pulse`), never by hue — a list where four
- * states each have a colour reads as noise, and the two that actually want the
- * user stop standing out.
+ * B66, superseding B22: every state carries a hue, taken from bb's own status
+ * palette (`.bb-refs/bb-sidebar/src/StatusSlot.tsx:96-118`) so one colour means
+ * one thing here and in bb's list. Planning is the single addition — bb groups
+ * it with working as sky, and our five-state vocabulary keeps the two apart, so
+ * planning takes violet.
+ *
+ * Every class is a light/dark pair (B66.1), and colour stays on the glyph and
+ * nowhere else (B66.3): no row background, no filled badge, no tinted title.
+ *
+ * Motion means "happening right now" (B66.4-B66.6). `runtime` is one
+ * determinate operation, so its spinner turns; the other three working kinds
+ * pulse; a plan, a goal, a draft and an unread result hold still. Both classes
+ * are stock Tailwind, so the plugin adds no keyframe (B66.7).
  */
 const TREATMENTS: Partial<
   Record<PluginSidebarThreadIndicator, { glyph: GlyphName; className: string }>
 > = {
-  "waiting-for-input": { glyph: "user-plus", className: "text-amber-500" },
-  "unread-error": { glyph: "circle-x", className: "text-destructive" },
+  "waiting-for-input": {
+    glyph: "user-plus",
+    className: "text-indigo-600 dark:text-indigo-300",
+  },
+  "unread-error": {
+    glyph: "circle-x",
+    className: "text-red-700 dark:text-red-300",
+  },
   runtime: {
     glyph: "spinner",
-    className: "text-muted-foreground animate-pulse",
+    className: "text-sky-600 dark:text-sky-400 animate-spin",
   },
   workflow: {
     glyph: "workflow",
-    className: "text-muted-foreground animate-pulse",
+    className: "text-sky-600 dark:text-sky-400 animate-pulse",
   },
   "background-agent": {
     glyph: "terminal",
-    className: "text-muted-foreground animate-pulse",
+    className: "text-sky-600 dark:text-sky-400 animate-pulse",
   },
   "background-command": {
     glyph: "terminal",
-    className: "text-muted-foreground animate-pulse",
+    className: "text-sky-600 dark:text-sky-400 animate-pulse",
   },
-  "plan-mode": { glyph: "list-todo", className: "text-muted-foreground" },
-  goal: { glyph: "target", className: "text-muted-foreground" },
-  draft: { glyph: "pencil", className: "text-muted-foreground" },
-  "working-draft": { glyph: "pencil", className: "text-muted-foreground" },
-  "unread-success": { glyph: "dot", className: "text-muted-foreground" },
+  "plan-mode": {
+    glyph: "list-todo",
+    className: "text-violet-600 dark:text-violet-400",
+  },
+  goal: { glyph: "target", className: "text-violet-600 dark:text-violet-400" },
+  draft: { glyph: "pencil", className: "text-amber-700 dark:text-amber-300" },
+  "working-draft": {
+    glyph: "pencil",
+    className: "text-amber-700 dark:text-amber-300",
+  },
+  "unread-success": {
+    glyph: "dot",
+    className: "text-emerald-700 dark:text-emerald-300",
+  },
   // "none" is absent on purpose: idle draws nothing, the same miss an
   // unrecognized future kind takes.
 };
 
 /**
- * B20-B22. The five-state glyph in the row's trailing cluster.
+ * B20/B66. The five-state glyph in the row's trailing cluster.
  *
  * A lookup rather than a `switch`, because B20 is the point: bb adds indicator
  * kinds over time and a value outside the union must draw nothing and throw
@@ -69,7 +93,10 @@ export function StatusGlyph({ thread }: { thread: PluginSidebarThread }) {
   if (treatment === undefined) return null;
 
   return (
-    <span className={TRAILING_GLYPH_BOX_CLASS}>
+    // B57.4: the cluster's one gap size, carried by the element that draws it.
+    // A gap on the cluster would also be charged for `RowSignals`, which stays
+    // mounted at zero width, so status-to-time would depend on its siblings.
+    <span className={cn(TRAILING_GLYPH_BOX_CLASS, "ml-1.5")}>
       <Glyph
         name={treatment.glyph}
         role="img"

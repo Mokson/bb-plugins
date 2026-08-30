@@ -353,15 +353,20 @@ describe("ThreadRow chrome", () => {
 });
 
 /**
- * The amendment's layout: one row-1 shape for every row —
- * `[chevron gutter] [provider] title … [child count] [status] [time]`.
+ * B57's layout: one row-1 shape for every row —
+ * `[provider] title [chevron, parents only] … [status] [time]`.
  *
  * The user raised all of this from a screenshot of the running plugin: a count
- * left-adjacent to a title read as part of the title, and titles with and
- * without a chevron did not start on the same line.
+ * left-adjacent to a title read as part of the title, and a reserved gutter
+ * paid for a chevron most rows never draw.
  */
-describe("ThreadRow row 1 layout (B51-B53)", () => {
-  it("orders the trailing cluster count, status, then time (B51.3, B53.2)", () => {
+describe("ThreadRow row 1 layout (B57)", () => {
+  /**
+   * B57.1. The count is gone from the row entirely — the chevron alone says a
+   * thread has children. A parent of three renders no "3" anywhere, in the
+   * trailing cluster or otherwise.
+   */
+  it("renders no child count anywhere on the row (B57.1)", () => {
     const { container } = renderRow(
       row({
         thread: thread({ updatedAt: NOW - 5 * MINUTE }),
@@ -369,9 +374,26 @@ describe("ThreadRow row 1 layout (B51-B53)", () => {
       }),
     );
 
-    // The count follows the title and precedes the time; nothing precedes the
-    // title but the gutter and the glyph, neither of which renders text.
-    expect(rowOne(container).textContent).toBe("Ship the sidebar35m");
+    expect(rowOne(container).textContent).toBe("Ship the sidebar5m");
+    expect(rowElement(container).textContent).not.toContain("3");
+    // The chevron stays, and it is the only children signal left.
+    expect(
+      rowOne(container).querySelector('[aria-label*="child threads"]'),
+    ).not.toBeNull();
+  });
+
+  /**
+   * B57.2. The chevron hugs the end of the title instead of preceding it, so
+   * it reads as belonging to that thread rather than to a column.
+   */
+  it("places the chevron immediately after the title (B57.2)", () => {
+    const { container } = renderRow(row({ childCount: 2 }));
+    const one = rowOne(container);
+    const children = Array.from(one.children);
+    const title = one.querySelector(".truncate")!;
+    const chevron = one.querySelector('[aria-label*="child threads"]')!.parentElement!;
+
+    expect(children.indexOf(chevron)).toBe(children.indexOf(title) + 1);
   });
 
   /**
@@ -413,22 +435,61 @@ describe("ThreadRow row 1 layout (B51-B53)", () => {
   });
 
   /**
-   * B51.1. The gutter is reserved whether or not the row has children, so a
-   * childless title starts on the same vertical line as a parent's. Asserted
-   * as the title's position in row 1, which is the thing that has to be equal
-   * — jsdom lays nothing out, so widths would prove nothing.
+   * B57.2/B57.5, superseding B51.1. Nothing is reserved on either row, so a
+   * childless title starts at the same x as a parent's by removal rather than
+   * by reservation. Asserted as the title's position in row 1 — jsdom lays
+   * nothing out, so widths would prove nothing.
    */
-  it("reserves the chevron gutter on a childless row (B51.1)", () => {
+  it("reserves no chevron gutter, and both titles start alike (B57.2, B57.5)", () => {
     const { container: withChildren } = renderRow(row({ childCount: 2 }));
     const parentIndex = titleIndex(rowOne(withChildren));
     cleanup();
 
     const { container: childless } = renderRow(row({ childCount: 0 }));
+    const one = rowOne(childless);
 
-    expect(titleIndex(rowOne(childless))).toBe(parentIndex);
-    expect(
-      rowOne(childless).querySelector('[aria-label*="child threads"]'),
-    ).toBeNull();
+    expect(titleIndex(one)).toBe(parentIndex);
+    expect(one.querySelector('[aria-label*="child threads"]')).toBeNull();
+    // The title is the second child on both: provider, then title. A reserved
+    // gutter would push it to third on the childless row too.
+    expect(parentIndex).toBe(1);
+  });
+
+  /** B57.3: no base left inset; only B9's per-depth nesting indent survives. */
+  it("starts the provider glyph at the row's left edge (B57.3)", () => {
+    const { container: root } = renderRow(row({ depth: 0 }));
+    const rootBox = rowElement(root).firstElementChild as HTMLElement;
+    expect(rootBox.style.paddingLeft).toBe("0px");
+    cleanup();
+
+    const { container: child } = renderRow(row({ depth: 2 }));
+    const childBox = rowElement(child).firstElementChild as HTMLElement;
+    expect(childBox.style.paddingLeft).toBe("24px");
+  });
+
+  /**
+   * B57.4. `RowSignals` stays mounted at zero width because it owns the
+   * IntersectionObserver ref, and under the old per-element margins it changed
+   * what the trailing cluster measured. The gap between the status glyph and
+   * the time must not depend on which siblings happen to draw.
+   */
+  it("keeps status-to-time spacing identical whatever else draws (B57.4)", () => {
+    const withStatus = renderRow(
+      row({ thread: thread({ indicator: "waiting-for-input" }) }),
+    );
+    const cluster = rowOne(withStatus.container).lastElementChild!;
+    const [signals, status, time] = Array.from(cluster.children);
+
+    // The signals span carries no margin of its own, so a mounted zero-width
+    // element contributes no gap; every element that draws carries the same one.
+    expect(signals.getAttribute("class")).not.toContain("ml-");
+    expect(status.getAttribute("class")).toContain("ml-1.5");
+    expect(time.getAttribute("class")).toContain("ml-1.5");
+    cleanup();
+
+    const { container } = renderRow(row({ thread: thread({ indicator: "none" }) }));
+    const bare = rowOne(container).lastElementChild!;
+    expect(bare.lastElementChild!.getAttribute("class")).toContain("ml-1.5");
   });
 
   it("renders row 1 only on a child, time included (B52.1, B51.4)", () => {
@@ -455,6 +516,76 @@ describe("ThreadRow row 1 layout (B51-B53)", () => {
     expect(rowElement(container).textContent).toContain("bb-plugins");
     // B51.4: and the time is no longer on it.
     expect(rowOne(container).textContent).toContain("1d");
+  });
+});
+
+/**
+ * B56. A long branch starved the project name: `bb-plugins` rendered as
+ * `bb-pl…` while the branch kept roughly four times the width, because both
+ * were plain flex children and shrank in proportion to their natural width.
+ *
+ * jsdom lays nothing out, so these assert the flex contract that decides the
+ * outcome rather than measured pixels: who may shrink, and what caps whom.
+ * The rendered check at panel width is B56.5's manual step.
+ */
+describe("ThreadRow row 2 under pressure (B56)", () => {
+  const LONG_BRANCH = "bb/create-customizable-plugin-version-with-a-very-long-slug";
+
+  function rowTwoLabels(container: HTMLElement) {
+    const one = rowOne(container);
+    const two = one.nextElementSibling!.firstElementChild!;
+    return {
+      project: two.firstElementChild!,
+      branch: two.children[1]!,
+    };
+  }
+
+  /**
+   * B56.1/B56.2, the first polarity: a ten-character project name survives a
+   * branch four times its length. `shrink-0` takes the project out of the
+   * proportional shrink; the branch is the only shrinkable child left, so it
+   * absorbs the whole deficit.
+   */
+  it("leaves a 10-character project intact beside a long branch (B56.1, B56.2)", () => {
+    const { container } = renderRow(
+      row({ projectName: "bb-plugins", workspaceLabel: LONG_BRANCH }),
+    );
+    const { project, branch } = rowTwoLabels(container);
+
+    expect(project.textContent).toBe("bb-plugins");
+    expect(project.getAttribute("class")).toContain("shrink-0");
+    expect(branch.getAttribute("class")).toContain("shrink");
+    expect(branch.getAttribute("class")).toContain("min-w-0");
+    expect(branch.querySelector(".truncate")!.textContent).toBe(LONG_BRANCH);
+  });
+
+  /**
+   * B56.2, the other polarity: the project is not exempt from truncation, it
+   * is capped. A name that alone exceeds ~45% of row 2 still truncates —
+   * expressed as a percentage of the line, so no pixel is guessed.
+   */
+  it("still truncates a project name over its own cap (B56.2)", () => {
+    const { container } = renderRow(
+      row({
+        projectName: "a-project-name-far-longer-than-half-this-row",
+        workspaceLabel: "main",
+      }),
+    );
+    const { project } = rowTwoLabels(container);
+
+    expect(project.getAttribute("class")).toContain("max-w-[45%]");
+    expect(project.getAttribute("class")).toContain("truncate");
+  });
+
+  /** B56.3: with room to spare, nothing is truncated and nothing is padded. */
+  it("renders a short project and a short branch in full (B56.3)", () => {
+    const { container } = renderRow(
+      row({ projectName: "bb", workspaceLabel: "main" }),
+    );
+    const { project, branch } = rowTwoLabels(container);
+
+    expect(project.textContent).toBe("bb");
+    expect(branch.textContent).toBe("main");
   });
 });
 

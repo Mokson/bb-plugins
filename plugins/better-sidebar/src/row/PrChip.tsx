@@ -5,21 +5,28 @@ import { Glyph } from "../ui/Glyph";
 import { HoverPopover } from "../ui/HoverPopover";
 
 /**
- * B34. The chip is tinted by `attention` — bb's rolled-up "does this need
- * you" signal — not by `state`, with one exception: a merged PR reads as
- * merged whatever its attention says.
+ * B63, superseding B34. The chip is tinted by `state` — what this PR is —
+ * rather than by `attention`, and in GitHub's own palette, because that is the
+ * language the user already reads pull requests in everywhere else: draft
+ * grey, open green, merged purple, closed red. `attention` keeps its full role
+ * in words on the hover card (B63.2).
  */
+const STATE_TONE: Record<PluginSidebarPullRequest["state"], string> = {
+  draft: "text-muted-foreground",
+  open: "text-emerald-600 dark:text-emerald-400",
+  merged: "text-violet-600 dark:text-violet-400",
+  closed: "text-red-700 dark:text-red-400",
+};
+
+/** B63.1: breakage overrides state, on an open PR only. */
+const BREAKAGE_TONE = "text-red-700 dark:text-red-400";
+
 function toneClass(pullRequest: PluginSidebarPullRequest): string {
-  if (pullRequest.state === "merged") return "text-violet-500";
-  switch (pullRequest.attention) {
-    case "checks_failed":
-    case "conflicts":
-      return "text-destructive";
-    case "ready_to_merge":
-      return "text-emerald-500";
-    default:
-      return "text-muted-foreground";
-  }
+  const isBroken =
+    pullRequest.attention === "checks_failed" ||
+    pullRequest.attention === "conflicts";
+  if (pullRequest.state === "open" && isBroken) return BREAKAGE_TONE;
+  return STATE_TONE[pullRequest.state];
 }
 
 /** B35: the attention reason in words, not a status code. */

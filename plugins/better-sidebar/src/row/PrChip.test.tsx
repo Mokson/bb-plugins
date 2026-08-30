@@ -31,17 +31,58 @@ describe("PrChip", () => {
     expect(screen.getByRole("link").textContent).toContain("#42");
   });
 
+  /**
+   * B63, superseding B34. Colour answers "what is this PR" in GitHub's own
+   * palette, so a hue means here what it means on github.com.
+   */
   it.each([
-    ["merged tone", pr({ state: "merged", attention: "merged" }), "text-violet"],
-    ["checks failed", pr({ attention: "checks_failed" }), "text-destructive"],
-    ["conflicts", pr({ attention: "conflicts" }), "text-destructive"],
-    ["ready to merge", pr({ attention: "ready_to_merge" }), "text-emerald"],
-    ["anything else", pr({ attention: "checks_pending" }), "text-muted-foreground"],
-  ])("tints by attention: %s (B34)", (_name, pullRequest, expected) => {
+    ["draft", pr({ state: "draft", attention: "draft" }), "text-muted-foreground"],
+    ["open", pr({ state: "open", attention: "none" }), "text-emerald-600"],
+    ["merged", pr({ state: "merged", attention: "merged" }), "text-violet-600"],
+    ["closed", pr({ state: "closed", attention: "closed" }), "text-red-700"],
+  ])("tints by state: %s (B63)", (_name, pullRequest, expected) => {
     render(
       <PrChip pullRequest={pullRequest} isCompactViewport={false} onOpen={() => {}} />,
     );
     expect(screen.getByRole("link").getAttribute("class")).toContain(expected);
+  });
+
+  /**
+   * B63.1. The one case worth interrupting a glance, and the reason pure state
+   * colouring was rejected: an open PR that is broken must not read green.
+   */
+  it.each<PluginSidebarPullRequest["attention"]>(["checks_failed", "conflicts"])(
+    "renders an open PR red when %s (B63.1)",
+    (attention) => {
+      render(
+        <PrChip
+          pullRequest={pr({ state: "open", attention })}
+          isCompactViewport={false}
+          onOpen={() => {}}
+        />,
+      );
+      const className = screen.getByRole("link").getAttribute("class") ?? "";
+      expect(className).toContain("text-red-700");
+      expect(className).not.toContain("text-emerald");
+    },
+  );
+
+  /** B63.1 stops at `open`: a merged PR reads merged whatever broke on it. */
+  it("keeps merged purple even with failed checks (B63.1)", () => {
+    render(
+      <PrChip
+        pullRequest={pr({ state: "merged", attention: "checks_failed" })}
+        isCompactViewport={false}
+        onOpen={() => {}}
+      />,
+    );
+    expect(screen.getByRole("link").getAttribute("class")).toContain("text-violet-600");
+  });
+
+  /** B56.4: a truncated `#1234` is worse than useless, so the chip never shrinks. */
+  it("never shrinks (B56.4)", () => {
+    render(<PrChip pullRequest={pr()} isCompactViewport={false} onOpen={() => {}} />);
+    expect(screen.getByRole("link").getAttribute("class")).toContain("shrink-0");
   });
 
   it("shows a rendered hover card, not a title attribute (B35)", async () => {

@@ -46,11 +46,20 @@ function thread(
   };
 }
 
-const HUE_CLASSES = ["text-amber", "text-destructive", "text-emerald", "text-violet"];
-
-function hasHue(element: Element): boolean {
-  return HUE_CLASSES.some((hue) => element.getAttribute("class")?.includes(hue));
-}
+/** B66's palette, as the amendment's table states it. */
+const PALETTE: Array<[PluginSidebarThreadIndicator, string, string]> = [
+  ["waiting-for-input", "text-indigo-600", "dark:text-indigo-300"],
+  ["unread-error", "text-red-700", "dark:text-red-300"],
+  ["runtime", "text-sky-600", "dark:text-sky-400"],
+  ["workflow", "text-sky-600", "dark:text-sky-400"],
+  ["background-agent", "text-sky-600", "dark:text-sky-400"],
+  ["background-command", "text-sky-600", "dark:text-sky-400"],
+  ["plan-mode", "text-violet-600", "dark:text-violet-400"],
+  ["goal", "text-violet-600", "dark:text-violet-400"],
+  ["draft", "text-amber-700", "dark:text-amber-300"],
+  ["working-draft", "text-amber-700", "dark:text-amber-300"],
+  ["unread-success", "text-emerald-700", "dark:text-emerald-300"],
+];
 
 describe("StatusGlyph", () => {
   it("labels the glyph with the host's own indicatorLabel (B21)", () => {
@@ -60,33 +69,57 @@ describe("StatusGlyph", () => {
     );
   });
 
-  it("colours only needs-you and error (B22)", () => {
-    render(<StatusGlyph thread={thread("waiting-for-input", "Needs you")} />);
-    expect(hasHue(screen.getByRole("img"))).toBe(true);
-    cleanup();
+  it.each(PALETTE)(
+    "colours %s with a light/dark pair (B66, B66.1)",
+    (indicator, light, dark) => {
+      render(<StatusGlyph thread={thread(indicator, "Label")} />);
+      const className = screen.getByRole("img").getAttribute("class") ?? "";
+      expect(className).toContain(light);
+      expect(className).toContain(dark);
+    },
+  );
 
-    render(<StatusGlyph thread={thread("unread-error", "Failed")} />);
-    expect(hasHue(screen.getByRole("img"))).toBe(true);
-  });
-
-  it("distinguishes working by motion and no hue (B22)", () => {
+  /**
+   * B66.4. The spinner used `animate-pulse`, so it faded instead of turning —
+   * a spinner that does not spin reads as a rendering bug. Both halves are
+   * asserted, because passing by adding a class would miss the point.
+   */
+  it("spins the runtime spinner rather than pulsing it (B66.4)", () => {
     render(<StatusGlyph thread={thread("runtime", "Working")} />);
-    const glyph = screen.getByRole("img");
-    expect(glyph.getAttribute("class")).toContain("animate-pulse");
-    expect(hasHue(glyph)).toBe(false);
+    const className = screen.getByRole("img").getAttribute("class") ?? "";
+    expect(className).toContain("animate-spin");
+    expect(className).not.toContain("animate-pulse");
   });
 
+  it.each<PluginSidebarThreadIndicator>([
+    "workflow",
+    "background-agent",
+    "background-command",
+  ])("keeps %s on a gentle pulse (B66.5)", (indicator) => {
+    render(<StatusGlyph thread={thread(indicator, "Label")} />);
+    const className = screen.getByRole("img").getAttribute("class") ?? "";
+    expect(className).toContain("animate-pulse");
+    expect(className).not.toContain("animate-spin");
+  });
+
+  /** B66.6: motion means "happening right now"; a draft is not happening. */
   it.each<PluginSidebarThreadIndicator>([
     "plan-mode",
     "goal",
     "draft",
     "working-draft",
     "unread-success",
-  ])("draws %s monochrome and still", (indicator) => {
+  ])("draws %s still (B66.6)", (indicator) => {
     render(<StatusGlyph thread={thread(indicator, "Label")} />);
-    const glyph = screen.getByRole("img");
-    expect(hasHue(glyph)).toBe(false);
-    expect(glyph.getAttribute("class")).not.toContain("animate-pulse");
+    const className = screen.getByRole("img").getAttribute("class") ?? "";
+    expect(className).not.toContain("animate-");
+  });
+
+  /** B66.3/B14: colour on the glyph only, and never a faded resting row. */
+  it.each(PALETTE)("keeps %s colour off opacity (B66.3)", (indicator) => {
+    const { container } = render(<StatusGlyph thread={thread(indicator, "Label")} />);
+    expect(container.innerHTML).not.toContain("opacity-");
+    expect(container.innerHTML).not.toContain("bg-");
   });
 
   it("draws nothing for idle", () => {

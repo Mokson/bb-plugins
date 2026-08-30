@@ -23,18 +23,12 @@ import { StatusGlyph } from "./StatusGlyph";
 const DEPTH_INDENT_PX = 12;
 
 /**
- * B54.3: the row's own left inset, matching bb's own row (`0 0 0 8px`) and the
- * host's `px-2` "New thread" chrome above the list, so the two do not step.
+ * B57.2, superseding B51.1: the chevron's box, drawn only on a parent row and
+ * placed immediately after the title rather than in a reserved gutter. Nothing
+ * is reserved on a childless row, so B57.5's alignment comes from removal.
+ * `relative` is what the hit area's `-inset-1.5` measures against.
  */
-const ROW_INSET_PX = 8;
-
-/**
- * B51.1: the chevron's gutter, reserved on every row whether or not it has
- * children, so every title at a given depth starts on one vertical line. It is
- * the same measure as the trailing glyph box, so both edges of the row are set
- * on one ruler.
- */
-const CHEVRON_GUTTER_CLASS =
+const CHEVRON_BOX_CLASS =
   "relative flex size-3.5 shrink-0 items-center justify-center";
 
 /** B51.5: a fixed slot per trailing element, so the time column aligns down the list. */
@@ -158,7 +152,10 @@ function RowBody({
             "relative w-full min-w-0 rounded-md pr-2 text-left text-[13px]",
             "hover:bg-accent/60 focus-within:ring-1 focus-within:ring-ring",
           )}
-          style={{ paddingLeft: ROW_INSET_PX + row.depth * DEPTH_INDENT_PX }}
+          // B57.3: no base left inset — the provider glyph starts at the row's
+          // left edge. The per-depth indent stays, because B9 needs a child to
+          // read as sitting under its parent.
+          style={{ paddingLeft: row.depth * DEPTH_INDENT_PX }}
         >
           <a
             href="#"
@@ -189,11 +186,44 @@ function RowBody({
               anywhere on the row reaches it. The few genuinely interactive
               children opt back in individually. */}
           <div className="pointer-events-none relative flex min-w-0 flex-col">
-            {/* B51: one row-1 layout for every row —
-                [chevron gutter] [provider] title … [child count] [status] [time]. */}
+            {/* B57: one row-1 layout for every row —
+                [provider] title [chevron, parents only] … [status] [time]. */}
             <div data-better-sidebar-row1="" className="flex h-7 min-w-0 items-center gap-2">
-              <span className={CHEVRON_GUTTER_CLASS}>
-                {row.childCount === 0 ? null : (
+              {/* B51.2: leading, on every row. Its resolution is unchanged. */}
+              <ProviderGlyph providerId={thread.providerId} />
+
+              {renameEditor.isRenaming ? (
+                <input
+                  {...renameEditor.inputProps}
+                  className="pointer-events-auto min-w-0 flex-1 rounded-sm border border-border bg-background px-1 text-xs"
+                  onClick={(event) => event.stopPropagation()}
+                  onPointerDown={(event) => event.stopPropagation()}
+                />
+              ) : (
+                // B14: unread is font weight and nothing else. No opacity, no
+                // separate dot — a faded resting row makes most of a list read
+                // as disabled. B15: no pin glyph; the PINNED section says it.
+                <span
+                  className={cn(
+                    // Revised B51.5 with B57.2: intrinsic rather than
+                    // `flex-1`, so the chevron sits against the end of the
+                    // title instead of being pushed to the row's edge. The
+                    // trailing cluster keeps the right edge with `ml-auto`,
+                    // and the title still truncates only when it runs out.
+                    "min-w-0 truncate",
+                    thread.isUnread ? "font-semibold" : "font-normal",
+                  )}
+                >
+                  {row.title}
+                </span>
+              )}
+
+              {/* B57.1/B57.2: the chevron hugs the end of the title, and it is
+                  the only signal that a thread has children — the per-row count
+                  is gone. Its x therefore varies row to row, which is correct:
+                  only a parent draws one, so there is no column to break. */}
+              {row.childCount === 0 ? null : (
+                <span className={cn(CHEVRON_BOX_CLASS, "-ml-1")}>
                   <span
                     role="button"
                     tabIndex={-1}
@@ -216,30 +246,6 @@ function RowBody({
                       aria-hidden
                     />
                   </span>
-                )}
-              </span>
-
-              {/* B51.2: leading, on every row. Its resolution is unchanged. */}
-              <ProviderGlyph providerId={thread.providerId} />
-
-              {renameEditor.isRenaming ? (
-                <input
-                  {...renameEditor.inputProps}
-                  className="pointer-events-auto min-w-0 flex-1 rounded-sm border border-border bg-background px-1 text-xs"
-                  onClick={(event) => event.stopPropagation()}
-                  onPointerDown={(event) => event.stopPropagation()}
-                />
-              ) : (
-                // B14: unread is font weight and nothing else. No opacity, no
-                // separate dot — a faded resting row makes most of a list read
-                // as disabled. B15: no pin glyph; the PINNED section says it.
-                <span
-                  className={cn(
-                    "min-w-0 flex-1 truncate",
-                    thread.isUnread ? "font-semibold" : "font-normal",
-                  )}
-                >
-                  {row.title}
                 </span>
               )}
 
@@ -255,16 +261,14 @@ function RowBody({
                   element rather than a `gap` on the cluster: a gap would still
                   be charged for `RowSignals`, which must stay mounted even when
                   it draws nothing (its observer is what discovers it has
-                  something to draw). */}
-              <div className="flex shrink-0 items-center">
+                  something to draw).
+
+                  B57.4: that one margin is `ml-1.5` on every element that
+                  draws, and on none that does not, so status-to-time measures
+                  the same on every row whatever its siblings do. B57.1: the
+                  child count is gone from here and from the row entirely. */}
+              <div className="ml-auto flex shrink-0 items-center">
                 <RowSignals threadId={thread.id} />
-                {/* B53.2: the child count belongs here, never before the title,
-                    where a number reads as part of the title. */}
-                {row.childCount === 0 ? null : (
-                  <span className={cn(TRAILING_TEXT_CLASS, "ml-1.5")}>
-                    {row.childCount}
-                  </span>
-                )}
                 <StatusGlyph thread={thread} />
                 {/* B51.4: the row's own time, on every row, at the right edge. */}
                 <span className={cn(TRAILING_TEXT_CLASS, "ml-1.5 w-7")}>
