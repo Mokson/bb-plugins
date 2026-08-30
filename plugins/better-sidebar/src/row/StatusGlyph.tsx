@@ -44,7 +44,8 @@ const TREATMENTS: Partial<
     className: "text-red-700 dark:text-red-300",
   },
   runtime: {
-    glyph: "spinner",
+    // B74.1/B74.2: artwork only. The hue and `animate-spin` are B66's.
+    glyph: "loader-circle",
     className: "text-sky-600 dark:text-sky-400 animate-spin",
   },
   workflow: {

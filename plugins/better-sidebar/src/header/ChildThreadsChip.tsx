@@ -105,7 +105,18 @@ function ChipBody({ threadId, isCompactViewport }: PluginThreadHeaderActionProps
   if (children.length === 0) return null;
 
   const needsYou = children.some((child) => child.hasPendingInteraction === true);
-  const label = needsYou ? "Needs you" : `${children.length} children`;
+  // B75.2: N counts the running children, not all of them. "2 working" on a
+  // chip of five says the thing the user opened the header to learn.
+  const runningCount = children.filter((child) =>
+    RUNNING_INDICATORS.has(child.indicator),
+  ).length;
+  // B75.4: attention outranks working. A chip with both reads "Needs you" and
+  // stays amber; the rings still draw, because they mark different children.
+  const label = needsYou
+    ? "Needs you"
+    : runningCount > 0
+      ? `${runningCount} working`
+      : `${children.length} children`;
 
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
@@ -250,17 +261,39 @@ function durationOf(thread: PluginSidebarThread, now: number): string | null {
  *
  * The marker is a count rather than a fourth glyph: a fourth mark would read as
  * a fourth specific child, and the number is the thing the user wants.
+ *
+ * B75.1 adds the running mark: a thin sky ring on the glyph of a child whose
+ * `indicator` is in `RUNNING_INDICATORS` — the same four kinds the sidebar row
+ * draws sky, read off the same field, so working means one thing in both
+ * places.
+ *
+ * B75.3 keeps it still. The sidebar row animates its working glyph because the
+ * user is looking at the row; this chip sits in the header above the thread
+ * they are reading, and motion there competes with that thread.
+ *
+ * B75.6: `ring` is a box-shadow, so it adds no layout size. The cluster's
+ * height and the chip's 28px box are the same ringed or not.
  */
 function GlyphCluster({ threads }: { threads: readonly PluginSidebarThread[] }) {
   const shown = threads.slice(0, MAX_GLYPHS);
   const overflow = threads.length - shown.length;
   return (
     <span className="flex shrink-0 items-center">
-      {shown.map((thread, index) => (
-        <span key={thread.id} className={cn(index > 0 && "-ml-1")}>
-          <ProviderGlyph providerId={thread.providerId} />
-        </span>
-      ))}
+      {shown.map((thread, index) => {
+        const isRunning = RUNNING_INDICATORS.has(thread.indicator);
+        return (
+          <span
+            key={thread.id}
+            data-better-sidebar-children={isRunning ? "running" : undefined}
+            className={cn(
+              index > 0 && "-ml-1",
+              isRunning && "rounded-full ring-1 ring-sky-500 dark:ring-sky-400",
+            )}
+          >
+            <ProviderGlyph providerId={thread.providerId} />
+          </span>
+        );
+      })}
       {overflow > 0 ? (
         <span
           data-better-sidebar-children="overflow"

@@ -59,6 +59,20 @@ describe("ProjectFilter (B64.1)", () => {
     expect(select.value).toBe("p2");
   });
 
+  /**
+   * B73.2. The filter sits inside the scroll container, which now carries the
+   * panel's single 8px column. An inset of its own would sit the filter at
+   * 16px while the rows sat at 8px.
+   */
+  it("carries no horizontal inset of its own (B73.2)", () => {
+    const { container } = render(
+      <ProjectFilter projects={PROJECTS} value={ALL_PROJECTS} onChange={() => {}} />,
+    );
+    const root = container.querySelector("[data-better-sidebar-project-filter]");
+    const classes = (root?.getAttribute("class") ?? "").split(/\s+/);
+    expect(classes.filter((token) => /^(p|px|pl|pr)-/.test(token))).toEqual([]);
+  });
+
   it("renders All projects alone when the account has no projects yet", () => {
     render(<ProjectFilter projects={[]} value={ALL_PROJECTS} onChange={() => {}} />);
     expect(

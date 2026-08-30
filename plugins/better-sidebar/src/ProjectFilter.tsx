@@ -31,8 +31,9 @@ export function ProjectFilter({
   return (
     <div
       data-better-sidebar-project-filter=""
-      // B54.3: the same 8px inset as the rows and as the host's chrome above.
-      className="relative flex items-center px-2 pb-1 pt-1"
+      // B73.2: no inset of its own. The scroll container carries the 8px
+      // column for every child; a second inset here would sit chrome at 16px.
+      className="relative flex items-center pb-1 pt-1"
     >
       <Glyph
         name="chevron-down"

@@ -161,7 +161,9 @@ function RowBody({
           // text size. Row 1 carries the height itself, so a root row with no
           // second row measures exactly one bb row.
           className={cn(
-            "relative w-full min-w-0 rounded-md pr-2 text-left text-[13px]",
+            // B73.2: `pr-2` is gone. The container's right inset now ends the
+            // row, so the trailing time and the section count share one edge.
+            "relative w-full min-w-0 rounded-md text-left text-[13px]",
             "hover:bg-accent/60 focus-within:ring-1 focus-within:ring-ring",
           )}
           // B57.3: no base left inset — the provider glyph starts at the row's

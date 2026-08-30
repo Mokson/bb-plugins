@@ -197,6 +197,112 @@ describe("collapsed chip (B58.3, B58.4)", () => {
   });
 });
 
+/**
+ * B75. Before this, the chip reacted only to attention: a child that was
+ * simply running — the common state during a fan-out — carried no mark at all.
+ */
+describe("working children (B75)", () => {
+  const ringed = () =>
+    chip().querySelectorAll("[data-better-sidebar-children='running']");
+
+  /**
+   * B75.1. The four kinds are `RUNNING_INDICATORS`, the same set the sidebar
+   * row draws sky and the same field `StatusGlyph` reads. Each is checked on
+   * its own so a set that lost a member fails here.
+   */
+  it.each<PluginSidebarThreadIndicator>([
+    "runtime",
+    "workflow",
+    "background-agent",
+    "background-command",
+  ])("rings a child whose indicator is %s (B75.1)", (indicator) => {
+    render([thread("parent"), child("c1", "parent", { indicator })]);
+    expect(ringed()).toHaveLength(1);
+    expect(ringed()[0].getAttribute("class")).toContain("ring-1");
+  });
+
+  it("leaves an idle or planning child unringed (B75.1)", () => {
+    render([
+      thread("parent"),
+      child("c1", "parent"),
+      child("c2", "parent", { indicator: "plan-mode" }),
+      child("c3", "parent", { indicator: "unread-success" }),
+    ]);
+    expect(ringed()).toHaveLength(0);
+  });
+
+  /** B75.2, both polarities: N counts the running children, not all of them. */
+  it("reads 'N children' when none is running (B75.2)", () => {
+    render([
+      thread("parent"),
+      child("c1", "parent"),
+      child("c2", "parent"),
+      child("c3", "parent"),
+    ]);
+    expect(chip().textContent).toContain("3 children");
+    expect(chip().textContent).not.toContain("working");
+  });
+
+  it("reads 'N working' counting only the running children (B75.2)", () => {
+    render([
+      thread("parent"),
+      child("c1", "parent", { indicator: "runtime" }),
+      child("c2", "parent", { indicator: "workflow" }),
+      child("c3", "parent"),
+    ]);
+    expect(chip().textContent).toContain("2 working");
+    expect(chip().textContent).not.toContain("3 children");
+  });
+
+  /**
+   * B75.4. The label and the hue are attention's, because "needs you" is the
+   * one state that costs the user something to miss. The rings still draw —
+   * they mark a different child than the pending one does.
+   */
+  it("gives the label and the amber to attention, and still rings (B75.4)", () => {
+    render([
+      thread("parent"),
+      child("c1", "parent", { hasPendingInteraction: true }),
+      child("c2", "parent", { indicator: "runtime" }),
+    ]);
+    expect(chip().textContent).toContain("Needs you");
+    expect(chip().textContent).not.toContain("working");
+    expect(chip().getAttribute("class")).toContain("text-amber-500");
+    expect(ringed()).toHaveLength(1);
+  });
+
+  /**
+   * B75.5. The rings are the only working signal the phone gets, which is the
+   * reason the signal is a mark and not just a word.
+   */
+  it("keeps the rings on a compact viewport, where the label is dropped (B75.5)", () => {
+    render(
+      [thread("parent"), child("c1", "parent", { indicator: "runtime" })],
+      { isCompactViewport: true },
+    );
+    expect(chip().textContent).not.toContain("working");
+    expect(ringed()).toHaveLength(1);
+  });
+
+  /**
+   * B75.3/B75.6. A ring is a box-shadow, so it adds no layout size and cannot
+   * grow the cluster or shift the chip's 28px box. No motion either: this sits
+   * in the header above the thread the user is reading.
+   */
+  it("adds no motion and no size to the cluster (B75.3, B75.6)", () => {
+    render([thread("parent"), child("c1", "parent", { indicator: "runtime" })]);
+    const cluster = ringed()[0].parentElement as HTMLElement;
+    const className = ringed()[0].getAttribute("class") ?? "";
+
+    expect(className).not.toContain("animate-");
+    expect(cluster.getAttribute("class") ?? "").not.toContain("animate-");
+    // No padding, margin or size utility rides along with the ring.
+    expect(className).not.toMatch(/(^|\s)(p|m|size|h|w)-/);
+    // B58.5: the chip is still the 28px control.
+    expect(chip().getAttribute("class")).toContain("h-7");
+  });
+});
+
 describe("header chrome fit (B58.5)", () => {
   it("is a 28px shrink-0 inline control", () => {
     render([thread("parent"), child("c1", "parent")]);

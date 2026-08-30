@@ -91,6 +91,48 @@ describe("StatusGlyph", () => {
     expect(className).not.toContain("animate-pulse");
   });
 
+  /**
+   * B74. The eight-spoke path repeated every 45 degrees, so `animate-spin`
+   * drew an identical frame eight times a revolution: the motion was real and
+   * invisible. The arc is asserted by its geometry and the old artwork by its
+   * absence, because swapping one for the other is the whole change — B74.2
+   * leaves the hue and the animation exactly as B66 set them.
+   */
+  it("draws the runtime glyph as an open arc, not eight spokes (B74.1, B74.2)", () => {
+    render(<StatusGlyph thread={thread("runtime", "Working")} />);
+    const glyph = screen.getByRole("img");
+    const d = glyph.querySelector("path")?.getAttribute("d") ?? "";
+
+    // An arc command is what the eight-spoke path never had: one visible start
+    // and one visible end, so a single rotation is legible at 14px.
+    expect(d).toMatch(/[Aa]/);
+    expect(d).toBe("M21 12a9 9 0 1 1-6.219-8.56");
+    expect(d).not.toContain("M12 2v4m0 12v4");
+
+    const className = glyph.getAttribute("class") ?? "";
+    expect(className).toContain("animate-spin");
+    expect(className).toContain("text-sky-600");
+    expect(className).toContain("dark:text-sky-400");
+  });
+
+  /**
+   * B74.3, holding B66.5. A background command running is not your turn
+   * running, and the distinct artwork is what says so. Glyph and animation are
+   * both pinned, so the arc cannot leak into them.
+   */
+  it.each<[PluginSidebarThreadIndicator, string]>([
+    ["workflow", "M3 3h6v6H3zM15 15h6v6h-6zM9 6h4a2 2 0 0 1 2 2v7"],
+    ["background-agent", "m4 17 6-6-6-6M12 19h8"],
+    ["background-command", "m4 17 6-6-6-6M12 19h8"],
+  ])("leaves %s's glyph and animation untouched (B74.3)", (indicator, path) => {
+    render(<StatusGlyph thread={thread(indicator, "Label")} />);
+    const glyph = screen.getByRole("img");
+    expect(glyph.querySelector("path")?.getAttribute("d")).toBe(path);
+    const className = glyph.getAttribute("class") ?? "";
+    expect(className).toContain("animate-pulse");
+    expect(className).not.toContain("animate-spin");
+  });
+
   it.each<PluginSidebarThreadIndicator>([
     "workflow",
     "background-agent",

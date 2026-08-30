@@ -8,7 +8,11 @@ const PATHS = {
   "circle-x": "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Zm-3-13 6 6m0-6-6 6",
   "circle-question":
     "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Zm-2.5-8.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.7v.3m0 3.2h.01",
-  spinner: "M12 2v4m0 12v4m10-10h-4M6 12H2m15.5-6.5-2.8 2.8M9.3 14.7l-2.8 2.8m11-.1-2.8-2.8M9.3 9.3 6.5 6.5",
+  // B74.1: an open arc, replacing the eight-spoke `spinner`. Eight spokes at
+  // 45-degree intervals repeat every 45 degrees, so `animate-spin` drew an
+  // identical frame eight times per revolution and read as a shimmer. An arc
+  // has one visible start and one visible end, so the turn is legible at 14px.
+  "loader-circle": "M21 12a9 9 0 1 1-6.219-8.56",
   dot: "M12 12m-4 0a4 4 0 1 0 8 0 4 4 0 1 0-8 0",
   "triangle-alert":
     "M12 2 1 21h22L12 2Zm0 7v5m0 3h.01",

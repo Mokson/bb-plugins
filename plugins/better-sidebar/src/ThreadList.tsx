@@ -146,7 +146,11 @@ function ThreadListBody({
   return (
     <div
       data-better-sidebar-list=""
-      className="flex h-full flex-col overflow-y-auto py-1"
+      // B73.1: the whole panel sits on one 8px column, and the scroll
+      // container is what carries it. The rows, the section headers and the
+      // project filter each carried their own inset before, which put chrome
+      // at 8px and rows at 0 (B73.2).
+      className="flex h-full flex-col overflow-y-auto px-2 py-1"
       onKeyDown={onKeyDown}
     >
       {filter}
@@ -217,8 +221,9 @@ function SectionHeader({
     </>
   );
   const className = cn(
-    // B54.3: `px-2`, the same 8px inset as the rows and as the host's chrome.
-    "flex w-full items-center gap-1.5 px-2 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide",
+    // B73.2: no inset of its own. The scroll container carries the 8px column,
+    // so the header's left edge and row 1's left edge are the same edge.
+    "flex w-full items-center gap-1.5 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide",
     "text-muted-foreground",
     dimClassFor(section),
   );

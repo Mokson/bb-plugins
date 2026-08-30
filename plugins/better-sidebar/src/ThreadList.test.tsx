@@ -490,3 +490,62 @@ describe("ThreadList — a hidden thing costs nothing (B61)", () => {
     expect(screen.getByText("Ship the sidebar")).not.toBeNull();
   });
 });
+
+/**
+ * B73. One 8px column for the whole panel, carried by the scroll container.
+ *
+ * jsdom runs no layout, so `offsetLeft` is 0 everywhere and the edges cannot be
+ * measured. The structural equivalent is asserted instead, and it is the
+ * stronger claim: the inset exists in exactly one place. If the container holds
+ * the only horizontal padding, then row 1, the section header and the filter
+ * necessarily share both edges, because there is nothing else to shift them.
+ */
+describe("ThreadList — the host's 8px column (B73)", () => {
+  /** Every horizontal-padding utility on a node: `p-`, `px-`, `pl-`, `pr-`. */
+  function hPadding(node: Element | null): string[] {
+    return (node?.getAttribute("class") ?? "")
+      .split(/\s+/)
+      .filter((token) => /^(p|px|pl|pr)-/.test(token));
+  }
+
+  const listBox = () => document.querySelector("[data-better-sidebar-list]");
+  const headerBox = () => document.querySelector("[data-sidebar-section] h2, [data-sidebar-section] button");
+  const rowBox = () =>
+    document.querySelector("[data-better-sidebar-row]")?.firstElementChild ?? null;
+
+  it("puts the inset on the scroll container and nowhere else (B73.1, B73.2, B73.4)", () => {
+    threadsState = ready([thread()]);
+    renderList();
+
+    // Asserted once, from the container: this is the panel's only inset.
+    expect(hPadding(listBox())).toEqual(["px-2"]);
+
+    // Row 1, the section header and the filter each carry none of their own,
+    // so all three inherit that single column — two insets in series would
+    // have put the chrome at 16px and left the rows at 8px.
+    expect(hPadding(rowBox())).toEqual([]);
+    expect(hPadding(headerBox())).toEqual([]);
+    expect(
+      hPadding(document.querySelector("[data-better-sidebar-project-filter]")),
+    ).toEqual([]);
+  });
+
+  /**
+   * B73.3. Moving the column right must not reintroduce the per-row gutter
+   * B57.3 removed, and must not disturb B9's per-depth indent. Depth 0 stays
+   * flush; a child still steps in by one unit.
+   */
+  it("keeps a depth-0 row flush and still indents a child (B73.3, B9)", () => {
+    threadsState = ready([
+      thread(),
+      thread({ id: "t2", parentThreadId: "t1" }),
+    ]);
+    renderList();
+
+    const boxes = Array.from(
+      document.querySelectorAll("[data-better-sidebar-row]"),
+    ).map((node) => node.firstElementChild as HTMLElement);
+    expect(boxes[0].style.paddingLeft).toBe("0px");
+    expect(boxes[1].style.paddingLeft).toBe("12px");
+  });
+});
