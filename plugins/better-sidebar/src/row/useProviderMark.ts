@@ -1,6 +1,19 @@
 import { useEffect } from "react";
-import { experimental_useProviders as useProviders } from "@get-bb/plugin-sdk/app";
+import {
+  experimental_useProviders as useProviders,
+  type PluginProvidersState,
+} from "@get-bb/plugin-sdk/app";
 import { cacheMarks, cachedMarks, type ProviderMark } from "./provider-cache";
+
+/** The four fields a mark draws, out of everything `ProviderInfo` carries. */
+function toMark(provider: PluginProvidersState["providers"][number]): ProviderMark {
+  return {
+    id: provider.id,
+    displayName: provider.displayName,
+    logoUrl: provider.logoUrl,
+    iconTint: provider.strings?.iconTint,
+  };
+}
 
 export interface ProviderMarkState {
   /** The mark to draw, or null when no answer — live or cached — names this provider. */
@@ -29,30 +42,12 @@ export function useProviderMark(providerId: string): ProviderMarkState {
 
   useEffect(() => {
     if (status !== "ready") return;
-    cacheMarks(
-      providers.map((provider) => ({
-        id: provider.id,
-        displayName: provider.displayName,
-        logoUrl: provider.logoUrl,
-        iconTint: provider.strings?.iconTint,
-      })),
-    );
+    cacheMarks(providers.map(toMark));
   }, [providers, status]);
 
   if (status === "ready") {
     const live = providers.find((provider) => provider.id === providerId);
-    return {
-      mark:
-        live === undefined
-          ? null
-          : {
-              id: live.id,
-              displayName: live.displayName,
-              logoUrl: live.logoUrl,
-              iconTint: live.strings?.iconTint,
-            },
-      status: "ready",
-    };
+    return { mark: live === undefined ? null : toMark(live), status: "ready" };
   }
 
   // `error` falls through here too: a directory that will never answer still

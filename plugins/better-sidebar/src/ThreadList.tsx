@@ -6,7 +6,7 @@ import {
   type PluginThreadListProps,
 } from "@get-bb/plugin-sdk/app";
 import { cn } from "./lib/utils";
-import { parseSettings } from "./settings";
+import { useResolvedSettings } from "./useResolvedSettings";
 import { buildListModel, sectionKeyOf } from "./model/list-model";
 import { dimLevelFor } from "./model/buckets";
 import type { Density, GroupBy, RenderSection } from "./model/types";
@@ -47,7 +47,9 @@ function ThreadListBody({
   onRetry,
 }: PluginThreadListProps & { onRetry: () => void }) {
   const { status, threads, projects } = useSidebarThreads();
-  const stored = parseSettings(useSettings().values);
+  // B83: the last known settings until the host's answer lands, so the list
+  // does not paint with defaults and re-lay-out seconds later.
+  const stored = useResolvedSettings(useSettings().values);
   // B77.3: the menu's stored choice wins, and the setting is the default this
   // device uses until its user picks one. Everything downstream reads the
   // resolved value, so no call site has to know which of the two it came from.
