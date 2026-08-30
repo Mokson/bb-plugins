@@ -48,6 +48,8 @@ done-when:
 - d11 | root marketplace.json hand-maintained as one file with a plugins array | the bb-community entries/ split exists to avoid multi-contributor PR conflicts, which a single-author repo does not have; user choice
 - d12 | restructure to plugins/better-sidebar plus root marketplace.json done inline by the orchestrator | ~10 file moves and 2 small files; a packet would have cost more than the work, and it blocked every downstream packet's paths
 - d13 | model and reasoning effort ARE retrievable, correcting the scaffold seat's Q3 answer | bb.sdk.threads.defaultExecutionOptions returns model and reasoningLevel; the seat checked only threads.get - bb-plugin-sdk.d.ts:3098-3126, :15436
+- d19 | user feedback arrives in rapid rounds against the running build; each round is specced as an amendment invariant before any code moves | keeps the fix waves batched and keeps every change traceable to a stated requirement rather than a chat line
+- d20 | B56, B57 and B58 are held behind the QA seat rather than dispatched on arrival | QA is measuring the running build; a rebuild mid-QA invalidates its evidence, and craft-review wants one consolidated wave over fix-as-found
 - d15 | scope delta: user reviewed the plugin running on his phone and raised 4 layout items | amendment B51-B55, dispatched as a design wave after the review fix waves land, never concurrently with them
 - d16 | provider glyph moves from trailing-on-row-2 to leading-before-title | reverses the round-3 Q6 answer; its premise (pinning row 2's right edge) died when B52 removed row 2 from child rows - user's call, premise changed
 - d17 | B44 was never satisfied: bb's host collector accepts only HTMLAnchorElement | orchestrator verified in the compiled host bundle; 210 tests passed because they assert attributes, not element type
@@ -64,7 +66,8 @@ done-when:
 
 ## specs
 - docs/specs/001_better-sidebar/PRODUCT.md
-- docs/specs/001_better-sidebar/PRODUCT-AMENDMENT-1.md
+- docs/specs/001_better-sidebar/PRODUCT-AMENDMENT-1.md (B51-B57)
+- docs/specs/001_better-sidebar/PRODUCT-AMENDMENT-2.md (B58, thread-header chip)
 - docs/specs/001_better-sidebar/TECH.md
 - docs/specs/001_better-sidebar/CONTEXT-DIGEST.md
 - docs/specs/001_better-sidebar/REVIEW-SPECS.md + REVIEW-SPECS-ARBITRATION.md
