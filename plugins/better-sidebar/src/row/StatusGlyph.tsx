@@ -54,15 +54,19 @@ const TREATMENTS: Partial<
 };
 
 /**
- * B20-B22. The five-state glyph in the row's fixed trailing slot.
+ * B20-B22. The five-state glyph in the row's trailing cluster.
  *
  * A lookup rather than a `switch`, because B20 is the point: bb adds indicator
  * kinds over time and a value outside the union must draw nothing and throw
  * nothing rather than blanking the sidebar. An unknown key simply misses.
+ *
+ * Revised B51.5: a miss draws NOTHING — not an empty box. An idle row is the
+ * common row, and reserving a glyph's width on it truncated titles for a
+ * column that was empty almost everywhere. Only the time slot is fixed now.
  */
 export function StatusGlyph({ thread }: { thread: PluginSidebarThread }) {
   const treatment = TREATMENTS[thread.indicator];
-  if (treatment === undefined) return <span className={TRAILING_GLYPH_BOX_CLASS} />;
+  if (treatment === undefined) return null;
 
   return (
     <span className={TRAILING_GLYPH_BOX_CLASS}>

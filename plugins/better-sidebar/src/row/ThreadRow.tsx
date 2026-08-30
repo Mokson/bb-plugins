@@ -243,19 +243,31 @@ function RowBody({
                 </span>
               )}
 
-              {/* B51.3: the trailing cluster, in order, each element in a slot
-                  of its own width. B55.2: it never wraps — the title truncates
-                  into it instead. */}
-              <div className="flex shrink-0 items-center gap-1.5">
+              {/* B51.3: the trailing cluster, in order. B55.2: it never wraps —
+                  the title truncates into it instead.
+
+                  Revised B51.5: only TIME is a fixed slot, because time is the
+                  only element present on every row and therefore the only one
+                  that can define a stable column. Everything before it is
+                  intrinsic and absent when it has nothing to say, so an idle
+                  childless row — the common row — gives all of that width back
+                  to its title. That is also why the spacing is a margin on each
+                  element rather than a `gap` on the cluster: a gap would still
+                  be charged for `RowSignals`, which must stay mounted even when
+                  it draws nothing (its observer is what discovers it has
+                  something to draw). */}
+              <div className="flex shrink-0 items-center">
                 <RowSignals threadId={thread.id} />
                 {/* B53.2: the child count belongs here, never before the title,
                     where a number reads as part of the title. */}
-                <span className={cn(TRAILING_TEXT_CLASS, "w-4")}>
-                  {row.childCount === 0 ? null : row.childCount}
-                </span>
+                {row.childCount === 0 ? null : (
+                  <span className={cn(TRAILING_TEXT_CLASS, "ml-1.5")}>
+                    {row.childCount}
+                  </span>
+                )}
                 <StatusGlyph thread={thread} />
                 {/* B51.4: the row's own time, on every row, at the right edge. */}
-                <span className={cn(TRAILING_TEXT_CLASS, "w-7")}>
+                <span className={cn(TRAILING_TEXT_CLASS, "ml-1.5 w-7")}>
                   {relativeTimeLabel(thread.updatedAt, now)}
                 </span>
               </div>

@@ -374,6 +374,33 @@ describe("ThreadRow row 1 layout (B51-B53)", () => {
     expect(rowOne(container).textContent).toBe("Ship the sidebar35m");
   });
 
+  /**
+   * Revised B51.5, raised by the user against the running build: "the title is
+   * truncated too soon reserving the space to icons which are displayed only on
+   * hover". An idle childless row is the common row, and it reserved ~48px for
+   * a count and a status glyph that were both absent.
+   */
+  it("reserves nothing for an absent count or status glyph (B51.5)", () => {
+    const { container } = renderRow(row({ childCount: 0 }));
+    const one = rowOne(container);
+    const cluster = one.lastElementChild!;
+
+    // Time only: the signals span (which must stay mounted for its observer)
+    // and nothing else. An empty placeholder box would show up here.
+    expect(cluster.children).toHaveLength(2);
+    expect(cluster.firstElementChild!.getAttribute("data-better-sidebar-signals")).toBe(
+      "t1",
+    );
+    expect(cluster.lastElementChild!.textContent).toBe("1d");
+  });
+
+  it("still draws the status glyph when the indicator says something (B20)", () => {
+    const { container } = renderRow(
+      row({ thread: thread({ indicator: "waiting-for-input" }) }),
+    );
+    expect(rowOne(container).lastElementChild!.children).toHaveLength(3);
+  });
+
   it("draws the provider glyph immediately left of the title (B51.2)", () => {
     const { container } = renderRow(row());
     const one = rowOne(container);
