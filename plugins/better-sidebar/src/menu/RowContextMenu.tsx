@@ -55,6 +55,13 @@ export function RowContextMenu({
       <ContextMenu.Portal>
         <ContextMenu.Content
           {...portalScope}
+          // Radix restores focus to the trigger when the menu closes. For
+          // Rename that lands one tick after the editor's input mounts, so the
+          // restore blurs it, the blur commits an unchanged title, and the
+          // editor's own no-op guard closes it again — Rename appeared to do
+          // nothing at all. The menu has no reason to reclaim focus: the item
+          // it just ran decides where focus belongs.
+          onCloseAutoFocus={(event) => event.preventDefault()}
           aria-label="Thread actions"
           className="z-50 min-w-48 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md"
         >

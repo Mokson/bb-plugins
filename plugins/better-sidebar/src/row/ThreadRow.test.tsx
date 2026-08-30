@@ -19,6 +19,11 @@ import type { RenderRow } from "../model/types";
  * one hook makes "the row spreads splitProps onto its interactive element"
  * a fact a test can see: the marker handler fires only if the row spread it.
  */
+/** B36's refusal path surfaces through `sonner`, the same toast bb's own
+ *  sidebar uses. Mocked so the assertion is a call, not a rendered node. */
+const toastError = vi.fn();
+vi.mock("sonner", () => ({ toast: { error: toastError } }));
+
 const splitPointerDown = vi.fn();
 vi.mock("@get-bb/plugin-sdk/app", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
@@ -153,6 +158,7 @@ function rowElement(container: HTMLElement): HTMLElement {
 beforeEach(() => {
   onNavigate.mockClear();
   splitPointerDown.mockClear();
+  toastError.mockClear();
 });
 
 afterEach(() => {
@@ -307,14 +313,15 @@ describe("ThreadRow chrome", () => {
  */
 describe("ThreadRow rename", () => {
   /**
-   * SKIPPED, and the skip is the finding. The editor opens and closes again
-   * inside one tick: Radix restores focus when the context menu closes, that
-   * blurs the freshly mounted `autoFocus` input, and `useRenameEditor`'s blur
-   * commits an unchanged title — which its own guard correctly treats as a
-   * cancel. The fix is one prop on slice 6's `ContextMenu.Content`
-   * (`onCloseAutoFocus={(event) => event.preventDefault()}`,
-   * `menu/RowContextMenu.tsx:57`), which is outside slice 3's boundary.
-   * Un-skip once that lands; nothing in this file needs to change.
+   * This test was born skipped, and the skip was the finding: the editor opened
+   * and closed inside one tick, because Radix restored focus to the trigger on
+   * menu close, that blurred the freshly mounted `autoFocus` input, and the
+   * blur committed an unchanged title — which the editor's own guard correctly
+   * treats as a cancel. Rename therefore did nothing at all. Fixed by
+   * `onCloseAutoFocus={(event) => event.preventDefault()}` on
+   * `menu/RowContextMenu.tsx` — but that prop alone is NOT sufficient: with it
+   * applied the input still never mounts, so `isRenaming` is not becoming true
+   * on the menu's `onSelect` path at all. Still skipped, still the finding.
    */
   it.skip("renders the rename input in place of the title (B46)", async () => {
     const { container } = renderRow(row());
@@ -386,8 +393,22 @@ describe("ThreadRow pull request", () => {
     });
 
     fireEvent.click(screen.getByRole("link"));
-    expect(screen.getByRole("status").textContent).toContain(
-      "Could not open the pull request",
-    );
+    // A toast rather than an inline row element: an error line drawn inside the
+    // row would shift every row below it, which is exactly what B6's freeze
+    // exists to prevent. `sonner` is the surface bb's own sidebar uses.
+    expect(toastError).toHaveBeenCalledWith("Could not open the pull request");
+  });
+
+  it("stays quiet when openUrl succeeds (B36)", () => {
+    // The harness leaves `openUrl` falsy unless told otherwise, so a real host
+    // reporting success has to be stated explicitly — without this the refusal
+    // toast would fire on every successful open and no test would notice.
+    renderRow(withEnvironment(), {
+      sidebarPullRequests: { t1: pr() },
+      openUrl: () => true,
+    });
+
+    fireEvent.click(screen.getByRole("link"));
+    expect(toastError).not.toHaveBeenCalled();
   });
 });

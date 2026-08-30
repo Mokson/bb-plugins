@@ -1,4 +1,5 @@
-import { memo, useState, type MouseEvent } from "react";
+import { memo, type MouseEvent } from "react";
+import { toast } from "sonner";
 import {
   experimental_useSidebarThreadActions as useSidebarThreadActions,
   experimental_useSidebarThreadPullRequest as useSidebarThreadPullRequest,
@@ -81,10 +82,6 @@ function RowBody({
   const navigate = useBbNavigate();
   const { splitProps } = useSidebarThreadSplit(thread.id);
   const renameEditor = useRenameEditor(thread.id);
-  // §7's B36 ruling: `openUrl` returns a boolean the caller must honour. The
-  // SDK's app surface ships no toast, so the row announces the refusal in a
-  // live region instead of dropping the click on the floor.
-  const [openUrlFailed, setOpenUrlFailed] = useState(false);
 
   const openThread = () => {
     actions.open(thread.id);
@@ -93,7 +90,13 @@ function RowBody({
 
   const openPullRequest = () => {
     if (pullRequest === null) return;
-    setOpenUrlFailed(!navigate.openUrl(pullRequest.url));
+    // B36 (§7): openUrl honours the client's own browser preference rather
+    // than guaranteeing a new tab, and it can decline outright. A row is the
+    // wrong place to grow an error line — it would shift every row below it —
+    // so a refusal surfaces as a toast, the way bb's own sidebar reports one.
+    if (!navigate.openUrl(pullRequest.url)) {
+      toast.error("Could not open the pull request");
+    }
   };
 
   const toggleSubtree = (event: MouseEvent<HTMLElement>) => {
@@ -196,11 +199,6 @@ function RowBody({
               />
             ) : null}
 
-            {openUrlFailed ? (
-              <span role="status" className="text-2xs text-destructive">
-                Could not open the pull request
-              </span>
-            ) : null}
           </div>
         </RowHover>
       </div>
