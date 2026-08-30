@@ -1,4 +1,10 @@
-import "@testing-library/react";
+/**
+ * Global setup: `vitest.config.ts` runs this for EVERY test file, including the
+ * pure-model ones that deliberately run with no DOM. Nothing here may touch
+ * `document` at import time — this file used to `import "@testing-library/react"`,
+ * which is exactly what made it unsafe to wire globally. Files needing RTL
+ * import it themselves.
+ */
 
 /**
  * jsdom ships no `IntersectionObserver`, and `useRowSignals` (slice 4) fails
