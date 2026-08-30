@@ -84,6 +84,32 @@ drift.
   any subtree inside the section. Assert exactly that: expand a parent, the section
   count does not change.
 
+## B56 — Row 2 protects the project name from a long branch
+
+Reported by the user against the running build, with a screenshot: a row showing
+project `bb-plugins` and branch `bb/create-customizable-plugin-version-…` rendered the
+project as `bb-pl…` while the branch kept roughly four times the width.
+
+**The cause is that both labels shrink proportionally**, which sounds fair and is not.
+As plain flex children they shrink in proportion to their natural width, so with the
+project at ~60px, the branch at ~250px, and ~180px available, the project still gives
+up ~25px — enough to destroy a ten-character name — while the branch, which had width
+to spare, keeps 145px it does not need. Proportional shrinking is the defect.
+
+- **B56.1** (auto) The **branch/workspace label truncates first and absorbs all of the
+  deficit.** It is the longest, the most repetitive across rows, and the least
+  identifying: its tail is usually a ticket slug the user can infer.
+- **B56.2** (auto) The **project name renders in full** whenever it fits within a cap
+  of roughly 45% of row 2's width. It truncates only when it alone exceeds that cap,
+  never merely because the branch beside it is long.
+- **B56.3** (auto) A row with a short project and a short branch still renders both in
+  full with the line ending where its content ends — B56 changes only what happens
+  under pressure.
+- **B56.4** (auto) The PR chip never shrinks. It is a fixed, meaningful token
+  (`#1234`) and a truncated PR number is worse than useless.
+- **B56.5** (manual) Verified at 390px with a real long branch, which is where the
+  user found it — a desktop-only check would not have caught this.
+
 ## B54 — Density matches bb's own sidebar
 
 Measured from the running host at `http://127.0.0.1:38886`, via computed style on
