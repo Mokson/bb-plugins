@@ -55,6 +55,15 @@ drift.
   title.
 - **B53.3** (auto) The chevron remains the collapse affordance and stays in the gutter;
   only the number moves.
+- **B53.4** (auto) **A section header counts its ROOT rows only — never nested child
+  threads**, whether or not those children are currently expanded. Counting every row
+  makes the number jump constantly: subagents spawn and finish continuously, so the
+  count churns while nothing the user cares about has changed. A section's count answers
+  "how many threads are in here", and a subagent is not a thread the user started.
+  The parent's own child count (B53.2) is where subagent volume is reported.
+- **B53.5** (auto) B53.4's count is therefore invariant under expanding or collapsing
+  any subtree inside the section. Assert exactly that: expand a parent, the section
+  count does not change.
 
 ## B54 — Density matches bb's own sidebar
 
