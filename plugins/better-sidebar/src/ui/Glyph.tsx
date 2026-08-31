@@ -62,9 +62,11 @@ const PATHS = {
   // B76.1: the display-options trigger. Three tracks with a handle each, so
   // the button reads as "options for this view" rather than as a filter.
   sliders: "M4 6h9m4 0h3M4 12h3m4 0h10M4 18h9m4 0h3M13 4v4M7 10v4M13 16v4",
-  // lucide `CirclePlus`, the mark bb's own sidebar header uses for a new
-  // thread. Its nav item above the list draws the same circled plus.
-  "circle-plus": "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM8 12h8M12 8v8",
+  // bb's own "New thread" mark, read path-for-path off the rendered nav item
+  // above this list: a rounded speech bubble with a tail, plus a `+`. It is
+  // not a lucide icon, so it cannot be named from that set.
+  "new-thread":
+    "M21.5 12C21.5 17.2467 17.2467 21.5 12 21.5C10.3719 21.5 8.8394 21.0904 7.5 20.3687C5.63177 19.362 4.37462 20.2979 3.26592 20.4658C3.09774 20.4913 2.93024 20.4302 2.80997 20.31C2.62741 20.1274 2.59266 19.8451 2.6935 19.6074C3.12865 18.5818 3.5282 16.6382 2.98341 15C2.6698 14.057 2.5 13.0483 2.5 12C2.5 6.75329 6.75329 2.5 12 2.5C17.2467 2.5 21.5 6.75329 21.5 12ZM15.5 12H8.5M12 8.5V15.5",
   // The hover cluster's overflow trigger (three dots, drawn as three dashes so
   // the stroke-only primitive can render them at 14px).
   "more-horizontal": "M5 12h.01M12 12h.01M19 12h.01",

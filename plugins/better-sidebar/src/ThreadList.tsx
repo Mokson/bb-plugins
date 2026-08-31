@@ -191,7 +191,14 @@ function ThreadListBody({
         "focus:outline-none focus:ring-1 focus:ring-ring",
       )}
     >
-      <Glyph name="circle-plus" aria-hidden="true" className="size-3.5" />
+      <Glyph
+        name="new-thread"
+        aria-hidden="true"
+        // bb draws this one at stroke-width 1.5; the bubble plus a `+` is
+        // dense enough that the plugin's own 2 reads as a blob at 14px.
+        strokeWidth={1.5}
+        className="size-4"
+      />
     </button>
   );
 
