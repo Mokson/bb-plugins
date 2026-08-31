@@ -1045,16 +1045,14 @@ describe("ThreadList — a child row's second line", () => {
 describe("ThreadList — one leading column", () => {
   /**
    * The chevron moved to the trailing edge, where each row's time sits, and
-   * is revealed on hover like the row's own actions. The leading column stays
-   * behind it, empty: it is what holds the label on the titles' x.
+   * is revealed on hover like the row's own actions.
    */
-  it("puts the chevron last and the empty column first", () => {
+  it("puts the label first and the chevron last", () => {
     threadsState = ready([thread({ id: "solo" })]);
     renderList();
     const header = screen.getByRole("button", { name: /today/i });
 
-    expect(header.firstElementChild!.className).toContain("w-[22px]");
-    expect(header.firstElementChild!.children).toHaveLength(0);
+    expect(header.firstElementChild!.textContent).toBe("TODAY");
     expect(header.lastElementChild!.tagName.toLowerCase()).toBe("svg");
     expect(header.lastElementChild!.getAttribute("class")).toContain(
       "group-hover/section:opacity-100",
@@ -1077,28 +1075,35 @@ describe("ThreadList — one leading column", () => {
     expect(chevron.getAttribute("class")).not.toContain("opacity-0");
   });
 
-  it("gives a collapsible header the same leading column as a row", () => {
+  /**
+   * With the chevron on the trailing edge, the header's label leads the line
+   * on the row's own inset — the same x as each row's leading MARK, which is
+   * where bb's own sidebar puts it. It reserved a 22px column while the
+   * chevron lived there.
+   */
+  it("starts the label on the row's inset, reserving no column", () => {
     threadsState = ready([thread({ id: "solo" })]);
     renderList();
 
     const header = screen.getByRole("button", { name: /today/i });
-    const rowOne = document.querySelector("[data-better-sidebar-row1]")!;
+    expect(header.className).toContain("px-2");
+    // No reserved column: the label is the first thing on the line.
+    expect(header.firstElementChild!.className).not.toContain("w-[22px]");
+    expect(header.firstElementChild!.textContent).toBe("TODAY");
 
-    expect(header.firstElementChild!.className).toBe(
-      rowOne.firstElementChild!.className,
-    );
-    // Same gap after the column, or the two labels still diverge.
-    expect(header.className).toContain("gap-2");
-    expect(rowOne.className).toContain("gap-2");
+    // The row's own leading mark starts on that same inset, so the two share
+    // an x. Measured in the running app at 16px for both.
+    const leading = document.querySelector("[data-better-sidebar-row1]")!
+      .firstElementChild!;
+    expect(leading.className).toContain("w-[22px]");
   });
 
-  it("reserves the column on a header that draws no chevron (B7)", () => {
+  it("draws a non-collapsible header with no chevron at all (B7)", () => {
     threadsState = ready([thread({ id: "solo", hasPendingInteraction: true })]);
     renderList();
 
     const header = screen.getByRole("heading", { name: /needs you/i });
-    const column = header.firstElementChild!;
-    expect(column.className).toContain("w-[22px]");
-    expect(column.children).toHaveLength(0);
+    expect(header.querySelector("svg")).toBeNull();
+    expect(header.textContent).toBe("NEEDS YOU");
   });
 });

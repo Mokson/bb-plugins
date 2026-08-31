@@ -8,7 +8,7 @@ import {
 import { cn } from "./lib/utils";
 import { useResolvedSettings } from "./useResolvedSettings";
 import { buildListModel, sectionKeyOf, usesHostLabel } from "./model/list-model";
-import { LEADING_COLUMN_CLASS, ROW1_ICON } from "./row/row-metrics";
+import { ROW1_ICON } from "./row/row-metrics";
 import { useLocalHostId } from "./row/useLocalHostId";
 import { useThreadExecutions } from "./header/useThreadExecutions";
 import { dimLevelFor } from "./model/buckets";
@@ -284,8 +284,11 @@ function SectionHeader({
   // (B53.4) is tested there — it is simply not drawn.
   const label = <span className="min-w-0 flex-1 truncate text-left">{section.label}</span>;
   const className = cn(
-    // `px-2` is the row's own inset and `gap-2` its row-1 gap, so the header
-    // and every row beneath it measure from the same two edges.
+    // `px-2` is the row's own inset, so a header's label starts on the same x
+    // as the leading MARK of every row beneath it — which is where bb's own
+    // sidebar puts it. The label held a 22px column while the chevron lived
+    // in it; with the chevron on the trailing edge the column was reserving
+    // space for nothing.
     "flex w-full items-center gap-2 px-2 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide",
     "text-muted-foreground",
     dimClassFor(section),
@@ -296,10 +299,6 @@ function SectionHeader({
   if (!section.isCollapsible) {
     return (
       <h2 ref={ref} tabIndex={-1} className={className}>
-        {/* Reserved though it draws nothing: B7's sections have no chevron,
-            and without the column their labels would sit 22px left of every
-            other header's. */}
-        <span aria-hidden className={LEADING_COLUMN_CLASS} />
         {label}
       </h2>
     );
@@ -314,10 +313,6 @@ function SectionHeader({
         aria-expanded={!section.isCollapsed}
         className={cn(className, "group/section hover:text-foreground")}
       >
-        {/* The leading column stays, empty. It is what keeps the label on the
-            same x as the titles beneath it; the chevron moved out of it, not
-            the alignment it provides. */}
-        <span aria-hidden className={LEADING_COLUMN_CLASS} />
         {label}
         {/* Trailing, so it lands on the same edge as each row's time rather
             than in the column the rows use for status.
