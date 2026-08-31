@@ -12,13 +12,13 @@ branch, model and state read without opening it.
 
 - **Grouped sections** — threads group by date, project, host, status, or not at
   all. Each header collapses on click and draws its label alone.
-- **A second metadata row** — the provider mark, the project name, the git
-  branch, and the model and effort the thread runs on, under the title. The
-  machine is named only when the thread runs somewhere other than this one:
-  on your own machine it is the same word on every row.
+- **A second metadata row** — the project, the git branch, and the model and
+  effort the thread runs on, under the title. Each label carries its own mark:
+  a folder, a branch glyph, and the provider's logo drawn monochrome beside the
+  model it names. The machine is named only when the thread runs somewhere
+  other than this one: on your own machine it is the same word on every row.
 - **Status leads the row** — the state glyph sits in the row's leading column,
-  where the eye lands, and the provider mark sits on the metadata line below
-  it. Each line's marks are sized against that line's text.
+  where the eye lands. Each line's marks are sized against that line's text.
 - **Hover actions** — mark read or unread, archive, and an overflow menu
   appear where the time sits, taking its place rather than covering the title.
 - **A relative time per row** — when the thread last did anything, read from
@@ -66,14 +66,13 @@ Open **Settings → Extensions → Plugins → Better Sidebar**.
 | `groupBy` | `date` | Default section grouping: `date`, `project`, `host`, `status`, `none`. A device that picked a grouping in the display menu ignores this. |
 | `density` | `default` | Row height: `compact`, `default`, `detailed`. |
 | `showPrChip` | on | Draws the pull request chip on rows whose branch has a PR. |
-| `showProviderGlyph` | on | Draws the provider mark. |
 | `showRelativeTime` | on | Shows `2h` instead of an absolute timestamp. |
 | `showArchivedChildren` | on | Keeps archived child threads under their parent. |
 | `showHeaderChip` | on | Shows the child thread count chip on a parent row. |
 | `showSecondRow` | on | Hard off-switch for the metadata row. With it on, `density` and the grouping mode still decide. |
 | `showProjectName` | on | Draws the project name on the metadata row. |
 | `showBranch` | on | Draws the git branch on the metadata row. |
-| `showModel` | on | Draws the model and effort. The only field on the row that costs a backend lookup: off, the list requests no execution options at all. |
+| `showModel` | on | Draws the model, its effort, and the provider mark beside them. The only field on the row that costs a backend lookup: off, the list requests no execution options at all. |
 
 An unset setting, a value of the wrong type, or an unrecognised enum member
 falls back to the default, so a settings key this version does not read cannot
