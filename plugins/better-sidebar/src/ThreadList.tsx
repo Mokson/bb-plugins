@@ -58,7 +58,24 @@ function ThreadListBody({
   searchQuery,
   onRetry,
 }: PluginThreadListProps & { onRetry: () => void }) {
-  const { status, threads, projects } = useSidebarThreads();
+  const live = useSidebarThreads();
+  const { status } = live;
+  // The last answer the host actually gave. A subscription that re-enters
+  // `loading` while it refreshes reports no threads meanwhile, and painting
+  // that emptiness — as a skeleton, or as "No threads yet" — is the list
+  // flickering between updates. Held here so the previous answer stays on
+  // screen until the next one replaces it.
+  const hasLoadedRef = useRef(false);
+  const lastReadyRef = useRef<{ threads: typeof live.threads; projects: typeof live.projects }>({
+    threads: [],
+    projects: [],
+  });
+  if (status === "ready") {
+    hasLoadedRef.current = true;
+    lastReadyRef.current = { threads: live.threads, projects: live.projects };
+  }
+  const { threads, projects } =
+    status === "ready" ? live : lastReadyRef.current;
   // B83: the last known settings until the host's answer lands, so the list
   // does not paint with defaults and re-lay-out seconds later.
   const stored = useResolvedSettings(useSettings().values);
@@ -168,7 +185,11 @@ function ThreadListBody({
     executionIds.length > 0,
   );
 
-  if (status === "loading") return <ListLoading />;
+  // The skeleton is for a list that has never had content. Once the host has
+  // answered once, a later `loading` is a refresh of a list already on screen,
+  // and replacing it with six grey bars for the length of that refresh is the
+  // whole sidebar flickering.
+  if (status === "loading" && !hasLoadedRef.current) return <ListLoading />;
   if (status === "error") return <ListError onRetry={onRetry} />;
 
   const scopedProject =
