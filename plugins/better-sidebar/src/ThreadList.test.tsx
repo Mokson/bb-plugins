@@ -1143,6 +1143,24 @@ describe("ThreadList — the panel controls", () => {
     }
   });
 
+  /**
+   * The header's controls had no background on hover, only a text-colour
+   * shift, so they read as inert beside the row buttons directly beneath
+   * them. All three draw one surface now.
+   */
+  it("gives the header controls the row buttons' hover surface", () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    renderList();
+
+    const rowButton = document
+      .querySelector("[data-better-sidebar-row-actions]")!
+      .querySelector("button")!;
+    for (const label of ["New thread", "Display options"]) {
+      expect(screen.getByLabelText(label).className).toBe(rowButton.className);
+    }
+    expect(rowButton.className).toContain("hover:bg-accent");
+  });
+
   it("puts new thread to the LEFT of the display menu", () => {
     threadsState = ready([thread({ id: "solo" })]);
     renderList();

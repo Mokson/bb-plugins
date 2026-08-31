@@ -3,6 +3,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import type { PluginSidebarProject } from "@get-bb/plugin-sdk/app";
 import { cn } from "./lib/utils";
 import { usePortalScopeProps } from "./lib/portal-scope";
+import { CONTROL_BUTTON_CLASS } from "./ui/control-button";
 import { Glyph } from "./ui/Glyph";
 import type { GroupBy } from "./model/types";
 
@@ -134,11 +135,7 @@ export function DisplayMenu({
       <DropdownMenu.Root>
         <DropdownMenu.Trigger
           aria-label="Display options"
-          className={cn(
-            "ml-auto flex size-5 shrink-0 items-center justify-center rounded",
-            "text-muted-foreground hover:text-foreground",
-            "focus:outline-none focus:ring-1 focus:ring-ring",
-          )}
+          className={CONTROL_BUTTON_CLASS}
         >
           <Glyph name="sliders" aria-hidden="true" className="size-3.5" />
         </DropdownMenu.Trigger>

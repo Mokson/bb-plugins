@@ -7,6 +7,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { cn } from "../lib/utils";
 import { usePortalScopeProps } from "../lib/portal-scope";
+import { CONTROL_BUTTON_CLASS } from "../ui/control-button";
 import { Glyph, type GlyphName } from "../ui/Glyph";
 import { buildRowMenuItems } from "../menu/row-menu-items";
 import { ROW1_ICON } from "./row-metrics";
@@ -108,7 +109,7 @@ export function RowActions({
           <button
             type="button"
             aria-label="Thread actions"
-            className={ACTION_BUTTON_CLASS}
+            className={CONTROL_BUTTON_CLASS}
             onClick={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
           >
@@ -155,12 +156,6 @@ export function RowActions({
   );
 }
 
-const ACTION_BUTTON_CLASS = cn(
-  "flex size-5 shrink-0 cursor-pointer items-center justify-center rounded",
-  "text-muted-foreground outline-none",
-  "hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring",
-);
-
 function ActionButton({
   label,
   glyph,
@@ -175,7 +170,7 @@ function ActionButton({
       type="button"
       aria-label={label}
       title={label}
-      className={ACTION_BUTTON_CLASS}
+      className={CONTROL_BUTTON_CLASS}
       // Both, and on every button: the anchor beneath reacts to the click and
       // the list's drag gesture reacts to the pointer-down.
       onPointerDown={(event) => event.stopPropagation()}

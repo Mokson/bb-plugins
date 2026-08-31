@@ -24,6 +24,7 @@ import type { Density, GroupBy, RenderSection } from "./model/types";
 import { ALL_PROJECTS, DisplayMenu } from "./DisplayMenu";
 import { ThreadRow } from "./row/ThreadRow";
 import { useLastActivity } from "./row/useLastActivity";
+import { CONTROL_BUTTON_CLASS } from "./ui/control-button";
 import { Glyph } from "./ui/Glyph";
 import { ListEmpty, ListError, ListLoading, ListNoMatches } from "./ui/ListStates";
 import { useCollapse } from "./useCollapse";
@@ -185,11 +186,7 @@ function ThreadListBody({
       aria-label="New thread"
       title="New thread"
       onClick={() => navigate.toCompose({ focusPrompt: true })}
-      className={cn(
-        "flex size-5 shrink-0 items-center justify-center rounded",
-        "text-muted-foreground hover:text-foreground",
-        "focus:outline-none focus:ring-1 focus:ring-ring",
-      )}
+      className={CONTROL_BUTTON_CLASS}
     >
       <Glyph
         name="new-thread"
@@ -339,7 +336,7 @@ function SectionHeader({
     // `px-2` is the row's own inset, so a header's label starts on the same x
     // as the leading MARK of every row beneath it — which is where bb's own
     // sidebar puts it.
-    "flex w-full items-center gap-1.5 px-2 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide",
+    "group/section flex w-full items-center gap-1.5 px-2 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide",
     "text-muted-foreground",
     dimClassFor(section),
   );
@@ -363,13 +360,15 @@ function SectionHeader({
         tabIndex={-1}
         onClick={onToggle}
         aria-expanded={!section.isCollapsed}
-        className="group/section flex min-w-0 items-center gap-1.5 hover:text-foreground"
+        className="flex min-w-0 items-center gap-1.5 hover:text-foreground"
       >
         {label}
         {/* Beside the label it controls, not out at the trailing edge: the
             control and the thing it collapses read as one target.
 
-            Revealed on hover, like the row's own actions — EXCEPT while the
+            Revealed when the pointer is anywhere on the HEADER, not only on
+            the toggle: the group sits on the row, so reaching for the control
+            does not require having already found it — EXCEPT while the
             section is collapsed. A collapsed section persists across reloads,
             so a returning user would meet a header with no rows under it and
             no visible control to open it. The one state that needs saying
