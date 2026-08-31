@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 import { cn } from "../lib/utils";
 import { TRAILING_GLYPH_BOX_CLASS } from "./StatusGlyph";
-import { ROW1_ICON, ROW2_ICON } from "./icon-sizes";
+import { ROW1_ICON, ROW2_ICON } from "./row-metrics";
 import { useProviderMark } from "./useProviderMark";
 
 function providerMaskStyle(logoUrl: string): CSSProperties {

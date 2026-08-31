@@ -15,7 +15,7 @@ import { RowContextMenu } from "../menu/RowContextMenu";
 import { useRenameEditor } from "../menu/useRenameEditor";
 import type { RenderRow } from "../model/types";
 import { RowActions } from "./RowActions";
-import { ROW1_ICON } from "./icon-sizes";
+import { LEADING_COLUMN_CLASS, ROW1_ICON } from "./row-metrics";
 import { ProviderGlyph } from "./ProviderGlyph";
 import { relativeTimeLabel } from "./relative-time";
 import { ChildSecondRow, SecondRow } from "./SecondRow";
@@ -23,6 +23,23 @@ import { StatusGlyph } from "./StatusGlyph";
 
 /** B9: one indent step per parent hop, in px so the truncation stays honest. */
 const DEPTH_INDENT_PX = 12;
+
+/**
+ * The row's own horizontal inset, applied INSIDE its rounded background and
+ * equal on both sides.
+ *
+ * Superseding B57.3 and B73.2, which between them left the leading mark flush
+ * against the background's left edge and the time flush against its right:
+ * the highlight then read as a bar the content was sitting on rather than a
+ * surface holding it. The scroll container's own 8px column (B73.1) still
+ * separates that background from the panel edge, so the row nests one inset
+ * inside another, as bb's own list does.
+ *
+ * One constant drives both sides, because the whole point is that they match:
+ * `paddingLeft` also carries the depth indent, so writing the right side as a
+ * class would put the two halves of one decision in two places.
+ */
+const ROW_INSET_PX = 8;
 
 /**
  * B57.2, superseding B51.1: the chevron's box, drawn only on a parent row and
@@ -33,18 +50,7 @@ const DEPTH_INDENT_PX = 12;
 const CHEVRON_BOX_CLASS =
   cn("relative flex shrink-0 items-center justify-center", ROW1_ICON);
 
-/**
- * Row 1's 22px leading gutter, carrying the status mark centred in it rather
- * than flush against the row's left border.
- *
- * It owns the gap instead of sitting beside it (`-mr-2` cancels row 1's
- * `gap-2`), so the title starts at exactly 22px — the same 22px row 2 is
- * indented by, which is what puts the whole of row 2 under the title. The
- * column is reserved even when it draws nothing (an idle row has no status
- * mark), so every title holds its x whatever the row's state.
- */
-const LEADING_BOX_CLASS =
-  "-mr-2 flex w-[22px] shrink-0 items-center justify-center";
+
 
 /** B51.5: a fixed slot per trailing element, so the time column aligns down the list. */
 const TRAILING_TEXT_CLASS =
@@ -204,10 +210,13 @@ function RowBody({
             "group/row relative w-full min-w-0 rounded-md text-left text-[13px]",
             "hover:bg-accent/60 focus-within:ring-1 focus-within:ring-ring",
           )}
-          // B57.3: no base left inset — the provider glyph starts at the row's
-          // left edge. The per-depth indent stays, because B9 needs a child to
-          // read as sitting under its parent.
-          style={{ paddingLeft: row.depth * DEPTH_INDENT_PX }}
+          // The base inset is symmetric (`ROW_INSET_PX`); the per-depth indent
+          // adds to the left only, because B9 needs a child to read as sitting
+          // under its parent.
+          style={{
+            paddingLeft: ROW_INSET_PX + row.depth * DEPTH_INDENT_PX,
+            paddingRight: ROW_INSET_PX,
+          }}
         >
           <a
             href="#"
@@ -249,7 +258,7 @@ function RowBody({
               {/* The column is reserved whether or not it draws — idle is the
                   common row and status draws nothing for it — so every title
                   keeps its x whatever the row's state. */}
-              <span className={LEADING_BOX_CLASS}>
+              <span className={LEADING_COLUMN_CLASS}>
                 <StatusGlyph thread={thread} />
               </span>
 

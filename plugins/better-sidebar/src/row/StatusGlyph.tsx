@@ -4,7 +4,7 @@ import type {
 } from "@get-bb/plugin-sdk/app";
 import { cn } from "../lib/utils";
 import { Glyph, type GlyphName } from "../ui/Glyph";
-import { ROW1_ICON } from "./icon-sizes";
+import { ROW1_ICON } from "./row-metrics";
 
 /**
  * The box every trailing glyph sits in, whatever its artwork measures.

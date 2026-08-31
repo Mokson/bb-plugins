@@ -4,7 +4,7 @@ import { Glyph } from "../ui/Glyph";
 import type { RenderRow } from "../model/types";
 import { PrChip } from "./PrChip";
 import { ProviderGlyph } from "./ProviderGlyph";
-import { ROW2_ICON } from "./icon-sizes";
+import { ROW2_ICON } from "./row-metrics";
 
 /**
  * B41, resolved against B14 by §7: the stale gradient lives on row 2 and the

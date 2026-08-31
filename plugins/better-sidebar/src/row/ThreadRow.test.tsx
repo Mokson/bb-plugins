@@ -12,7 +12,7 @@ import type {
   PluginSidebarThreadIndicator,
 } from "@get-bb/plugin-sdk/app";
 import type { RenderRow } from "../model/types";
-import { ROW1_ICON, ROW2_ICON } from "./icon-sizes";
+import { ROW1_ICON, ROW2_ICON } from "./row-metrics";
 
 /**
  * The split gesture is entirely host-owned, so the harness reports empty
@@ -746,16 +746,24 @@ describe("ThreadRow row 1 layout (B57)", () => {
     expect(parentIndex).toBe(1);
   });
 
-  /** B57.3: no base left inset; only B9's per-depth nesting indent survives. */
-  it("starts the provider glyph at the row's left edge (B57.3)", () => {
+  /**
+   * Superseding B57.3. The row's base inset is symmetric — content sits
+   * inside its rounded background rather than flush against both edges — and
+   * B9's per-depth indent adds to the left of it.
+   */
+  it("insets the row equally on both sides, then indents by depth", () => {
     const { container: root } = renderRow(row({ depth: 0 }));
     const rootBox = rowElement(root).firstElementChild as HTMLElement;
-    expect(rootBox.style.paddingLeft).toBe("0px");
+    expect(rootBox.style.paddingLeft).toBe("8px");
+    expect(rootBox.style.paddingRight).toBe("8px");
     cleanup();
 
+    // 8px base + 2 x 12px nesting. The RIGHT side never moves: only the left
+    // carries the indent, or a deep child's time would drift inward.
     const { container: child } = renderRow(row({ depth: 2 }));
     const childBox = rowElement(child).firstElementChild as HTMLElement;
-    expect(childBox.style.paddingLeft).toBe("24px");
+    expect(childBox.style.paddingLeft).toBe("32px");
+    expect(childBox.style.paddingRight).toBe("8px");
   });
 
   /**

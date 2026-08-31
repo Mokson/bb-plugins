@@ -6,7 +6,7 @@ import {
   renderSlot,
 } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginProvidersState } from "@get-bb/plugin-sdk/app";
-import { ROW1_ICON, ROW2_ICON } from "./icon-sizes";
+import { ROW1_ICON, ROW2_ICON } from "./row-metrics";
 
 installTestPluginRuntime();
 

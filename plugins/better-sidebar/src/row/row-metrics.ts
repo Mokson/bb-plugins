@@ -1,5 +1,5 @@
 /**
- * The two icon sizes a row draws, one per line.
+ * The sizes and columns a row draws, and the header above it must match.
  *
  * Every mark on a line is the same size as every other mark on it, and each
  * size is set against that line's TEXT rather than against the other line:
@@ -17,3 +17,16 @@ export const ROW1_ICON = "size-3";
 
 /** Row 2: labels are `text-2xs` (10px). Provider mark, branch, PR chip. */
 export const ROW2_ICON = "size-2.5";
+
+/**
+ * The 22px leading gutter, drawn by row 1 (carrying status) and by a section
+ * header (carrying its collapse chevron).
+ *
+ * `-mr-2` cancels the line's `gap-2`, so the column owns the gap rather than
+ * sitting beside it and text starts at exactly 22px on either. That is what
+ * puts a header's label on the same x as every title beneath it: the header's
+ * own chevron box was 18px, so its label hung 4px left of the column it
+ * labels. Reserved even when it draws nothing, so nothing shifts.
+ */
+export const LEADING_COLUMN_CLASS =
+  "-mr-2 flex w-[22px] shrink-0 items-center justify-center";

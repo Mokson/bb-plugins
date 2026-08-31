@@ -3,7 +3,7 @@ import type { PluginSidebarPullRequest } from "@get-bb/plugin-sdk/app";
 import { cn } from "../lib/utils";
 import { Glyph } from "../ui/Glyph";
 import { HoverPopover } from "../ui/HoverPopover";
-import { ROW2_ICON } from "./icon-sizes";
+import { ROW2_ICON } from "./row-metrics";
 
 /**
  * B63, superseding B34. The chip is tinted by `state` — what this PR is —

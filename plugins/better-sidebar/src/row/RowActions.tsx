@@ -9,7 +9,7 @@ import { cn } from "../lib/utils";
 import { usePortalScopeProps } from "../lib/portal-scope";
 import { Glyph, type GlyphName } from "../ui/Glyph";
 import { buildRowMenuItems } from "../menu/row-menu-items";
-import { ROW1_ICON } from "./icon-sizes";
+import { ROW1_ICON } from "./row-metrics";
 import { useRowHoverSuppression } from "../dossier/RowHover";
 import type { RenameEditor } from "../menu/useRenameEditor";
 

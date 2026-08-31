@@ -810,7 +810,7 @@ describe("ThreadList — the host's 8px column (B73)", () => {
    * B57.3 removed, and must not disturb B9's per-depth indent. Depth 0 stays
    * flush; a child still steps in by one unit.
    */
-  it("keeps a depth-0 row flush and still indents a child (B73.3, B9)", () => {
+  it("insets every row equally and adds the nesting indent (B9)", () => {
     threadsState = ready([
       thread(),
       thread({ id: "t2", parentThreadId: "t1" }),
@@ -822,8 +822,12 @@ describe("ThreadList — the host's 8px column (B73)", () => {
     const boxes = Array.from(
       document.querySelectorAll("[data-better-sidebar-row]"),
     ).map((node) => node.firstElementChild as HTMLElement);
-    expect(boxes[0].style.paddingLeft).toBe("0px");
-    expect(boxes[1].style.paddingLeft).toBe("12px");
+    // 8px base inset, then one 12px nesting step for the child.
+    expect(boxes[0].style.paddingLeft).toBe("8px");
+    expect(boxes[1].style.paddingLeft).toBe("20px");
+    // Both keep the same right inset, so their trailing edges line up.
+    expect(boxes[0].style.paddingRight).toBe("8px");
+    expect(boxes[1].style.paddingRight).toBe("8px");
   });
 });
 
@@ -1029,5 +1033,38 @@ describe("ThreadList — a child row's second line", () => {
     expect(
       slot.inspection.rpcCalls.filter((c) => c.method === "threadExecutions"),
     ).toHaveLength(1);
+  });
+});
+
+/**
+ * Every leading mark in the panel sits in one 22px column, so header labels
+ * and row titles share an x. Measured in the running app at 38px for the
+ * header label, the row title and the metadata line alike; asserted here as
+ * the shared class, because jsdom lays nothing out.
+ */
+describe("ThreadList — one leading column", () => {
+  it("gives a collapsible header the same leading column as a row", () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    renderList();
+
+    const header = screen.getByRole("button", { name: /today/i });
+    const rowOne = document.querySelector("[data-better-sidebar-row1]")!;
+
+    expect(header.firstElementChild!.className).toBe(
+      rowOne.firstElementChild!.className,
+    );
+    // Same gap after the column, or the two labels still diverge.
+    expect(header.className).toContain("gap-2");
+    expect(rowOne.className).toContain("gap-2");
+  });
+
+  it("reserves the column on a header that draws no chevron (B7)", () => {
+    threadsState = ready([thread({ id: "solo", hasPendingInteraction: true })]);
+    renderList();
+
+    const header = screen.getByRole("heading", { name: /needs you/i });
+    const column = header.firstElementChild!;
+    expect(column.className).toContain("w-[22px]");
+    expect(column.children).toHaveLength(0);
   });
 });

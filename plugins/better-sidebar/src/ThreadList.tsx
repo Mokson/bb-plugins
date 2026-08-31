@@ -8,6 +8,7 @@ import {
 import { cn } from "./lib/utils";
 import { useResolvedSettings } from "./useResolvedSettings";
 import { buildListModel, sectionKeyOf, usesHostLabel } from "./model/list-model";
+import { LEADING_COLUMN_CLASS, ROW1_ICON } from "./row/row-metrics";
 import { useLocalHostId } from "./row/useLocalHostId";
 import { useThreadExecutions } from "./header/useThreadExecutions";
 import { dimLevelFor } from "./model/buckets";
@@ -281,11 +282,11 @@ function SectionHeader({
   // second number in a column the row's own time already owns.
   // `RenderSection.count` is still computed — the model's own root-only rule
   // (B53.4) is tested there — it is simply not drawn.
-  const label = <span className="flex-1 truncate text-left">{section.label}</span>;
+  const label = <span className="min-w-0 flex-1 truncate text-left">{section.label}</span>;
   const className = cn(
-    // B73.2: no inset of its own. The scroll container carries the 8px column,
-    // so the header's left edge and row 1's left edge are the same edge.
-    "flex w-full items-center gap-1.5 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide",
+    // `px-2` is the row's own inset and `gap-2` its row-1 gap, so the header
+    // and every row beneath it measure from the same two edges.
+    "flex w-full items-center gap-2 px-2 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide",
     "text-muted-foreground",
     dimClassFor(section),
   );
@@ -295,6 +296,10 @@ function SectionHeader({
   if (!section.isCollapsible) {
     return (
       <h2 ref={ref} tabIndex={-1} className={className}>
+        {/* Reserved though it draws nothing: B7's sections have no chevron,
+            and without the column their labels would sit 22px left of every
+            other header's. */}
+        <span aria-hidden className={LEADING_COLUMN_CLASS} />
         {label}
       </h2>
     );
@@ -309,10 +314,12 @@ function SectionHeader({
         aria-expanded={!section.isCollapsed}
         className={cn(className, "hover:text-foreground")}
       >
-        <Glyph
-          name={section.isCollapsed ? "chevron-right" : "chevron-down"}
-          className="size-3 shrink-0"
-        />
+        <span className={LEADING_COLUMN_CLASS}>
+          <Glyph
+            name={section.isCollapsed ? "chevron-right" : "chevron-down"}
+            className={ROW1_ICON}
+          />
+        </span>
         {label}
       </button>
     </h2>
