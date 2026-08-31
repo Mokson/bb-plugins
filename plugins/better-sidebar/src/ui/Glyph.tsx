@@ -52,13 +52,18 @@ const PATHS = {
   // B76.1: the display-options trigger. Three tracks with a handle each, so
   // the button reads as "options for this view" rather than as a filter.
   sliders: "M4 6h9m4 0h3M4 12h3m4 0h10M4 18h9m4 0h3M13 4v4M7 10v4M13 16v4",
+  // The hover cluster's overflow trigger (three dots, drawn as three dashes so
+  // the stroke-only primitive can render them at 14px).
+  "more-horizontal": "M5 12h.01M12 12h.01M19 12h.01",
 } as const;
 
 export type GlyphName = keyof typeof PATHS;
 
 /**
  * Shared inline-SVG glyph primitive. No icon library is installed, so every
- * glyph in this plugin is drawn from an inline path at a fixed `size-3.5` box
+ * glyph in this plugin is drawn from an inline path. `size-3.5` is only the
+ * default, for menus and other prose-sized surfaces; the row passes its
+ * line's own size (`icon-sizes.ts`)
  * — an unrecognized `name` is impossible at the type level, so there is no
  * runtime fallback branch to test.
  */

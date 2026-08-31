@@ -4,6 +4,7 @@ import type {
 } from "@get-bb/plugin-sdk/app";
 import { cn } from "../lib/utils";
 import { Glyph, type GlyphName } from "../ui/Glyph";
+import { ROW1_ICON } from "./icon-sizes";
 
 /**
  * The box every trailing glyph sits in, whatever its artwork measures.
@@ -15,7 +16,7 @@ import { Glyph, type GlyphName } from "../ui/Glyph";
  * keeps its right edge even on a thread with no branch and no PR.
  */
 export const TRAILING_GLYPH_BOX_CLASS =
-  "flex size-3.5 shrink-0 items-center justify-center";
+  "flex shrink-0 items-center justify-center";
 
 /**
  * B66, superseding B22: every state carries a hue, taken from bb's own status
@@ -94,15 +95,15 @@ export function StatusGlyph({ thread }: { thread: PluginSidebarThread }) {
   if (treatment === undefined) return null;
 
   return (
-    // B57.4: the cluster's one gap size, carried by the element that draws it.
-    // A gap on the cluster would also be charged for `RowSignals`, which stays
-    // mounted at zero width, so status-to-time would depend on its siblings.
-    <span className={cn(TRAILING_GLYPH_BOX_CLASS, "ml-1.5")}>
+    // No margin of its own: the glyph now sits centred in the row's leading
+    // column, where an `ml-1.5` would push it off centre. The trailing
+    // cluster's B57.4 spacing rule is carried by the elements still in it.
+    <span className={cn(TRAILING_GLYPH_BOX_CLASS, ROW1_ICON)}>
       <Glyph
         name={treatment.glyph}
         role="img"
         aria-label={thread.indicatorLabel ?? thread.indicator}
-        className={cn("size-3.5", treatment.className)}
+        className={cn(ROW1_ICON, treatment.className)}
       />
     </span>
   );

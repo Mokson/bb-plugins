@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import { cn } from "../lib/utils";
 import { TRAILING_GLYPH_BOX_CLASS } from "./StatusGlyph";
+import { ROW1_ICON, ROW2_ICON } from "./icon-sizes";
 import { useProviderMark } from "./useProviderMark";
 
 function providerMaskStyle(logoUrl: string): CSSProperties {
@@ -39,16 +40,33 @@ function providerMaskStyle(logoUrl: string): CSSProperties {
  * `useProviderMark` puts a localStorage cache in front of that read, so a
  * reload draws last run's logos instead of waiting on the directory.
  */
+/**
+ * The two sizes the row draws. `small` is row 2's inline mark, which sits in a
+ * `text-2xs` line beside the project name and would shout at the row-1 size.
+ * Every layer scales together — box, logo mask and unknown-provider dot — so
+ * the mark stays centred and the fallback stays proportionate.
+ */
+const MARK_SIZES = {
+  default: { box: ROW1_ICON, mask: ROW1_ICON, dot: "size-2" },
+  // The logo fills its box, so the mark measures the same as every other
+  // icon on its line. Only the unknown-provider DOT stays smaller: it is a
+  // dot, and one grown to a logo's width reads as a bullet.
+  small: { box: ROW2_ICON, mask: ROW2_ICON, dot: "size-1.5" },
+} as const;
+
 export function ProviderGlyph({
   providerId,
+  size = "default",
   className,
 }: {
   providerId: string;
+  size?: keyof typeof MARK_SIZES;
   className?: string;
 }) {
   const { mark, status } = useProviderMark(providerId);
 
-  const box = cn(TRAILING_GLYPH_BOX_CLASS, className);
+  const scale = MARK_SIZES[size];
+  const box = cn(TRAILING_GLYPH_BOX_CLASS, scale.box, className);
   const label = mark?.displayName ?? providerId;
   const logoUrl = mark?.logoUrl ?? null;
   const tint = mark?.iconTint;
@@ -76,7 +94,7 @@ export function ProviderGlyph({
         <span
           aria-hidden
           data-better-sidebar-provider="dot"
-          className="size-2 rounded-full bg-muted-foreground/50"
+          className={cn(scale.dot, "rounded-full bg-muted-foreground/50")}
         />
       </span>
     );
@@ -89,7 +107,7 @@ export function ProviderGlyph({
         <span
           aria-hidden
           data-better-sidebar-provider="mask"
-          className="size-3 bg-muted-foreground/70"
+          className={cn(scale.mask, "bg-muted-foreground/70")}
           style={maskStyle}
         />
       ) : (
@@ -97,13 +115,13 @@ export function ProviderGlyph({
           <span
             aria-hidden
             data-better-sidebar-provider="mask-light"
-            className="size-3 dark:hidden"
+            className={cn(scale.mask, "dark:hidden")}
             style={{ ...maskStyle, backgroundColor: tint.light }}
           />
           <span
             aria-hidden
             data-better-sidebar-provider="mask-dark"
-            className="hidden size-3 dark:block"
+            className={cn("hidden dark:block", scale.mask)}
             style={{ ...maskStyle, backgroundColor: tint.dark }}
           />
         </>

@@ -521,7 +521,7 @@ describe("handler failure (ruling 10)", () => {
 });
 
 describe("registration", () => {
-  it("registers all three contract methods and the seven settings descriptors (B59)", async () => {
+  it("registers all five contract methods and the eleven settings descriptors (B59)", async () => {
     const host = hostWith({});
     await plugin(host.bb);
 
@@ -530,6 +530,7 @@ describe("registration", () => {
       "rowSignals",
       "threadExecutions",
       "lastActivity",
+      "localHost",
     ]);
 
     const descriptors = host.harness.inspection.registrations.settingsDescriptors;
@@ -541,6 +542,10 @@ describe("registration", () => {
       "showRelativeTime",
       "showArchivedChildren",
       "showHeaderChip",
+      "showSecondRow",
+      "showProjectName",
+      "showBranch",
+      "showModel",
     ]);
     expect(descriptors.groupBy?.default).toBe("date");
     expect(descriptors.density?.default).toBe("default");
@@ -550,6 +555,10 @@ describe("registration", () => {
       "showRelativeTime",
       "showArchivedChildren",
       "showHeaderChip",
+      "showSecondRow",
+      "showProjectName",
+      "showBranch",
+      "showModel",
     ] as const) {
       expect(descriptors[key]?.type).toBe("boolean");
       expect(descriptors[key]?.default).toBe(true);

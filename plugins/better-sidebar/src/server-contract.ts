@@ -110,6 +110,19 @@ export const betterSidebarRpcContract = defineRpcContract({
     input: z.object({ threadIds: z.array(threadIdSchema).max(60) }),
     output: z.object({ activity: z.array(threadLastActivitySchema) }),
   },
+  /**
+   * The machine bb itself runs on, so a row can drop a host name that says
+   * nothing. The app SDK exposes each thread's host but no identity for the
+   * current one, so the answer has to come from the backend's
+   * `system.config().primaryHostId`.
+   *
+   * Null when bb reports no primary host, which is also the safe answer: a
+   * null matches no thread's host id, so every row keeps its label.
+   */
+  localHost: {
+    input: z.object({}),
+    output: z.object({ hostId: z.string().nullable() }),
+  },
 });
 
 export const DOSSIER_CHANNEL = "thread-dossier";

@@ -50,7 +50,7 @@ function full(): DossierPayload {
   };
 }
 
-function thread(): PluginSidebarThread {
+function thread(overrides: Partial<PluginSidebarThread> = {}): PluginSidebarThread {
   return {
     id: THREAD_ID,
     projectId: "proj_1",
@@ -80,6 +80,7 @@ function thread(): PluginSidebarThread {
     updatedAt: Date.UTC(2026, 0, 1, 10, 15, 0),
     lastReadAt: null,
     latestAttentionAt: 0,
+    ...overrides,
   };
 }
 
@@ -98,18 +99,47 @@ function row(overrides: Partial<RenderRow> = {}): RenderRow {
   };
 }
 
-function Harness({ variant }: { variant?: "rich" | "minimal" }) {
+function Harness({
+  variant,
+  threadOverrides,
+  rowOverrides,
+}: {
+  variant?: "rich" | "minimal";
+  threadOverrides?: Partial<PluginSidebarThread>;
+  rowOverrides?: Partial<RenderRow>;
+}) {
   const state = useDossier(THREAD_ID, variant !== "minimal");
-  return <Dossier row={row()} state={state} variant={variant} />;
+  return (
+    <Dossier
+      row={row({ thread: thread(threadOverrides), ...rowOverrides })}
+      state={state}
+      variant={variant}
+    />
+  );
 }
 
-function render(rpc: Partial<PluginRpcTestHandlers<Contract>> = {}) {
-  return renderSlot<{ variant?: "rich" | "minimal" }, Contract>({ component: Harness }, {}, {
+function render(
+  rpc: Partial<PluginRpcTestHandlers<Contract>> = {},
+  props: {
+    variant?: "rich" | "minimal";
+    threadOverrides?: Partial<PluginSidebarThread>;
+    rowOverrides?: Partial<RenderRow>;
+  } = {},
+) {
+  return renderSlot<
+    {
+      variant?: "rich" | "minimal";
+      threadOverrides?: Partial<PluginSidebarThread>;
+      rowOverrides?: Partial<RenderRow>;
+    },
+    Contract
+  >({ component: Harness }, props, {
     rpc: {
       threadDossier: () => full(),
       rowSignals: () => ({ signals: [] }),
       threadExecutions: () => ({ executions: [] }),
       lastActivity: () => ({ activity: [] }),
+      localHost: () => ({ hostId: null }),
       ...rpc,
     },
     sidebarThreads: {
@@ -142,6 +172,7 @@ function renderWithSignals(rpc: Partial<PluginRpcTestHandlers<Contract>> = {}) {
         rowSignals: () => ({ signals: [] }),
       threadExecutions: () => ({ executions: [] }),
       lastActivity: () => ({ activity: [] }),
+      localHost: () => ({ hostId: null }),
         ...rpc,
       },
       sidebarThreads: {
@@ -209,8 +240,10 @@ describe("Dossier contents (B29)", () => {
     ).toBeNull();
 
     expect(screen.getByText("claude-opus-5 · high")).not.toBeNull();
-    expect(screen.getByText("2026-01-01 09:30:00 UTC")).not.toBeNull();
-    expect(screen.getByText("2026-01-01 10:15:00 UTC")).not.toBeNull();
+    // Local short form, TZ pinned to UTC by the vitest config. No seconds,
+    // no zone suffix, and no year while the timestamp is from this one.
+    expect(screen.getByText("Jan 1, 09:30")).not.toBeNull();
+    expect(screen.getByText("Jan 1, 10:15")).not.toBeNull();
     expect(screen.getByRole("meter").getAttribute("aria-valuenow")).toBe("25");
     expect(screen.getByText("1,234")).not.toBeNull();
     expect(screen.getByText("900")).not.toBeNull();
@@ -225,6 +258,30 @@ describe("Dossier contents (B29)", () => {
     // The rest of the dossier still renders.
     expect(screen.getByText("Rework the sidebar")).not.toBeNull();
     expect(screen.getByText("1,234")).not.toBeNull();
+  });
+});
+
+describe("Dossier identity line", () => {
+  /**
+   * `indicatorLabel` is null exactly when the indicator is "none", and the
+   * fallback printed the raw key — so every idle thread carried the word
+   * "none" under its title.
+   */
+  it("draws nothing for an idle thread instead of the word none", async () => {
+    render({}, { threadOverrides: { indicator: "none", indicatorLabel: null } });
+    await settle();
+
+    expect(screen.queryByText("none")).toBeNull();
+    expect(document.querySelector("[data-dossier-indicator]")).toBeNull();
+    // The rest of the identity block still renders.
+    expect(screen.getByText("Rework the sidebar")).not.toBeNull();
+  });
+
+  it("still names a non-idle indicator", async () => {
+    render();
+    await settle();
+
+    expect(screen.getByText("Thread is working")).not.toBeNull();
   });
 });
 
@@ -261,6 +318,216 @@ describe("Dossier economics (B30, B31)", () => {
     });
     await settle();
     expect(nulled.container.textContent ?? "").not.toMatch(CURRENCY);
+  });
+});
+
+describe("Dossier layout and labels", () => {
+  it("puts branch and model under a heading, like every other field", async () => {
+    render();
+    await settle();
+
+    // One field style: no row sits loose above the first section.
+    expect(screen.getByText("Thread")).not.toBeNull();
+    expect(screen.getByText("Branch")).not.toBeNull();
+    expect(screen.getByText("Model")).not.toBeNull();
+  });
+
+  it("omits the thread section when it has neither branch nor model", async () => {
+    render(
+      { threadDossier: () => ({ ...full(), execution: null }) },
+      { rowOverrides: { workspaceLabel: null } },
+    );
+    await settle();
+
+    expect(screen.queryByText("Thread")).toBeNull();
+  });
+
+  /** Seconds and a UTC suffix were noise; the reader's own zone is not. */
+  it("drops seconds and the zone suffix from timestamps", async () => {
+    render();
+    await settle();
+
+    expect(screen.queryByText(/UTC/)).toBeNull();
+    expect(screen.queryByText(/09:30:00/)).toBeNull();
+  });
+
+  /**
+   * A branch is the one field that must be shown in full, so it wraps rather
+   * than truncates. Left-aligned, its second line started at a different x
+   * from its first and broke the right edge every other row shares.
+   */
+  it("keeps a wrapped value on the right edge the other rows share", async () => {
+    render({}, {
+      rowOverrides: {
+        workspaceLabel: "bb/remove-docs-and-create-pr-thr_avve33g26y",
+      },
+    });
+    await settle();
+
+    const value = screen.getByText(
+      "bb/remove-docs-and-create-pr-thr_avve33g26y",
+    );
+    expect(value.className).toContain("text-right");
+    // An unbroken token wraps instead of overflowing the card.
+    expect(value.className).toContain("break-words");
+    expect(value.className).toContain("min-w-0");
+
+    // The label never compresses, so the two columns stay put.
+    const label = value.previousElementSibling!;
+    expect(label.textContent).toBe("Branch");
+    expect(label.className).toContain("shrink-0");
+  });
+
+  it("leads the context meter with the percentage it means", async () => {
+    render();
+    await settle();
+
+    expect(screen.getByText("25.0%")).not.toBeNull();
+    expect(screen.getByText(/50\.0K \/ 200\.0K/)).not.toBeNull();
+  });
+
+  /** "(ESTIMATED)" in the heading made the qualifier the loudest thing here. */
+  it("keeps 'estimated' out of the section heading", async () => {
+    render({
+      threadDossier: () => ({
+        ...full(),
+        contextWindow: { usedTokens: 50_000, modelContextWindow: 200_000, estimated: true },
+      }),
+    });
+    await settle();
+
+    expect(screen.getByText("Context window")).not.toBeNull();
+    // It rides on the label of the row it qualifies, not the section heading.
+    expect(screen.getByText("Used (est.)")).not.toBeNull();
+  });
+
+  it("abbreviates large counts and keeps small ones exact", async () => {
+    render({
+      threadDossier: () => ({
+        ...full(),
+        economics: {
+          total: {
+            totalTokens: 30_695_321,
+            inputTokens: 404,
+            cachedInputTokens: 30_598_171,
+            outputTokens: 96_746,
+            reasoningOutputTokens: 0,
+          },
+          modelContextWindow: 200_000,
+        },
+      }),
+    });
+    await settle();
+
+    expect(screen.getByText("30.7M")).not.toBeNull();
+    expect(screen.getByText("30.6M")).not.toBeNull();
+    expect(screen.getByText("96.7K")).not.toBeNull();
+    // Under 10,000 the exact figure is short enough to keep, and rounding it
+    // would lose real precision.
+    expect(screen.getByText("404")).not.toBeNull();
+  });
+
+  it("omits a zero reasoning row and keeps a non-zero one", async () => {
+    render({
+      threadDossier: () => ({
+        ...full(),
+        economics: {
+          total: {
+            totalTokens: 1_234,
+            inputTokens: 1_000,
+            cachedInputTokens: 900,
+            outputTokens: 200,
+            reasoningOutputTokens: 0,
+          },
+          modelContextWindow: 200_000,
+        },
+      }),
+    });
+    await settle();
+    expect(screen.queryByText("Reasoning")).toBeNull();
+
+    cleanup();
+    // The payload cache is module state with a 10s TTL, so a second render
+    // would otherwise replay the first one's zero.
+    resetDossierCache();
+
+    render();
+    await settle();
+    expect(screen.getByText("Reasoning")).not.toBeNull();
+  });
+});
+
+describe("Dossier cache hit", () => {
+  const tokens = (
+    inputTokens: number,
+    cachedInputTokens: number,
+  ): DossierPayload => ({
+    ...full(),
+    economics: {
+      total: {
+        totalTokens: inputTokens + cachedInputTokens,
+        inputTokens,
+        cachedInputTokens,
+        outputTokens: 0,
+        reasoningOutputTokens: 0,
+      },
+      modelContextWindow: 200_000,
+    },
+  });
+
+  /**
+   * The ratio is over the input side only. `inputTokens` excludes cache reads,
+   * so `input + cachedInput` is the whole input — dividing by `totalTokens`
+   * would let output dilute a figure that has nothing to do with it.
+   */
+  it("reports the share of input served from cache", async () => {
+    render({ threadDossier: () => tokens(1_000, 9_000) });
+    await settle();
+
+    expect(screen.getByText("90.0%")).not.toBeNull();
+  });
+
+  /**
+   * 170,088,977 cached against 888 uncached is 99.99948%, which ROUNDS to a
+   * flat 100% — a figure that claims every token came from cache. The share
+   * is floored, so only the case that earns 100% reads it.
+   */
+  it("floors, so an almost-fully-cached thread never reads 100%", async () => {
+    render({ threadDossier: () => tokens(888, 170_088_977) });
+    await settle();
+
+    expect(screen.getByText("99.9%")).not.toBeNull();
+  });
+
+  it("reads 100.0% only when no input was uncached", async () => {
+    render({ threadDossier: () => tokens(0, 10_000) });
+    await settle();
+
+    expect(screen.getByText("100.0%")).not.toBeNull();
+  });
+
+  it("reads 0.0% when nothing was cached, which is a real measurement", async () => {
+    render({ threadDossier: () => tokens(1_000, 0) });
+    await settle();
+
+    expect(screen.getByText("0.0%")).not.toBeNull();
+  });
+
+  /** B31: no input read at all is no data, so the row is omitted entirely. */
+  it("omits the row when the thread has read no input", async () => {
+    render({ threadDossier: () => tokens(0, 0) });
+    await settle();
+
+    expect(screen.queryByText("Cache hit")).toBeNull();
+    // The rest of the section still renders.
+    expect(screen.getByText("Total")).not.toBeNull();
+  });
+
+  it("omits it with the whole section on a null economics payload", async () => {
+    render({ threadDossier: () => ({ ...full(), economics: null }) });
+    await settle();
+
+    expect(screen.queryByText("Cache hit")).toBeNull();
   });
 });
 

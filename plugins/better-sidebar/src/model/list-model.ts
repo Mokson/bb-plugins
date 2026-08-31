@@ -39,7 +39,30 @@ const WORKTREE_KINDS = new Set(["managed-worktree", "unmanaged-worktree"]);
  * workspace is a worktree → `host.name` → null, and the whole chain is skipped
  * when `environment` is null.
  */
-export function resolveWorkspaceLabel(thread: PluginSidebarThread): string | null {
+/**
+ * True when this thread's label chain would fall through to its machine name.
+ *
+ * B61: the current machine's id costs one request, so it is fetched only when
+ * some thread could actually spend it. A list where every thread has a branch
+ * — or one drawing no second row at all — asks the backend nothing.
+ */
+export function usesHostLabel(thread: PluginSidebarThread): boolean {
+  const environment = thread.environment;
+  if (!environment || thread.host === null) return false;
+  if (environment.branchName?.trim()) return false;
+  if (
+    WORKTREE_KINDS.has(environment.workspaceDisplayKind) &&
+    environment.name?.trim()
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function resolveWorkspaceLabel(
+  thread: PluginSidebarThread,
+  localHostId: string | null = null,
+): string | null {
   const environment = thread.environment;
   if (!environment) return null;
   const branch = environment.branchName?.trim();
@@ -48,7 +71,11 @@ export function resolveWorkspaceLabel(thread: PluginSidebarThread): string | nul
     const name = environment.name?.trim();
     if (name) return name;
   }
-  const host = thread.host?.name.trim();
+  // The machine is the LAST resort of the chain, and it only says something
+  // when the work runs elsewhere. On the current machine it is the same word
+  // on every row, so the row draws nothing instead.
+  if (thread.host === null || thread.host.id === localHostId) return null;
+  const host = thread.host.name.trim();
   return host ? host : null;
 }
 
@@ -170,7 +197,7 @@ function buildTree(input: ListModelInput): Tree {
       result =
         input.settings.showArchivedChildren &&
         parent !== undefined &&
-        !input.collapsedThreadIds.has(parent.id) &&
+        input.expandedThreadIds.has(parent.id) &&
         isVisible(parent, seen);
     }
     decided.set(thread.id, result);
@@ -269,12 +296,13 @@ function makeRow(
   sectionKey: SectionKey,
   depth: number,
   projectNames: ReadonlyMap<string, string>,
+  localHostId: string | null,
   projectNameFallback: string | null = null,
 ): RenderRow {
   return {
     thread,
     title: resolveTitle(thread),
-    workspaceLabel: resolveWorkspaceLabel(thread),
+    workspaceLabel: resolveWorkspaceLabel(thread, localHostId),
     depth,
     childCount: tree.childrenOf.get(thread.id)?.length ?? 0,
     projectName: projectNames.get(thread.projectId) ?? projectNameFallback,
@@ -293,8 +321,9 @@ function flattenSubtree(
   out: RenderRow[],
   depth = 0,
 ): void {
-  out.push(makeRow(root, tree, sectionKey, depth, projectNames));
-  if (input.collapsedThreadIds.has(root.id)) return;
+  out.push(makeRow(root, tree, sectionKey, depth, projectNames, input.localHostId));
+  // B10, inverted: a subtree is closed unless the user opened it.
+  if (!input.expandedThreadIds.has(root.id)) return;
   for (const child of tree.childrenOf.get(root.id) ?? []) {
     flattenSubtree(child, tree, input, sectionKey, projectNames, out, depth + 1);
   }
@@ -363,7 +392,15 @@ function buildSearchSections(
     sequence: sequenceOf(thread, input.sectionOrder),
   }));
   const rows = rankSearch(candidates, input.searchQuery).map((candidate) =>
-    makeRow(candidate.thread, tree, "search", 0, projectNames, candidate.projectName),
+    makeRow(
+      candidate.thread,
+      tree,
+      "search",
+      0,
+      projectNames,
+      input.localHostId,
+      candidate.projectName,
+    ),
   );
   if (rows.length === 0) return [];
   return [makeSection("search", rows, rows.length, input, dynamicLabels)];

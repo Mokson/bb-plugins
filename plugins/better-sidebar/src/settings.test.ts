@@ -11,6 +11,10 @@ describe("parseSettings", () => {
       showRelativeTime: true,
       showArchivedChildren: true,
       showHeaderChip: true,
+      showSecondRow: true,
+      showProjectName: true,
+      showBranch: true,
+      showModel: true,
     });
   });
 
@@ -24,6 +28,10 @@ describe("parseSettings", () => {
         showRelativeTime: false,
         showArchivedChildren: false,
         showHeaderChip: false,
+        showSecondRow: false,
+        showProjectName: false,
+        showBranch: false,
+        showModel: false,
       }),
     ).toEqual({
       groupBy: "host",
@@ -33,6 +41,10 @@ describe("parseSettings", () => {
       showRelativeTime: false,
       showArchivedChildren: false,
       showHeaderChip: false,
+      showSecondRow: false,
+      showProjectName: false,
+      showBranch: false,
+      showModel: false,
     });
   });
 
@@ -51,6 +63,10 @@ describe("parseSettings", () => {
     "showRelativeTime",
     "showArchivedChildren",
     "showHeaderChip",
+    "showSecondRow",
+    "showProjectName",
+    "showBranch",
+    "showModel",
   ] as const)("falls back to the default on an unknown %s value (B59.2)", (key) => {
     expect(parseSettings({ [key]: "bogus" })).toEqual(SETTINGS_DEFAULTS);
   });

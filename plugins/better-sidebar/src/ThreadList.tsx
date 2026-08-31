@@ -7,7 +7,9 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { cn } from "./lib/utils";
 import { useResolvedSettings } from "./useResolvedSettings";
-import { buildListModel, sectionKeyOf } from "./model/list-model";
+import { buildListModel, sectionKeyOf, usesHostLabel } from "./model/list-model";
+import { useLocalHostId } from "./row/useLocalHostId";
+import { useThreadExecutions } from "./header/useThreadExecutions";
 import { dimLevelFor } from "./model/buckets";
 import type { Density, GroupBy, RenderSection } from "./model/types";
 import { ALL_PROJECTS, DisplayMenu } from "./DisplayMenu";
@@ -69,6 +71,12 @@ function ThreadListBody({
     [settings.groupBy, now],
   );
   const sectionOrder = useSectionOrder(threads, sectionOf);
+  // B61: only a drawn second row can show a machine name, and only a thread
+  // whose label chain reaches that step needs one.
+  const localHostId = useLocalHostId(
+    showsSecondRow(settings.density, settings.groupBy) &&
+      threads.some(usesHostLabel),
+  );
 
   const model = useMemo(
     () =>
@@ -79,9 +87,10 @@ function ThreadListBody({
         searchQuery,
         now,
         projectFilter: projectFilter === ALL_PROJECTS ? null : projectFilter,
+        localHostId,
         sectionOrder,
         collapsedSections: collapse.collapsedSections,
-        collapsedThreadIds: collapse.collapsedThreadIds,
+        expandedThreadIds: collapse.expandedThreadIds,
       }),
     [
       threads,
@@ -92,9 +101,10 @@ function ThreadListBody({
       searchQuery,
       now,
       projectFilter,
+      localHostId,
       sectionOrder,
       collapse.collapsedSections,
-      collapse.collapsedThreadIds,
+      collapse.expandedThreadIds,
     ],
   );
 
@@ -121,6 +131,32 @@ function ThreadListBody({
     header.scrollIntoView({ block: "start" });
     header.focus();
   }, []);
+
+  // The setting is a hard off-switch; with it on, B60's density and grouping
+  // rule still decides.
+  const showSecondRow =
+    settings.showSecondRow && showsSecondRow(settings.density, settings.groupBy);
+
+  /*
+   * B61: model and effort are fetched for the rows the list is actually
+   * drawing, and for nothing else. A collapsed parent's children contribute no
+   * id, a hidden second row contributes none, and `showModel: false` empties
+   * the set outright — which is the only field on row 2 whose toggle also
+   * switches off a request.
+   */
+  const executionIds = useMemo(
+    () =>
+      showSecondRow && settings.showModel
+        ? model.sections.flatMap((section) =>
+            section.rows.map((entry) => entry.thread.id),
+          )
+        : [],
+    [model, showSecondRow, settings.showModel],
+  );
+  const { executions } = useThreadExecutions(
+    executionIds,
+    executionIds.length > 0,
+  );
 
   if (status === "loading") return <ListLoading />;
   if (status === "error") return <ListError onRetry={onRetry} />;
@@ -161,7 +197,6 @@ function ThreadListBody({
     );
   }
 
-  const showSecondRow = showsSecondRow(settings.density, settings.groupBy);
   // Rebuilt each render so the jump table cannot outlive the sections it indexes.
   headersRef.current = [];
 
@@ -193,17 +228,22 @@ function ThreadListBody({
               // B82: the row's own `updatedAt` until the lookup lands.
               lastActivityAt={lastActivity.get(row.thread.id)}
               showSecondRow={showSecondRow}
+              // B71.3: undefined until the batch lands, then the resolved
+              // model or null for a thread that never ran.
+              execution={executions.get(row.thread.id) ?? null}
               // B61: each of these skips work, not pixels — the PR hook is
               // never called and the signal observer is never mounted.
               showPrChip={settings.showPrChip}
               showProviderGlyph={settings.showProviderGlyph}
+              showProjectName={settings.showProjectName}
+              showBranch={settings.showBranch}
               showRelativeTime={settings.showRelativeTime}
               showSignals={settings.density === "detailed"}
               isCompactViewport={isCompactViewport}
               // B47: the host clears its search field and closes the mobile
               // drawer here, so every open path goes through it.
               onNavigate={onNavigate}
-              isSubtreeCollapsed={collapse.collapsedThreadIds.has(row.thread.id)}
+              isSubtreeCollapsed={!collapse.expandedThreadIds.has(row.thread.id)}
               onToggleSubtree={
                 row.childCount > 0 ? () => collapse.toggleThread(row.thread.id) : undefined
               }
@@ -236,14 +276,12 @@ function SectionHeader({
   onToggle: () => void;
   ref: (node: HTMLElement | null) => void;
 }) {
-  // B53.1: the count sits at the far right of the header row. Left-adjacent it
-  // read as part of the label — `TODAY 22` looked like a title, not a tally.
-  const label = (
-    <>
-      <span className="flex-1 truncate text-left">{section.label}</span>
-      <span className="tabular-nums text-muted-foreground/70">{section.count}</span>
-    </>
-  );
+  // Superseding B53.1: the header carries its label and nothing else. The
+  // tally answered a question nobody asks of a date bucket, and it put a
+  // second number in a column the row's own time already owns.
+  // `RenderSection.count` is still computed — the model's own root-only rule
+  // (B53.4) is tested there — it is simply not drawn.
+  const label = <span className="flex-1 truncate text-left">{section.label}</span>;
   const className = cn(
     // B73.2: no inset of its own. The scroll container carries the 8px column,
     // so the header's left edge and row 1's left edge are the same edge.

@@ -14,9 +14,11 @@ import { RowSignals } from "../dossier/RowSignals";
 import { RowContextMenu } from "../menu/RowContextMenu";
 import { useRenameEditor } from "../menu/useRenameEditor";
 import type { RenderRow } from "../model/types";
+import { RowActions } from "./RowActions";
+import { ROW1_ICON } from "./icon-sizes";
 import { ProviderGlyph } from "./ProviderGlyph";
 import { relativeTimeLabel } from "./relative-time";
-import { SecondRow } from "./SecondRow";
+import { ChildSecondRow, SecondRow } from "./SecondRow";
 import { StatusGlyph } from "./StatusGlyph";
 
 /** B9: one indent step per parent hop, in px so the truncation stays honest. */
@@ -29,18 +31,26 @@ const DEPTH_INDENT_PX = 12;
  * `relative` is what the hit area's `-inset-1.5` measures against.
  */
 const CHEVRON_BOX_CLASS =
-  "relative flex size-3.5 shrink-0 items-center justify-center";
+  cn("relative flex shrink-0 items-center justify-center", ROW1_ICON);
 
 /**
- * The provider column: the glyph's own box (`size-3.5`), reserved even when
- * the mark is hidden so titles and row 2 keep one left edge across settings.
- * With row 1's `gap-2` it measures the 22px that row 2 is indented by.
+ * Row 1's 22px leading gutter, carrying the status mark centred in it rather
+ * than flush against the row's left border.
+ *
+ * It owns the gap instead of sitting beside it (`-mr-2` cancels row 1's
+ * `gap-2`), so the title starts at exactly 22px — the same 22px row 2 is
+ * indented by, which is what puts the whole of row 2 under the title. The
+ * column is reserved even when it draws nothing (an idle row has no status
+ * mark), so every title holds its x whatever the row's state.
  */
-const PROVIDER_BOX_CLASS = "size-3.5 shrink-0";
+const LEADING_BOX_CLASS =
+  "-mr-2 flex w-[22px] shrink-0 items-center justify-center";
 
 /** B51.5: a fixed slot per trailing element, so the time column aligns down the list. */
 const TRAILING_TEXT_CLASS =
-  "shrink-0 text-right text-[11px] tabular-nums text-muted-foreground";
+  // Row 2's colour: the time is metadata about the thread, not part of its
+  // title, so it sits at the same weight as the project and branch below it.
+  "shrink-0 text-right text-[11px] tabular-nums text-muted-foreground/70";
 
 export interface ThreadRowProps {
   row: RenderRow;
@@ -54,10 +64,19 @@ export interface ThreadRowProps {
   lastActivityAt?: number;
   /** B19/B60, decided by the list from `density` and the group mode. */
   showSecondRow: boolean;
+  /**
+   * Model and effort for a CHILD row's second line, from the list's batched
+   * lookup. `null` while it is in flight and when the thread never ran; the
+   * line then draws its provider mark alone.
+   */
+  execution?: { model: string; reasoningLevel: string } | null;
   /** B61.1: `false` skips `experimental_useSidebarThreadPullRequest` entirely. */
   showPrChip?: boolean;
   /** B59: the provider logo at the row's left edge. */
   showProviderGlyph?: boolean;
+  /** B59: row 2's project name and branch. */
+  showProjectName?: boolean;
+  showBranch?: boolean;
   /** B59: the row's own relative time, at the right edge. */
   showRelativeTime?: boolean;
   /** B61.2: `false` mounts no `IntersectionObserver` and sends no `rowSignals`. */
@@ -109,7 +128,10 @@ function RowBody({
   now,
   lastActivityAt,
   showSecondRow,
+  execution = null,
   showProviderGlyph = true,
+  showProjectName = true,
+  showBranch = true,
   showRelativeTime = true,
   showSignals = true,
   isCompactViewport,
@@ -177,7 +199,9 @@ function RowBody({
           className={cn(
             // B73.2: `pr-2` is gone. The container's right inset now ends the
             // row, so the trailing time and the section count share one edge.
-            "relative w-full min-w-0 rounded-md text-left text-[13px]",
+            // `group/row` is what the hover cluster and the fading
+            // trailing indicator both key off.
+            "group/row relative w-full min-w-0 rounded-md text-left text-[13px]",
             "hover:bg-accent/60 focus-within:ring-1 focus-within:ring-ring",
           )}
           // B57.3: no base left inset — the provider glyph starts at the row's
@@ -214,17 +238,20 @@ function RowBody({
               anywhere on the row reaches it. The few genuinely interactive
               children opt back in individually. */}
           <div className="pointer-events-none relative flex min-w-0 flex-col">
-            {/* B57: one row-1 layout for every row —
-                [provider] title [chevron, parents only] … [status] [time]. */}
+            {/* Row 1 —
+                [status] title [chevron, parents only] … [signals] [time].
+
+                The leading column carries the STATUS mark now; the provider
+                mark moved down to row 2's matching column. Status is the
+                thing that changes and the thing you scan for, so it takes
+                the position the eye already lands on. */}
             <div data-better-sidebar-row1="" className="flex h-7 min-w-0 items-center gap-2">
-              {/* B51.2: leading, on every row. Its resolution is unchanged.
-                  With the setting off the box stays and only the mark goes, so
-                  every title keeps its x whichever way the setting is set. */}
-              {showProviderGlyph ? (
-                <ProviderGlyph providerId={thread.providerId} />
-              ) : (
-                <span aria-hidden className={PROVIDER_BOX_CLASS} />
-              )}
+              {/* The column is reserved whether or not it draws — idle is the
+                  common row and status draws nothing for it — so every title
+                  keeps its x whatever the row's state. */}
+              <span className={LEADING_BOX_CLASS}>
+                <StatusGlyph thread={thread} />
+              </span>
 
               {renameEditor.isRenaming ? (
                 <input
@@ -237,6 +264,8 @@ function RowBody({
                 // B14: unread is font weight and nothing else. No opacity, no
                 // separate dot — a faded resting row makes most of a list read
                 // as disabled. B15: no pin glyph; the PINNED section says it.
+                // Roots only: a child thread is a subagent the user never
+                // opens, so its unread flag is noise on every parent's subtree.
                 <span
                   className={cn(
                     // Revised B51.5 with B57.2: intrinsic rather than
@@ -245,7 +274,9 @@ function RowBody({
                     // trailing cluster keeps the right edge with `ml-auto`,
                     // and the title still truncates only when it runs out.
                     "min-w-0 truncate",
-                    thread.isUnread ? "font-semibold" : "font-normal",
+                    row.depth === 0 && thread.isUnread
+                      ? "font-semibold"
+                      : "font-normal",
                   )}
                 >
                   {row.title}
@@ -276,7 +307,7 @@ function RowBody({
                   >
                     <Glyph
                       name={isSubtreeCollapsed ? "chevron-right" : "chevron-down"}
-                      className="size-3"
+                      className={ROW1_ICON}
                       aria-hidden
                     />
                   </span>
@@ -301,11 +332,36 @@ function RowBody({
                   draws, and on none that does not, so status-to-time measures
                   the same on every row whatever its siblings do. B57.1: the
                   child count is gone from here and from the row entirely. */}
-              <div className="ml-auto flex shrink-0 items-center">
+              <div
+                data-better-sidebar-row-trailing=""
+                className={cn(
+                  "ml-auto flex shrink-0 items-center",
+                  // The indicator gives its PLACE to the actions, not just its
+                  // paint: it leaves the flow so the cluster inherits exactly
+                  // the width it had. Faded with `opacity-0` it kept its width
+                  // and the title had to clear both.
+                  //
+                  // `RowSignals` is unmounted from layout with it, which costs
+                  // nothing: `runBatch` filters on staleness, so the row
+                  // rejoining the visible set sends no request while its entry
+                  // is fresh.
+                  "group-hover/row:hidden",
+                  "group-focus-within/row:hidden",
+                  "group-has-[[data-state=open]]/row:hidden",
+                )}
+              >
                 {/* B61.2: at `compact` and `default` this is not mounted, so
                     no observer exists and no `rowSignals` request is sent. */}
                 {showSignals ? <RowSignals threadId={thread.id} /> : null}
-                <StatusGlyph thread={thread} />
+                {/* The provider mark is drawn ONCE per row: on row 2 when the
+                    row has one, and here when it does not. Without this,
+                    `compact` — the density that draws no second row at all —
+                    showed no provider mark on any row. */}
+                {!showSecondRow && showProviderGlyph ? (
+                  <span className="ml-1.5">
+                    <ProviderGlyph providerId={thread.providerId} />
+                  </span>
+                ) : null}
                 {/* B51.4: the row's own time, on every row, at the right edge.
                     With time hidden the trailing cluster is fully intrinsic —
                     B51.5's fixed slot has no anchor left to pin. */}
@@ -315,24 +371,60 @@ function RowBody({
                   </span>
                 ) : null}
               </div>
+
+              {/* Last child of row 1, so it lands exactly where the trailing
+                  indicator was and the title measures against it. */}
+              <RowActions
+                thread={thread}
+                title={row.title}
+                pullRequest={pullRequest}
+                onNavigate={onNavigate}
+                onOpenPullRequest={openPullRequest}
+                renameEditor={renameEditor}
+                onOpen={(split) =>
+                  split
+                    ? actions.open(thread.id, { split: true })
+                    : actions.open(thread.id)
+                }
+              />
             </div>
 
-            {/* B52.1: a child renders row 1 only — its project and workspace
-                repeat its parent's. Row 2 is indented to the provider column so
-                the two lines share a left edge: 22px is the glyph box
-                (`size-3.5`) plus row 1's `gap-2`. The box is drawn whether or
-                not the mark is, so the indent is unconditional too. */}
-            {showSecondRow && row.depth === 0 ? (
-              <div className="pb-1 pl-[22px]">
-                <SecondRow
-                  row={row}
-                  pullRequest={pullRequest}
-                  isCompactViewport={isCompactViewport}
-                  onOpenPullRequest={openPullRequest}
-                />
+            {/* B52.1, revised: a child DOES draw a second line, but not the
+                same one. Its project and workspace repeat its parent's, so
+                the line carries the model and effort its parent spawned it on
+                instead — the one fact a child's row can add.
+
+                The WHOLE line starts at the title's x: the 22px indent puts
+                its first element — the provider mark — under the title
+                rather than out in row 1's status gutter. */}
+            {showSecondRow ? (
+              // `-mt-1` closes 4px of the ~5px gap row 1's fixed 28px box
+              // leaves under a 13px title. It is taken here rather than off
+              // row 1's height, so a row with no second line still measures
+              // exactly one bb row (B54).
+              <div className="-mt-1 pb-1 pl-[22px]">
+                {row.depth === 0 ? (
+                  <SecondRow
+                    row={row}
+                    pullRequest={pullRequest}
+                    isCompactViewport={isCompactViewport}
+                    onOpenPullRequest={openPullRequest}
+                    providerId={showProviderGlyph ? thread.providerId : null}
+                    showProjectName={showProjectName}
+                    showBranch={showBranch}
+                    execution={execution}
+                  />
+                ) : (
+                  <ChildSecondRow
+                    row={row}
+                    providerId={showProviderGlyph ? thread.providerId : null}
+                    execution={execution}
+                  />
+                )}
               </div>
             ) : null}
           </div>
+
         </RowHover>
       </div>
     </RowContextMenu>

@@ -503,6 +503,7 @@ function handlers(
       })),
     }),
     lastActivity: () => ({ activity: [] }),
+    localHost: () => ({ hostId: null }),
     ...overrides,
   };
 }

@@ -27,6 +27,11 @@ vi.mock("@get-bb/plugin-sdk/app", async (importOriginal) => ({
 installTestPluginRuntime();
 
 const { ThreadList } = await import("./ThreadList");
+const { resetLocalHostId } = await import("./row/useLocalHostId");
+const { resetHoverSuppression } = await import("./dossier/RowHover");
+const { resetThreadExecutionsCache } = await import(
+  "./header/useThreadExecutions"
+);
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
@@ -95,8 +100,12 @@ function props(overrides: Partial<PluginThreadListProps> = {}): PluginThreadList
 function renderList(
   overrides: Partial<PluginThreadListProps> = {},
   settings?: Record<string, string>,
+  rpc?: Record<string, unknown>,
 ) {
-  return renderSlot({ component: ThreadList }, props(overrides), { settings });
+  return renderSlot({ component: ThreadList }, props(overrides), {
+    settings,
+    ...(rpc === undefined ? {} : { rpc: rpc as never }),
+  });
 }
 
 /** The rendered order, which is the only thing B6 is actually about. */
@@ -157,6 +166,11 @@ beforeEach(() => {
   window.localStorage.clear();
   onNavigate.mockClear();
   threadsState = ready([]);
+  // Module state, so it outlives `cleanup()` and would leak one test's
+  // answer into the next.
+  resetLocalHostId();
+  resetHoverSuppression();
+  resetThreadExecutionsCache();
 });
 
 afterEach(() => {
@@ -201,7 +215,7 @@ describe("ThreadList — sections and collapse (B7, B10)", () => {
     vi.setSystemTime(BEFORE_MIDNIGHT);
   });
 
-  it("collapses LAST 7 DAYS, keeps its count, and survives a remount", () => {
+  it("collapses LAST 7 DAYS and survives a remount", () => {
     threadsState = ready([
       thread({ id: "old", latestAttentionAt: BEFORE_MIDNIGHT - 3 * DAY }),
       thread({ id: "new", latestAttentionAt: BEFORE_MIDNIGHT }),
@@ -209,16 +223,34 @@ describe("ThreadList — sections and collapse (B7, B10)", () => {
     renderList();
     expect(renderedIds()).toEqual(["new", "old"]);
 
-    const header = screen.getByRole("button", { name: /last 7 days/i });
-    expect(header.textContent).toContain("1");
-    fireEvent.click(header);
+    fireEvent.click(screen.getByRole("button", { name: /last 7 days/i }));
     expect(renderedIds()).toEqual(["new"]);
-    // The count survives the collapse, or the header stops saying what it hides.
-    expect(screen.getByRole("button", { name: /last 7 days/i }).textContent).toContain("1");
 
     cleanup();
     renderList();
     expect(renderedIds()).toEqual(["new"]);
+  });
+
+  /**
+   * The header used to carry the section's tally at its right edge. It is
+   * gone by request, and a header must now read as its label alone — no
+   * stray digit beside a date bucket, collapsed or not.
+   */
+  it("draws no tally beside a section label", () => {
+    threadsState = ready([
+      thread({ id: "old", latestAttentionAt: BEFORE_MIDNIGHT - 3 * DAY }),
+      thread({ id: "a", latestAttentionAt: BEFORE_MIDNIGHT }),
+      thread({ id: "b", latestAttentionAt: BEFORE_MIDNIGHT }),
+    ]);
+    renderList();
+
+    const today = screen.getByRole("button", { name: /today/i });
+    expect(today.textContent?.trim()).toBe("TODAY");
+
+    fireEvent.click(today);
+    expect(
+      screen.getByRole("button", { name: /today/i }).textContent?.trim(),
+    ).toBe("TODAY");
   });
 
   /**
@@ -258,16 +290,32 @@ describe("ThreadList — sections and collapse (B7, B10)", () => {
     expect(screen.getByRole("button", { name: /today/i })).toBeTruthy();
   });
 
-  it("collapses a subtree from its parent chevron (B10)", () => {
+  /**
+   * B10, inverted: a parent arrives CLOSED. A subagent is not a thread the
+   * user started, so seventeen of them under one parent are noise until asked
+   * for. The chevron opens the subtree and closes it again.
+   */
+  it("starts a parent collapsed and opens it from the chevron (B10)", () => {
     threadsState = ready([
       thread({ id: "parent" }),
       thread({ id: "child", parentThreadId: "parent" }),
     ]);
     renderList();
+    expect(renderedIds()).toEqual(["parent"]);
+
+    fireEvent.click(screen.getByRole("button", { name: /expand/i }));
     expect(renderedIds()).toEqual(["parent", "child"]);
 
-    fireEvent.click(screen.getByRole("button", { name: /collapse|expand/i }));
+    fireEvent.click(screen.getByRole("button", { name: /collapse/i }));
     expect(renderedIds()).toEqual(["parent"]);
+  });
+
+  /** The chevron is still the only signal that a thread has children. */
+  it("draws no chevron on a childless thread", () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    renderList();
+
+    expect(screen.queryByRole("button", { name: /expand|collapse/i })).toBeNull();
   });
 });
 
@@ -639,6 +687,66 @@ describe("ThreadList — a hidden thing costs nothing (B61)", () => {
     expect(slot.inspection.rpcCalls).toHaveLength(0);
   });
 
+  it("asks for no local host when every thread has a branch to show", () => {
+    threadsState = ready([
+      thread({
+        environment: {
+          id: "e",
+          name: null,
+          branchName: "feat/x",
+          workspaceDisplayKind: "other",
+        },
+        host: { id: "host_1", name: "maxbook" },
+      }),
+    ]);
+
+    const slot = renderList();
+
+    expect(
+      slot.inspection.rpcCalls.filter((call) => call.method === "localHost"),
+    ).toHaveLength(0);
+  });
+});
+
+describe("ThreadList — the machine name", () => {
+  function onHost(hostId: string): PluginSidebarThread {
+    return thread({
+      environment: {
+        id: "e",
+        name: null,
+        branchName: null,
+        workspaceDisplayKind: "other",
+      },
+      host: { id: hostId, name: "maxbook" },
+    });
+  }
+
+  it("drops it for a thread on this machine and keeps it for another", async () => {
+    threadsState = ready([onHost("host_1")]);
+    await act(async () => {
+      renderList({}, undefined, { localHost: () => ({ hostId: "host_1" }) });
+    });
+    expect(screen.queryByText("maxbook")).toBeNull();
+
+    cleanup();
+    resetLocalHostId();
+
+    threadsState = ready([onHost("host_2")]);
+    await act(async () => {
+      renderList({}, undefined, { localHost: () => ({ hostId: "host_1" }) });
+    });
+    expect(screen.getByText("maxbook")).not.toBeNull();
+  });
+
+  it("keeps the name when the lookup answers with no host", async () => {
+    threadsState = ready([onHost("host_1")]);
+    await act(async () => {
+      renderList({}, undefined, { localHost: () => ({ hostId: null }) });
+    });
+
+    expect(screen.getByText("maxbook")).not.toBeNull();
+  });
+
   it("observes one signal cluster per row at density detailed (B60.2)", () => {
     const observe = vi.spyOn(globalThis.IntersectionObserver.prototype, "observe");
     threadsState = ready([thread(), thread({ id: "t2" })]);
@@ -708,11 +816,218 @@ describe("ThreadList — the host's 8px column (B73)", () => {
       thread({ id: "t2", parentThreadId: "t1" }),
     ]);
     renderList();
+    // A parent is closed by default, so the child has to be asked for.
+    fireEvent.click(screen.getByRole("button", { name: /expand/i }));
 
     const boxes = Array.from(
       document.querySelectorAll("[data-better-sidebar-row]"),
     ).map((node) => node.firstElementChild as HTMLElement);
     expect(boxes[0].style.paddingLeft).toBe("0px");
     expect(boxes[1].style.paddingLeft).toBe("12px");
+  });
+});
+
+/**
+ * The card used to vanish under the pointer whenever the hovered thread was
+ * busy. Rows are keyed by thread id but nested inside `<section key=...>`, so
+ * a thread that CHANGES SECTION — the agent asks a question and it is hoisted
+ * into NEEDS YOU — is unmounted from the old section and mounted fresh in the
+ * new one, which threw away the row's hover state. Hover intent now lives in
+ * one module-level store that the remount cannot reach.
+ */
+describe("ThreadList — the hover card survives activity", () => {
+  function hoverRow(id: string): Element {
+    const trigger = document.querySelector(
+      `[data-better-sidebar-hover-trigger="${id}"]`,
+    );
+    if (trigger === null) throw new Error(`no hover trigger for ${id}`);
+    fireEvent.pointerOver(trigger);
+    return trigger;
+  }
+
+  async function advance(ms: number) {
+    await act(async () => {
+      vi.advanceTimersByTime(ms);
+    });
+  }
+
+  it("stays open when the hovered thread's activity changes", async () => {
+    vi.useFakeTimers();
+    threadsState = ready([
+      thread({ id: "a", latestAttentionAt: BEFORE_MIDNIGHT }),
+      thread({ id: "b", latestAttentionAt: BEFORE_MIDNIGHT - MINUTE }),
+    ]);
+    const slot = renderList();
+
+    hoverRow("a");
+    await advance(950);
+    expect(document.querySelector("[data-better-sidebar-dossier]")).not.toBeNull();
+
+    // The agent works: the indicator flips and attention moves.
+    threadsState = ready([
+      thread({
+        id: "a",
+        latestAttentionAt: BEFORE_MIDNIGHT + MINUTE,
+        indicator: "runtime" as PluginSidebarThreadIndicator,
+        indicatorLabel: "Thread is working",
+      }),
+      thread({ id: "b", latestAttentionAt: BEFORE_MIDNIGHT - MINUTE }),
+    ]);
+    await act(async () => {
+      slot.lifecycle.rerender(<ThreadList {...props()} />);
+    });
+
+    expect(document.querySelector("[data-better-sidebar-dossier]")).not.toBeNull();
+  });
+
+  it("stays open when the hovered thread moves to another section", async () => {
+    vi.useFakeTimers();
+    threadsState = ready([
+      thread({ id: "a", latestAttentionAt: BEFORE_MIDNIGHT }),
+      thread({ id: "b", latestAttentionAt: BEFORE_MIDNIGHT - MINUTE }),
+    ]);
+    const slot = renderList();
+
+    hoverRow("a");
+    await advance(950);
+    expect(document.querySelector("[data-better-sidebar-dossier]")).not.toBeNull();
+
+    // The agent asks a question: the thread is hoisted into NEEDS YOU.
+    threadsState = ready([
+      thread({
+        id: "a",
+        latestAttentionAt: BEFORE_MIDNIGHT,
+        hasPendingInteraction: true,
+      }),
+      thread({ id: "b", latestAttentionAt: BEFORE_MIDNIGHT - MINUTE }),
+    ]);
+    await act(async () => {
+      slot.lifecycle.rerender(<ThreadList {...props()} />);
+    });
+
+    expect(document.querySelector("[data-better-sidebar-dossier]")).not.toBeNull();
+  });
+});
+
+/**
+ * A child's project and branch only repeat its parent's, which is why B52.1
+ * gave it no second line. Model and effort do not repeat: a parent spawns each
+ * subagent on whatever model it picked, and that is the one fact a child's own
+ * row can add. The line is also where the provider mark lives now.
+ */
+describe("ThreadList — a child row's second line", () => {
+  const child = () => [
+    thread({ id: "parent" }),
+    thread({ id: "kid", parentThreadId: "parent" }),
+  ];
+
+  function expand() {
+    fireEvent.click(screen.getByRole("button", { name: /expand/i }));
+  }
+
+  it("draws model and effort under an expanded child", async () => {
+    threadsState = ready(child());
+    const slot = renderList({}, undefined, {
+      threadExecutions: ({ threadIds }: { threadIds: string[] }) => ({
+        executions: threadIds.map((threadId) => ({
+          threadId,
+          execution: { model: "claude-opus-5", reasoningLevel: "low" },
+        })),
+      }),
+    });
+
+    await act(async () => {
+      expand();
+    });
+
+    // Both rows carry it now: the parent's line beside its project and
+    // branch, the child's in place of the ones it would only repeat.
+    expect(screen.getAllByText(/claude-opus-5 · low/)).toHaveLength(2);
+
+    const kid = document.querySelector('[data-better-sidebar-row="kid"]')!;
+    expect(kid.textContent).toContain("claude-opus-5 · low");
+    // A child's line has no project or branch to repeat.
+    expect(kid.textContent).not.toContain("bb");
+  });
+
+  /**
+   * B61, as the setting now draws it. `showModel` is the only row-2 field
+   * whose toggle also switches off a request, so turning it off returns the
+   * list to asking the backend for nothing.
+   */
+  it.each([
+    ["showProjectName", "bb-plugins", "main"],
+    ["showBranch", "main", "bb-plugins"],
+  ])("hides row 2's %s and keeps the rest", async (key, hidden, kept) => {
+    threadsState = ready([
+      thread({
+        id: "solo",
+        environment: {
+          id: "e",
+          name: null,
+          branchName: "main",
+          workspaceDisplayKind: "other",
+        },
+      }),
+    ]);
+    renderList({}, { [key]: "false" });
+
+    const row = document.querySelector('[data-better-sidebar-row="solo"]')!;
+    expect(row.textContent).not.toContain(hidden);
+    expect(row.textContent).toContain(kept);
+  });
+
+  it("hides the whole second row when the setting is off", () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    renderList({}, { showSecondRow: "false" });
+
+    const row = document.querySelector('[data-better-sidebar-row="solo"]')!;
+    expect(row.textContent).not.toContain("bb-plugins");
+    // Row 1 still draws.
+    expect(row.textContent).toContain("Ship the sidebar");
+  });
+
+  it("asks for no executions at all when showModel is off", async () => {
+    threadsState = ready(child());
+    const slot = renderList({}, { showModel: "false" });
+
+    await act(async () => {
+      expand();
+    });
+    expect(
+      slot.inspection.rpcCalls.filter((c) => c.method === "threadExecutions"),
+    ).toHaveLength(0);
+  });
+
+  it("asks for none when the second row is hidden outright", async () => {
+    threadsState = ready(child());
+    const slot = renderList({}, { showSecondRow: "false" });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(
+      slot.inspection.rpcCalls.filter((c) => c.method === "threadExecutions"),
+    ).toHaveLength(0);
+  });
+
+  it("covers root rows too, in the one batch", async () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    const slot = renderList({}, undefined, {
+      threadExecutions: ({ threadIds }: { threadIds: string[] }) => ({
+        executions: threadIds.map((threadId) => ({
+          threadId,
+          execution: { model: "claude-opus-5", reasoningLevel: "high" },
+        })),
+      }),
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText(/claude-opus-5 · high/)).not.toBeNull();
+    expect(
+      slot.inspection.rpcCalls.filter((c) => c.method === "threadExecutions"),
+    ).toHaveLength(1);
   });
 });

@@ -19,6 +19,10 @@ export const SETTINGS_DEFAULTS: BetterSidebarSettings = {
   showRelativeTime: true,
   showArchivedChildren: true,
   showHeaderChip: true,
+  showSecondRow: true,
+  showProjectName: true,
+  showBranch: true,
+  showModel: true,
 };
 
 /**
@@ -49,6 +53,13 @@ export function parseSettings(
       SETTINGS_DEFAULTS.showArchivedChildren,
     ),
     showHeaderChip: flag(values?.showHeaderChip, SETTINGS_DEFAULTS.showHeaderChip),
+    showSecondRow: flag(values?.showSecondRow, SETTINGS_DEFAULTS.showSecondRow),
+    showProjectName: flag(
+      values?.showProjectName,
+      SETTINGS_DEFAULTS.showProjectName,
+    ),
+    showBranch: flag(values?.showBranch, SETTINGS_DEFAULTS.showBranch),
+    showModel: flag(values?.showModel, SETTINGS_DEFAULTS.showModel),
   };
 }
 

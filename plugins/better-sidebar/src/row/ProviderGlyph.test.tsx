@@ -6,6 +6,7 @@ import {
   renderSlot,
 } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginProvidersState } from "@get-bb/plugin-sdk/app";
+import { ROW1_ICON, ROW2_ICON } from "./icon-sizes";
 
 installTestPluginRuntime();
 
@@ -141,7 +142,8 @@ describe("ProviderGlyph", () => {
 
     expect(container.querySelector("[data-better-sidebar-provider]")).toBeNull();
     // The box survives, so the row does not reflow when the logo arrives.
-    expect(getByRole("img").className).toContain("size-3.5");
+    // Its size is the line's shared icon size, not a number of its own.
+    expect(getByRole("img").className).toContain(ROW1_ICON);
   });
 
   /**
@@ -225,5 +227,41 @@ describe("ProviderGlyph", () => {
     expect(
       container.querySelector('[data-better-sidebar-provider="dot"]'),
     ).not.toBeNull();
+  });
+});
+
+describe("ProviderGlyph sizes", () => {
+  /**
+   * Each line's marks agree with each other and with that line's text: 12px
+   * beside the 13px title, 10px beside row 2's `text-2xs`. The logo fills its
+   * box, so the mark measures exactly the line's icon size.
+   */
+  it("fills its box at both sizes, so the mark measures the icon size", () => {
+    for (const [size, expected] of [
+      ["default", ROW1_ICON],
+      ["small", ROW2_ICON],
+    ] as const) {
+      const { getByRole, container } = renderSlot(
+        { component: ProviderGlyph },
+        { providerId: "acp-claude-code", size },
+        {
+          providers: {
+            status: "ready",
+            providers: [
+              provider({ id: "acp-claude-code", logoUrl: "/logo.svg" }),
+            ],
+          },
+        },
+      );
+
+      expect(getByRole("img").className).toContain(expected);
+      // `mask`, or the light/dark pair when the provider carries a tint.
+      const masks = container.querySelectorAll(
+        '[data-better-sidebar-provider^="mask"]',
+      );
+      expect(masks.length).toBeGreaterThan(0);
+      for (const mask of masks) expect(mask.className).toContain(expected);
+      cleanup();
+    }
   });
 });
