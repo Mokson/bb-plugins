@@ -53,6 +53,7 @@ function render(
         rowSignals: () => ({ signals: [] }),
         threadExecutions: () => ({ executions: [] }),
         lastActivity: () => ({ activity: [] }),
+        localHost: () => ({ hostId: null }),
         ...rpc,
       },
     },

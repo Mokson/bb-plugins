@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from "react";
+import { Fragment, useRef, type ReactNode } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
   experimental_useSidebarThreadActions as useSidebarThreadActions,
@@ -8,6 +8,7 @@ import {
 import { cn } from "../lib/utils";
 import { usePortalScopeProps } from "../lib/portal-scope";
 import { Glyph, type GlyphName } from "../ui/Glyph";
+import { buildRowMenuItems } from "./row-menu-items";
 import type { RenameEditor } from "./useRenameEditor";
 
 /**
@@ -57,6 +58,17 @@ export function RowContextMenu({
     onNavigate();
   };
 
+  const items = buildRowMenuItems({
+    thread,
+    pullRequest,
+    actions,
+    open,
+    onOpenPullRequest,
+    requestRename: () => {
+      renameRequested.current = true;
+    },
+  });
+
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
@@ -87,52 +99,18 @@ export function RowContextMenu({
           aria-label="Thread actions"
           className="z-50 min-w-48 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md"
         >
-          <Item glyph="external-link" onSelect={() => open(false)}>
-            Open
-          </Item>
-          <Item glyph="split" onSelect={() => open(true)}>
-            Open in split
-          </Item>
-          {pullRequest === null ? null : (
-            <Item
-              glyph="pull-request"
-              onSelect={onOpenPullRequest}
-            >
-              Open pull request
-            </Item>
-          )}
-          <Separator />
-          <Item
-            glyph="pin"
-            onSelect={() => void actions.setPinned(thread.id, !thread.isPinned)}
-          >
-            {thread.isPinned ? "Unpin" : "Pin"}
-          </Item>
-          <Item
-            glyph={thread.isUnread ? "eye" : "eye-off"}
-            onSelect={() => void actions.setRead(thread.id, thread.isUnread)}
-          >
-            {thread.isUnread ? "Mark read" : "Mark unread"}
-          </Item>
-          <Item
-            glyph="pencil"
-            onSelect={() => {
-              renameRequested.current = true;
-            }}
-          >
-            Rename
-          </Item>
-          <Separator />
-          <Item glyph="archive" onSelect={() => actions.archive(thread.id)}>
-            Archive
-          </Item>
-          <Item
-            glyph="trash"
-            destructive
-            onSelect={() => actions.requestDelete(thread.id)}
-          >
-            Delete…
-          </Item>
+          {items.map((item) => (
+            <Fragment key={item.id}>
+              {item.separatorBefore ? <Separator /> : null}
+              <Item
+                glyph={item.glyph}
+                destructive={item.destructive}
+                onSelect={item.onSelect}
+              >
+                {item.label}
+              </Item>
+            </Fragment>
+          ))}
         </ContextMenu.Content>
       </ContextMenu.Portal>
     </ContextMenu.Root>

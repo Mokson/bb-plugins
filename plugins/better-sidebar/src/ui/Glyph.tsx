@@ -2,7 +2,17 @@ import type { SVGProps } from "react";
 import { cn } from "../lib/utils";
 
 const PATHS = {
-  pin: "M12 2 9 9l-5 1 5.5 4.5L8 21l4-3 4 3-1.5-6.5L20 10l-5-1-3-7Z",
+  // bb's own menu draws lucide `Pin`/`PinOff`; this was a five-pointed STAR
+  // under the name `pin`, which read as "favourite" rather than "pinned".
+  pin:
+    "M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1Z",
+  "pin-off":
+    "M12 17v5M15 9.34V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H7.89M2 2l20 20M9 9v1.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h11",
+  // Read state is an envelope in bb, not an eye: the eye said "seen", which
+  // is a different claim from "read".
+  mail: "M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm18 3-10 6L2 7",
+  "mail-open":
+    "M21.2 8.4c.5.38.8.97.8 1.6v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V10a2 2 0 0 1 .8-1.6l8-6a2 2 0 0 1 2.4 0ZM22 10l-10 6-10-6",
   "chevron-right": "m9 18 6-6-6-6",
   "chevron-down": "m6 9 6 6 6-6",
   "circle-x": "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Zm-3-13 6 6m0-6-6 6",
@@ -39,26 +49,38 @@ const PATHS = {
   split: "M12 3v18M3 3h18v18H3z",
   archive: "M3 3h18v4H3zM5 7v13a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V7M10 12h4",
   trash:
-    "M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6",
+    "M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6M10 11v6M14 11v6",
   eye: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z",
   "eye-off":
     "M10.7 5.1A10.4 10.4 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-2.8 3.7M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a10 10 0 0 0 5.4-1.6M2 2l20 20M9.9 9.9a3 3 0 0 0 4.2 4.2",
   "external-link":
     "M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
   // Row-2 workspace glyphs (PRODUCT.md B16).
+  folder:
+    "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z",
   "git-branch":
     "M6 3v12m0 0a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm12-6a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm-3 3v1a5 5 0 0 1-5 5H9",
   monitor: "M3 4h18v12H3zM8 20h8m-4-4v4",
   // B76.1: the display-options trigger. Three tracks with a handle each, so
   // the button reads as "options for this view" rather than as a filter.
   sliders: "M4 6h9m4 0h3M4 12h3m4 0h10M4 18h9m4 0h3M13 4v4M7 10v4M13 16v4",
+  // bb's own "New thread" mark, read path-for-path off the rendered nav item
+  // above this list: a rounded speech bubble with a tail, plus a `+`. It is
+  // not a lucide icon, so it cannot be named from that set.
+  "new-thread":
+    "M21.5 12C21.5 17.2467 17.2467 21.5 12 21.5C10.3719 21.5 8.8394 21.0904 7.5 20.3687C5.63177 19.362 4.37462 20.2979 3.26592 20.4658C3.09774 20.4913 2.93024 20.4302 2.80997 20.31C2.62741 20.1274 2.59266 19.8451 2.6935 19.6074C3.12865 18.5818 3.5282 16.6382 2.98341 15C2.6698 14.057 2.5 13.0483 2.5 12C2.5 6.75329 6.75329 2.5 12 2.5C17.2467 2.5 21.5 6.75329 21.5 12ZM15.5 12H8.5M12 8.5V15.5",
+  // The hover cluster's overflow trigger (three dots, drawn as three dashes so
+  // the stroke-only primitive can render them at 14px).
+  "more-horizontal": "M5 12h.01M12 12h.01M19 12h.01",
 } as const;
 
 export type GlyphName = keyof typeof PATHS;
 
 /**
  * Shared inline-SVG glyph primitive. No icon library is installed, so every
- * glyph in this plugin is drawn from an inline path at a fixed `size-3.5` box
+ * glyph in this plugin is drawn from an inline path. `size-3.5` is only the
+ * default, for menus and other prose-sized surfaces; the row passes its
+ * line's own size (`row/row-metrics.ts`)
  * — an unrecognized `name` is impossible at the type level, so there is no
  * runtime fallback branch to test.
  */

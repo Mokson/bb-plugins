@@ -27,6 +27,11 @@ vi.mock("@get-bb/plugin-sdk/app", async (importOriginal) => ({
 installTestPluginRuntime();
 
 const { ThreadList } = await import("./ThreadList");
+const { resetLocalHostId } = await import("./row/useLocalHostId");
+const { resetHoverSuppression } = await import("./dossier/RowHover");
+const { resetThreadExecutionsCache } = await import(
+  "./header/useThreadExecutions"
+);
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
@@ -95,8 +100,12 @@ function props(overrides: Partial<PluginThreadListProps> = {}): PluginThreadList
 function renderList(
   overrides: Partial<PluginThreadListProps> = {},
   settings?: Record<string, string>,
+  rpc?: Record<string, unknown>,
 ) {
-  return renderSlot({ component: ThreadList }, props(overrides), { settings });
+  return renderSlot({ component: ThreadList }, props(overrides), {
+    settings,
+    ...(rpc === undefined ? {} : { rpc: rpc as never }),
+  });
 }
 
 /** The rendered order, which is the only thing B6 is actually about. */
@@ -157,6 +166,11 @@ beforeEach(() => {
   window.localStorage.clear();
   onNavigate.mockClear();
   threadsState = ready([]);
+  // Module state, so it outlives `cleanup()` and would leak one test's
+  // answer into the next.
+  resetLocalHostId();
+  resetHoverSuppression();
+  resetThreadExecutionsCache();
 });
 
 afterEach(() => {
@@ -201,7 +215,7 @@ describe("ThreadList — sections and collapse (B7, B10)", () => {
     vi.setSystemTime(BEFORE_MIDNIGHT);
   });
 
-  it("collapses LAST 7 DAYS, keeps its count, and survives a remount", () => {
+  it("collapses LAST 7 DAYS and survives a remount", () => {
     threadsState = ready([
       thread({ id: "old", latestAttentionAt: BEFORE_MIDNIGHT - 3 * DAY }),
       thread({ id: "new", latestAttentionAt: BEFORE_MIDNIGHT }),
@@ -209,16 +223,34 @@ describe("ThreadList — sections and collapse (B7, B10)", () => {
     renderList();
     expect(renderedIds()).toEqual(["new", "old"]);
 
-    const header = screen.getByRole("button", { name: /last 7 days/i });
-    expect(header.textContent).toContain("1");
-    fireEvent.click(header);
+    fireEvent.click(screen.getByRole("button", { name: /last 7 days/i }));
     expect(renderedIds()).toEqual(["new"]);
-    // The count survives the collapse, or the header stops saying what it hides.
-    expect(screen.getByRole("button", { name: /last 7 days/i }).textContent).toContain("1");
 
     cleanup();
     renderList();
     expect(renderedIds()).toEqual(["new"]);
+  });
+
+  /**
+   * The header used to carry the section's tally at its right edge. It is
+   * gone by request, and a header must now read as its label alone — no
+   * stray digit beside a date bucket, collapsed or not.
+   */
+  it("draws no tally beside a section label", () => {
+    threadsState = ready([
+      thread({ id: "old", latestAttentionAt: BEFORE_MIDNIGHT - 3 * DAY }),
+      thread({ id: "a", latestAttentionAt: BEFORE_MIDNIGHT }),
+      thread({ id: "b", latestAttentionAt: BEFORE_MIDNIGHT }),
+    ]);
+    renderList();
+
+    const today = screen.getByRole("button", { name: /today/i });
+    expect(today.textContent?.trim()).toBe("TODAY");
+
+    fireEvent.click(today);
+    expect(
+      screen.getByRole("button", { name: /today/i }).textContent?.trim(),
+    ).toBe("TODAY");
   });
 
   /**
@@ -234,14 +266,18 @@ describe("ThreadList — sections and collapse (B7, B10)", () => {
     ]);
     renderList();
 
-    const expanded = screen.getByRole("button", { name: /last 7 days/i });
+    // The dim class sits on the header ROW; the button inside it wraps only
+    // the label and chevron.
+    const headerRow = () =>
+      screen.getByRole("button", { name: /last 7 days/i }).closest("h2")!;
+    const expanded = headerRow();
     const dim = expanded.className.match(/opacity-\d+/)?.[0];
     expect(dim).toBeDefined();
 
-    fireEvent.click(expanded);
+    fireEvent.click(screen.getByRole("button", { name: /last 7 days/i }));
     expect(renderedIds()).toEqual(["new"]);
     expect(
-      screen.getByRole("button", { name: /last 7 days/i }).className,
+      headerRow().className,
     ).toContain(dim);
   });
 
@@ -258,16 +294,32 @@ describe("ThreadList — sections and collapse (B7, B10)", () => {
     expect(screen.getByRole("button", { name: /today/i })).toBeTruthy();
   });
 
-  it("collapses a subtree from its parent chevron (B10)", () => {
+  /**
+   * B10, inverted: a parent arrives CLOSED. A subagent is not a thread the
+   * user started, so seventeen of them under one parent are noise until asked
+   * for. The chevron opens the subtree and closes it again.
+   */
+  it("starts a parent collapsed and opens it from the chevron (B10)", () => {
     threadsState = ready([
       thread({ id: "parent" }),
       thread({ id: "child", parentThreadId: "parent" }),
     ]);
     renderList();
+    expect(renderedIds()).toEqual(["parent"]);
+
+    fireEvent.click(screen.getByRole("button", { name: /expand/i }));
     expect(renderedIds()).toEqual(["parent", "child"]);
 
-    fireEvent.click(screen.getByRole("button", { name: /collapse|expand/i }));
+    fireEvent.click(screen.getByRole("button", { name: /collapse/i }));
     expect(renderedIds()).toEqual(["parent"]);
+  });
+
+  /** The chevron is still the only signal that a thread has children. */
+  it("draws no chevron on a childless thread", () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    renderList();
+
+    expect(screen.queryByRole("button", { name: /expand|collapse/i })).toBeNull();
   });
 });
 
@@ -639,6 +691,93 @@ describe("ThreadList — a hidden thing costs nothing (B61)", () => {
     expect(slot.inspection.rpcCalls).toHaveLength(0);
   });
 
+  it("asks for no local host when every thread has a branch to show", () => {
+    threadsState = ready([
+      thread({
+        environment: {
+          id: "e",
+          name: null,
+          branchName: "feat/x",
+          workspaceDisplayKind: "other",
+        },
+        host: { id: "host_1", name: "maxbook" },
+      }),
+    ]);
+
+    const slot = renderList();
+
+    expect(
+      slot.inspection.rpcCalls.filter((call) => call.method === "localHost"),
+    ).toHaveLength(0);
+  });
+
+  /**
+   * The machine name is only ever drawn as the BRANCH label's last resort, so
+   * every switch that hides that label also has to cancel the request.
+   */
+  it.each([
+    ["the metadata row is off", { showSecondRow: "false" }],
+    ["the branch label is off", { showBranch: "false" }],
+  ])("asks for no local host when %s", (_label, settings) => {
+    threadsState = ready([
+      thread({
+        environment: {
+          id: "e",
+          name: null,
+          branchName: null,
+          workspaceDisplayKind: "other",
+        },
+        host: { id: "host_1", name: "maxbook" },
+      }),
+    ]);
+
+    const slot = renderList({}, settings);
+
+    expect(
+      slot.inspection.rpcCalls.filter((call) => call.method === "localHost"),
+    ).toHaveLength(0);
+  });
+});
+
+describe("ThreadList — the machine name", () => {
+  function onHost(hostId: string): PluginSidebarThread {
+    return thread({
+      environment: {
+        id: "e",
+        name: null,
+        branchName: null,
+        workspaceDisplayKind: "other",
+      },
+      host: { id: hostId, name: "maxbook" },
+    });
+  }
+
+  it("drops it for a thread on this machine and keeps it for another", async () => {
+    threadsState = ready([onHost("host_1")]);
+    await act(async () => {
+      renderList({}, undefined, { localHost: () => ({ hostId: "host_1" }) });
+    });
+    expect(screen.queryByText("maxbook")).toBeNull();
+
+    cleanup();
+    resetLocalHostId();
+
+    threadsState = ready([onHost("host_2")]);
+    await act(async () => {
+      renderList({}, undefined, { localHost: () => ({ hostId: "host_1" }) });
+    });
+    expect(screen.getByText("maxbook")).not.toBeNull();
+  });
+
+  it("keeps the name when the lookup answers with no host", async () => {
+    threadsState = ready([onHost("host_1")]);
+    await act(async () => {
+      renderList({}, undefined, { localHost: () => ({ hostId: null }) });
+    });
+
+    expect(screen.getByText("maxbook")).not.toBeNull();
+  });
+
   it("observes one signal cluster per row at density detailed (B60.2)", () => {
     const observe = vi.spyOn(globalThis.IntersectionObserver.prototype, "observe");
     threadsState = ready([thread(), thread({ id: "t2" })]);
@@ -676,7 +815,7 @@ describe("ThreadList — the host's 8px column (B73)", () => {
   }
 
   const listBox = () => document.querySelector("[data-better-sidebar-list]");
-  const headerBox = () => document.querySelector("[data-sidebar-section] h2, [data-sidebar-section] button");
+  const headerBox = () => document.querySelector("[data-sidebar-section] h2");
   const rowBox = () =>
     document.querySelector("[data-better-sidebar-row]")?.firstElementChild ?? null;
 
@@ -684,17 +823,19 @@ describe("ThreadList — the host's 8px column (B73)", () => {
     threadsState = ready([thread()]);
     renderList();
 
-    // Asserted once, from the container: this is the panel's only inset.
+    // Superseding B73.2. Two insets in series, on purpose: the container's
+    // separates each row's rounded background from the panel edge, and the
+    // row's own separates its content from that background's edges. The
+    // header takes the same second inset so its label lands on the row's
+    // leading mark.
     expect(hPadding(listBox())).toEqual(["px-2"]);
+    expect(hPadding(headerBox())).toEqual(["px-2"]);
 
-    // Row 1, the section header and the filter each carry none of their own,
-    // so all three inherit that single column — two insets in series would
-    // have put the chrome at 16px and left the rows at 8px.
+    // The row carries its inset as an inline style, symmetric and carrying
+    // the depth indent, so it declares no padding class at all.
     expect(hPadding(rowBox())).toEqual([]);
-    expect(hPadding(headerBox())).toEqual([]);
-    expect(
-      hPadding(document.querySelector("[data-better-sidebar-project-filter]")),
-    ).toEqual([]);
+    expect((rowBox() as HTMLElement).style.paddingLeft).toBe("8px");
+    expect((rowBox() as HTMLElement).style.paddingRight).toBe("8px");
   });
 
   /**
@@ -702,17 +843,384 @@ describe("ThreadList — the host's 8px column (B73)", () => {
    * B57.3 removed, and must not disturb B9's per-depth indent. Depth 0 stays
    * flush; a child still steps in by one unit.
    */
-  it("keeps a depth-0 row flush and still indents a child (B73.3, B9)", () => {
+  it("insets every row equally and adds the nesting indent (B9)", () => {
     threadsState = ready([
       thread(),
       thread({ id: "t2", parentThreadId: "t1" }),
     ]);
     renderList();
+    // A parent is closed by default, so the child has to be asked for.
+    fireEvent.click(screen.getByRole("button", { name: /expand/i }));
 
     const boxes = Array.from(
       document.querySelectorAll("[data-better-sidebar-row]"),
     ).map((node) => node.firstElementChild as HTMLElement);
-    expect(boxes[0].style.paddingLeft).toBe("0px");
-    expect(boxes[1].style.paddingLeft).toBe("12px");
+    // 8px base inset, then one 12px nesting step for the child.
+    expect(boxes[0].style.paddingLeft).toBe("8px");
+    expect(boxes[1].style.paddingLeft).toBe("20px");
+    // Both keep the same right inset, so their trailing edges line up.
+    expect(boxes[0].style.paddingRight).toBe("8px");
+    expect(boxes[1].style.paddingRight).toBe("8px");
+  });
+});
+
+/**
+ * The card used to vanish under the pointer whenever the hovered thread was
+ * busy. Rows are keyed by thread id but nested inside `<section key=...>`, so
+ * a thread that CHANGES SECTION — the agent asks a question and it is hoisted
+ * into NEEDS YOU — is unmounted from the old section and mounted fresh in the
+ * new one, which threw away the row's hover state. Hover intent now lives in
+ * one module-level store that the remount cannot reach.
+ */
+describe("ThreadList — the hover card survives activity", () => {
+  function hoverRow(id: string): Element {
+    const trigger = document.querySelector(
+      `[data-better-sidebar-hover-trigger="${id}"]`,
+    );
+    if (trigger === null) throw new Error(`no hover trigger for ${id}`);
+    fireEvent.pointerOver(trigger);
+    return trigger;
+  }
+
+  async function advance(ms: number) {
+    await act(async () => {
+      vi.advanceTimersByTime(ms);
+    });
+  }
+
+  it("stays open when the hovered thread's activity changes", async () => {
+    vi.useFakeTimers();
+    threadsState = ready([
+      thread({ id: "a", latestAttentionAt: BEFORE_MIDNIGHT }),
+      thread({ id: "b", latestAttentionAt: BEFORE_MIDNIGHT - MINUTE }),
+    ]);
+    const slot = renderList();
+
+    hoverRow("a");
+    await advance(950);
+    expect(document.querySelector("[data-better-sidebar-dossier]")).not.toBeNull();
+
+    // The agent works: the indicator flips and attention moves.
+    threadsState = ready([
+      thread({
+        id: "a",
+        latestAttentionAt: BEFORE_MIDNIGHT + MINUTE,
+        indicator: "runtime" as PluginSidebarThreadIndicator,
+        indicatorLabel: "Thread is working",
+      }),
+      thread({ id: "b", latestAttentionAt: BEFORE_MIDNIGHT - MINUTE }),
+    ]);
+    await act(async () => {
+      slot.lifecycle.rerender(<ThreadList {...props()} />);
+    });
+
+    expect(document.querySelector("[data-better-sidebar-dossier]")).not.toBeNull();
+  });
+
+  it("stays open when the hovered thread moves to another section", async () => {
+    vi.useFakeTimers();
+    threadsState = ready([
+      thread({ id: "a", latestAttentionAt: BEFORE_MIDNIGHT }),
+      thread({ id: "b", latestAttentionAt: BEFORE_MIDNIGHT - MINUTE }),
+    ]);
+    const slot = renderList();
+
+    hoverRow("a");
+    await advance(950);
+    expect(document.querySelector("[data-better-sidebar-dossier]")).not.toBeNull();
+
+    // The agent asks a question: the thread is hoisted into NEEDS YOU.
+    threadsState = ready([
+      thread({
+        id: "a",
+        latestAttentionAt: BEFORE_MIDNIGHT,
+        hasPendingInteraction: true,
+      }),
+      thread({ id: "b", latestAttentionAt: BEFORE_MIDNIGHT - MINUTE }),
+    ]);
+    await act(async () => {
+      slot.lifecycle.rerender(<ThreadList {...props()} />);
+    });
+
+    expect(document.querySelector("[data-better-sidebar-dossier]")).not.toBeNull();
+  });
+});
+
+/**
+ * A child's project and branch only repeat its parent's, which is why B52.1
+ * gave it no second line. Model and effort do not repeat: a parent spawns each
+ * subagent on whatever model it picked, and that is the one fact a child's own
+ * row can add. The line is also where the provider mark lives now.
+ */
+describe("ThreadList — a child row's second line", () => {
+  const child = () => [
+    thread({ id: "parent" }),
+    thread({ id: "kid", parentThreadId: "parent" }),
+  ];
+
+  function expand() {
+    fireEvent.click(screen.getByRole("button", { name: /expand/i }));
+  }
+
+  it("draws model and effort under an expanded child", async () => {
+    threadsState = ready(child());
+    const slot = renderList({}, undefined, {
+      threadExecutions: ({ threadIds }: { threadIds: string[] }) => ({
+        executions: threadIds.map((threadId) => ({
+          threadId,
+          execution: { model: "claude-opus-5", reasoningLevel: "low" },
+        })),
+      }),
+    });
+
+    await act(async () => {
+      expand();
+    });
+
+    // Both rows carry it now: the parent's line beside its project and
+    // branch, the child's in place of the ones it would only repeat.
+    expect(screen.getAllByText(/claude-opus-5 · low/)).toHaveLength(2);
+
+    const kid = document.querySelector('[data-better-sidebar-row="kid"]')!;
+    expect(kid.textContent).toContain("claude-opus-5 · low");
+    // A child's line has no project or branch to repeat.
+    expect(kid.textContent).not.toContain("bb");
+  });
+
+  /**
+   * B61, as the setting now draws it. `showModel` is the only row-2 field
+   * whose toggle also switches off a request, so turning it off returns the
+   * list to asking the backend for nothing.
+   */
+  it.each([
+    ["showProjectName", "bb-plugins", "main"],
+    ["showBranch", "main", "bb-plugins"],
+  ])("hides row 2's %s and keeps the rest", async (key, hidden, kept) => {
+    threadsState = ready([
+      thread({
+        id: "solo",
+        environment: {
+          id: "e",
+          name: null,
+          branchName: "main",
+          workspaceDisplayKind: "other",
+        },
+      }),
+    ]);
+    renderList({}, { [key]: "false" });
+
+    const row = document.querySelector('[data-better-sidebar-row="solo"]')!;
+    expect(row.textContent).not.toContain(hidden);
+    expect(row.textContent).toContain(kept);
+  });
+
+  it("hides the whole second row when the setting is off", () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    renderList({}, { showSecondRow: "false" });
+
+    const row = document.querySelector('[data-better-sidebar-row="solo"]')!;
+    expect(row.textContent).not.toContain("bb-plugins");
+    // Row 1 still draws.
+    expect(row.textContent).toContain("Ship the sidebar");
+  });
+
+  it("asks for no executions at all when showModel is off", async () => {
+    threadsState = ready(child());
+    const slot = renderList({}, { showModel: "false" });
+
+    await act(async () => {
+      expand();
+    });
+    expect(
+      slot.inspection.rpcCalls.filter((c) => c.method === "threadExecutions"),
+    ).toHaveLength(0);
+  });
+
+  it("asks for none when the second row is hidden outright", async () => {
+    threadsState = ready(child());
+    const slot = renderList({}, { showSecondRow: "false" });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(
+      slot.inspection.rpcCalls.filter((c) => c.method === "threadExecutions"),
+    ).toHaveLength(0);
+  });
+
+  it("covers root rows too, in the one batch", async () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    const slot = renderList({}, undefined, {
+      threadExecutions: ({ threadIds }: { threadIds: string[] }) => ({
+        executions: threadIds.map((threadId) => ({
+          threadId,
+          execution: { model: "claude-opus-5", reasoningLevel: "high" },
+        })),
+      }),
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText(/claude-opus-5 · high/)).not.toBeNull();
+    expect(
+      slot.inspection.rpcCalls.filter((c) => c.method === "threadExecutions"),
+    ).toHaveLength(1);
+  });
+});
+
+/**
+ * Every leading mark in the panel sits in one 22px column, so header labels
+ * and row titles share an x. Measured in the running app at 38px for the
+ * header label, the row title and the metadata line alike; asserted here as
+ * the shared class, because jsdom lays nothing out.
+ */
+describe("ThreadList — one leading column", () => {
+  /**
+   * The chevron moved to the trailing edge, where each row's time sits, and
+   * is revealed on hover like the row's own actions.
+   */
+  it("puts the label first and the chevron last", () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    renderList();
+    const header = screen.getByRole("button", { name: /today/i });
+
+    expect(header.firstElementChild!.textContent).toBe("TODAY");
+    expect(header.lastElementChild!.tagName.toLowerCase()).toBe("svg");
+    expect(header.lastElementChild!.getAttribute("class")).toContain(
+      "group-hover/section:opacity-100",
+    );
+  });
+
+  /**
+   * A collapsed section persists across reloads, so a returning user would
+   * meet a header with no rows under it and no visible way to open it.
+   */
+  it("keeps the chevron visible while the section is collapsed", () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    renderList();
+
+    fireEvent.click(screen.getByRole("button", { name: /today/i }));
+    const chevron = screen.getByRole("button", { name: /today/i })
+      .lastElementChild!;
+
+    expect(chevron.getAttribute("class")).toContain("opacity-100");
+    expect(chevron.getAttribute("class")).not.toContain("opacity-0");
+  });
+
+  /**
+   * With the chevron on the trailing edge, the header's label leads the line
+   * on the row's own inset — the same x as each row's leading MARK, which is
+   * where bb's own sidebar puts it. It reserved a 22px column while the
+   * chevron lived there.
+   */
+  it("starts the label on the row's inset, reserving no column", () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    renderList();
+
+    const row = screen.getByRole("button", { name: /today/i }).closest("h2")!;
+    expect(row.className).toContain("px-2");
+    // No reserved column: the label is the first thing on the line.
+    const toggle = row.firstElementChild!;
+    expect(toggle.firstElementChild!.className).not.toContain("w-[22px]");
+    expect(toggle.firstElementChild!.textContent).toBe("TODAY");
+
+    // The row's own leading mark starts on that same inset, so the two share
+    // an x. Measured in the running app at 16px for both.
+    const leading = document.querySelector("[data-better-sidebar-row1]")!
+      .firstElementChild!;
+    expect(leading.className).toContain("w-[22px]");
+  });
+
+  it("draws a non-collapsible header with no chevron at all (B7)", () => {
+    threadsState = ready([thread({ id: "solo", hasPendingInteraction: true })]);
+    renderList();
+
+    const header = screen.getByRole("heading", { name: /needs you/i });
+    // No toggle at all — not merely a hidden chevron. Probed by accessible
+    // name, because the panel's own controls live on this header too and
+    // Radix gives its menu trigger an `aria-expanded` of its own.
+    expect(screen.queryByRole("button", { name: /needs you/i })).toBeNull();
+    expect(header.firstElementChild!.textContent).toBe("NEEDS YOU");
+  });
+});
+
+/**
+ * The panel's controls moved onto the FIRST section header. They had a strip
+ * of their own above the list, which spent a whole row on two icons while the
+ * header beside them already reached the same trailing edge.
+ */
+describe("ThreadList — the panel controls", () => {
+  it("puts new-thread and display options on the first header only", () => {
+    threadsState = ready([
+      thread({ id: "a", latestAttentionAt: BEFORE_MIDNIGHT }),
+      thread({ id: "b", hasPendingInteraction: true }),
+    ]);
+    renderList();
+
+    const headers = document.querySelectorAll("[data-sidebar-section] h2");
+    expect(headers.length).toBeGreaterThan(1);
+    expect(headers[0]!.querySelector("[aria-label='New thread']")).not.toBeNull();
+    expect(
+      headers[0]!.querySelector("[aria-label='Display options']"),
+    ).not.toBeNull();
+    for (const header of [...headers].slice(1)) {
+      expect(header.querySelector("[aria-label='New thread']")).toBeNull();
+      expect(header.querySelector("[aria-label='Display options']")).toBeNull();
+    }
+  });
+
+  /**
+   * The header's controls had no background on hover, only a text-colour
+   * shift, so they read as inert beside the row buttons directly beneath
+   * them. All three draw one surface now.
+   */
+  it("gives the header controls the row buttons' hover surface", () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    renderList();
+
+    const rowButton = document
+      .querySelector("[data-better-sidebar-row-actions]")!
+      .querySelector("button")!;
+    for (const label of ["New thread", "Display options"]) {
+      expect(screen.getByLabelText(label).className).toBe(rowButton.className);
+    }
+    expect(rowButton.className).toContain("hover:bg-accent");
+  });
+
+  it("puts new thread to the LEFT of the display menu", () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    renderList();
+
+    const plus = screen.getByLabelText("New thread");
+    const options = screen.getByLabelText("Display options");
+    expect(plus.compareDocumentPosition(options)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it("opens the composer from the new-thread control", () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    const slot = renderList();
+
+    fireEvent.click(screen.getByLabelText("New thread"));
+    expect(slot.inspection.navigateCalls).toEqual([
+      { method: "toCompose", options: { focusPrompt: true } },
+    ]);
+  });
+
+  /**
+   * The header row is not the toggle: the collapsible variant nests a button
+   * inside it, and these controls are buttons too. One interactive element
+   * inside another is invalid, and a click on the display menu would collapse
+   * the section under it.
+   */
+  it("keeps the controls outside the section's toggle button", () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    renderList();
+
+    const toggle = screen.getByRole("button", { name: /today/i });
+    expect(toggle.querySelector("[aria-label='Display options']")).toBeNull();
+    expect(toggle.querySelector("[aria-label='New thread']")).toBeNull();
   });
 });

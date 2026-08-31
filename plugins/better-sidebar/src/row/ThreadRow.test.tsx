@@ -12,6 +12,7 @@ import type {
   PluginSidebarThreadIndicator,
 } from "@get-bb/plugin-sdk/app";
 import type { RenderRow } from "../model/types";
+import { ROW1_ICON, ROW2_ICON } from "./row-metrics";
 
 /**
  * The split gesture is entirely host-owned, so the harness reports empty
@@ -180,6 +181,15 @@ function rowOne(container: HTMLElement): HTMLElement {
 }
 
 /** The PR chip. The row overlay is an anchor now, so `role="link"` is plural. */
+/** Row 1's status/time cluster, which is no longer its last child. */
+function trailing(container: HTMLElement): HTMLElement {
+  const element = rowOne(container).querySelector<HTMLElement>(
+    "[data-better-sidebar-row-trailing]",
+  );
+  if (element === null) throw new Error("no trailing cluster");
+  return element;
+}
+
 function prChip(): HTMLElement {
   const chip = document.querySelector<HTMLElement>("[data-better-sidebar-pr]");
   if (chip === null) throw new Error("no pull-request chip rendered");
@@ -257,7 +267,10 @@ describe("ThreadRow host contract", () => {
    * always, in visual order (§6). If a later change reintroduces windowing,
    * slicing or an overscan window, this fails.
    */
-  it("mounts 200 rows as 200 shortcut targets in visual order (B44)", () => {
+  // 200 rows is the heaviest render in the suite and it runs alongside 26
+  // other files. Measured alone it costs ~120ms; the default 5s timeout was
+  // tripping on scheduler contention, not on any per-row cost.
+  it("mounts 200 rows as 200 shortcut targets in visual order (B44)", { timeout: 20_000 }, () => {
     const rows = Array.from({ length: 200 }, (_, index) =>
       row({ thread: thread({ id: `t${index}`, title: `Thread ${index}` }) }),
     );
@@ -300,6 +313,144 @@ describe("ThreadRow host contract", () => {
   });
 });
 
+/**
+ * B14 forbids opacity as a signal of the row's STATE. The hover cluster and
+ * the trailing indicator it replaces both animate opacity, so the rule is now
+ * checked as written: every opacity class on the row must be gated on hover or
+ * focus, never applied at rest.
+ */
+function expectNoRestingOpacity(element: Element): void {
+  const resting = Array.from(
+    element.querySelectorAll('[class*="opacity-"]'),
+  ).filter(
+    (node) =>
+      !node.className.includes("group-hover/row:") &&
+      !node.className.includes("group-focus-within/row:") &&
+      !node.className.includes("focus-within:opacity-") &&
+      !node.className.includes("group-has-[[data-state=open]]/row:"),
+  );
+  expect(resting.map((node) => node.className)).toEqual([]);
+}
+
+describe("ThreadRow hover actions", () => {
+  function actions(container: HTMLElement): HTMLElement {
+    const element = container.querySelector<HTMLElement>(
+      "[data-better-sidebar-row-actions]",
+    );
+    if (element === null) throw new Error("no hover actions rendered");
+    return element;
+  }
+
+  /**
+   * The cluster stands in for row 1's trailing indicator, so it must sit on
+   * row 1's line. `inset-y-0` centred it over the whole two-line box, which
+   * on a root row left it floating between the lines against nothing.
+   */
+  /**
+   * The cluster is absolutely placed at the row's right edge, so without an
+   * inset a long title runs underneath it. Row 1 gives up exactly the
+   * cluster's width — three `size-5` buttons and two `gap-0.5` gaps is 64px,
+   * which is `pr-16` — on the same three triggers the cluster appears on.
+   */
+  /**
+   * The cluster takes the trailing indicator's PLACE in the flow, so the
+   * title's `truncate` measures against whatever is actually beside it. Two
+   * earlier attempts got this wrong: absolutely positioned it overlapped long
+   * titles, and a fixed `pr-16` inset double-counted the faded indicator's
+   * width, so titles truncated with room to spare. A flex sibling needs no
+   * width constant at all.
+   */
+  it("swaps the cluster into the trailing indicator's place, in flow", () => {
+    const { container } = renderRow(row());
+    const one = rowOne(container);
+    const cluster = actions(container);
+
+    expect(cluster.className).not.toContain("absolute");
+    expect(one.className).not.toContain("pr-16");
+    // Last child of row 1: exactly where the indicator sat.
+    expect(one.lastElementChild).toBe(cluster);
+
+    // The indicator leaves the flow rather than merely fading, or the two
+    // would both claim width and the title would clear both.
+    const cluster2 = trailing(container);
+    for (const trigger of [
+      "group-hover/row:",
+      "group-focus-within/row:",
+      "group-has-[[data-state=open]]/row:",
+    ]) {
+      expect(cluster2.className).toContain(`${trigger}hidden`);
+      expect(cluster.className).toContain(`${trigger}flex`);
+    }
+    expect(cluster2.className).not.toContain("opacity-0");
+  });
+
+  it("marks an unread thread read from the check button", () => {
+    const { container, inspection } = renderRow(
+      row({ thread: thread({ isUnread: true }) }),
+    );
+    fireEvent.click(within(actions(container)).getByLabelText("Mark read"));
+
+    expect(inspection.sidebarActionCalls).toEqual([
+      { method: "setRead", threadId: "t1", read: true },
+    ]);
+  });
+
+  it("marks a read thread unread from the same button", () => {
+    const { container, inspection } = renderRow(row());
+    fireEvent.click(within(actions(container)).getByLabelText("Mark unread"));
+
+    expect(inspection.sidebarActionCalls).toEqual([
+      { method: "setRead", threadId: "t1", read: false },
+    ]);
+  });
+
+  it("archives from the archive button", () => {
+    const { container, inspection } = renderRow(row());
+    fireEvent.click(within(actions(container)).getByLabelText("Archive"));
+
+    expect(inspection.sidebarActionCalls).toEqual([
+      { method: "archive", threadId: "t1" },
+    ]);
+  });
+
+  /**
+   * The row's anchor sits under every one of these buttons. Without the
+   * `stopPropagation` each carries, marking a thread read would also open it.
+   */
+  it("never opens the thread from an action button", () => {
+    const { container, inspection } = renderRow(row());
+    fireEvent.click(within(actions(container)).getByLabelText("Archive"));
+
+    expect(
+      inspection.sidebarActionCalls.filter((call) => call.method === "open"),
+    ).toEqual([]);
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
+
+  it("opens the same action list the right-click menu carries", () => {
+    const { container } = renderRow(row());
+    const trigger = within(actions(container)).getByLabelText("Thread actions");
+    // Radix opens a dropdown from `pointerdown`, not from `click`.
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.click(trigger);
+
+    for (const label of ["Open in split", "Pin", "Rename", "Delete"]) {
+      expect(screen.getByText(label)).not.toBeNull();
+    }
+  });
+
+  it("hides the trailing indicator only on hover, never at rest", () => {
+    const { container } = renderRow(row());
+    const trailing = rowElement(container).querySelector(
+      '[data-better-sidebar-row-trailing]',
+    );
+    if (trailing === null) throw new Error("no trailing cluster");
+    // A BARE `opacity-0` would dim the indicator at rest; the hover-gated
+    // variant of the same utility is the whole point.
+    expect(trailing.className.split(/\s+/)).not.toContain("opacity-0");
+  });
+});
+
 describe("ThreadRow chrome", () => {
   it("carries isUnread as font weight and never as opacity (B14)", () => {
     const { container } = renderRow(row({ thread: thread({ isUnread: true }) }));
@@ -307,7 +458,7 @@ describe("ThreadRow chrome", () => {
 
     expect(element.textContent).toContain("Ship the sidebar");
     expect(element.querySelector(".font-semibold")).not.toBeNull();
-    expect(element.querySelectorAll('[class*="opacity-"]')).toHaveLength(0);
+    expectNoRestingOpacity(element);
   });
 
   it("keeps a read row at the same opacity, in normal weight (B14)", () => {
@@ -315,7 +466,7 @@ describe("ThreadRow chrome", () => {
     const element = rowElement(container);
 
     expect(element.querySelector(".font-normal")).not.toBeNull();
-    expect(element.querySelectorAll('[class*="opacity-"]')).toHaveLength(0);
+    expectNoRestingOpacity(element);
   });
 
   it("draws no pin glyph for a pinned thread (B15)", () => {
@@ -324,12 +475,12 @@ describe("ThreadRow chrome", () => {
   });
 
   it("renders the provider glyph with no environment and no PR (B17)", () => {
-    const { container } = renderRow(row(), {
-      providers: {
-        status: "ready",
-        providers: [],
-      },
-    });
+    const { container } = renderRow(
+      row(),
+      { providers: { status: "ready", providers: [] } },
+      // The mark rides on the model label, so it needs one to be drawn.
+      { execution: { model: "claude-opus-5", reasoningLevel: "low" } },
+    );
 
     const element = rowElement(container);
     expect(element.textContent).not.toContain("#");
@@ -424,7 +575,7 @@ describe("ThreadRow row 1 layout (B57)", () => {
   it("reserves nothing for an absent count or status glyph (B51.5)", () => {
     const { container } = renderRow(row({ childCount: 0 }));
     const one = rowOne(container);
-    const cluster = one.lastElementChild!;
+    const cluster = trailing(container);
 
     // Time only: the signals span (which must stay mounted for its observer)
     // and nothing else. An empty placeholder box would show up here.
@@ -435,22 +586,159 @@ describe("ThreadRow row 1 layout (B57)", () => {
     expect(cluster.lastElementChild!.textContent).toBe("1d");
   });
 
-  it("still draws the status glyph when the indicator says something (B20)", () => {
+  it("draws the status glyph in the leading column (B20)", () => {
     const { container } = renderRow(
       row({ thread: thread({ indicator: "waiting-for-input" }) }),
     );
-    expect(rowOne(container).lastElementChild!.children).toHaveLength(3);
+    const leading = rowOne(container).firstElementChild!;
+
+    expect(leading.querySelector("[role='img']")).not.toBeNull();
+    expect(leading.className).toContain("w-[22px]");
   });
 
-  it("draws the provider glyph immediately left of the title (B51.2)", () => {
-    const { container } = renderRow(row());
-    const one = rowOne(container);
-    const provider = one.querySelector("[data-better-sidebar-provider]")!;
-    const title = one.querySelector(".truncate")!;
+  /** Idle is the common row, and it draws no mark — but keeps its column. */
+  it("keeps the leading column at width on an idle row", () => {
+    const { container } = renderRow(row({ thread: thread({ indicator: "none" }) }));
+    const leading = rowOne(container).firstElementChild!;
 
-    expect(provider.compareDocumentPosition(title)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
+    expect(leading.children).toHaveLength(0);
+    expect(leading.className).toContain("w-[22px]");
+  });
+
+  /**
+   * The two marks swapped lines: status leads row 1, the provider mark leads
+   * row 2, and they stack in one 22px gutter.
+   */
+  /**
+   * The mark belongs to the model, not to the line: it says which agent ran
+   * this, which is the same fact the model names. One setting governs both.
+   */
+  it("pairs the provider mark with the model, not the head of the line", () => {
+    const { container } = renderRow(
+      row({ projectName: "bb", workspaceLabel: "main" }),
+      {},
+      { execution: { model: "claude-opus-5", reasoningLevel: "low" } },
     );
+
+    expect(
+      rowOne(container).querySelector("[data-better-sidebar-provider]"),
+    ).toBeNull();
+
+    const line = rowOne(container).nextElementSibling!.firstElementChild!;
+    const model = line.querySelector('[data-better-sidebar-row2="model"]')!;
+    expect(model.querySelector("[role='img']")).not.toBeNull();
+    expect(model.textContent).toContain("claude-opus-5 · low");
+
+    // The line now leads with the project, whose own mark is a folder.
+    expect(line.firstElementChild!.getAttribute("data-better-sidebar-row2")).toBe(
+      "project",
+    );
+  });
+
+  it("drops the mark with the model it qualifies", () => {
+    const { container } = renderRow(
+      row({ projectName: "bb", workspaceLabel: "main" }),
+      {},
+      { execution: null },
+    );
+    const line = rowOne(container).nextElementSibling!;
+
+    expect(line.querySelector("[data-better-sidebar-provider]")).toBeNull();
+    expect(line.textContent).toContain("bb");
+  });
+
+  /**
+   * Every mark on a line is the same size, and each line's size is set
+   * against that line's text: 12px beside the 13px title, 10px beside row 2's
+   * `text-2xs`. Asserted against the shared constants, so a change has to be
+   * made in one place rather than agreed across five files.
+   */
+  it("gives a child row a line of its own, carrying model and effort", () => {
+    const { container } = renderRow(
+      row({ depth: 1, projectName: "bb", workspaceLabel: "main" }),
+      {},
+      { execution: { model: "claude-opus-5", reasoningLevel: "low" } },
+    );
+    const line = rowOne(container).nextElementSibling!;
+
+    expect(line.textContent).toContain("claude-opus-5 · low");
+    // Not the root line: a child's project and branch repeat its parent's.
+    expect(line.textContent).not.toContain("bb");
+    expect(line.querySelector("[data-better-sidebar-provider]")).not.toBeNull();
+  });
+
+  /** B71.3, revised: mark and labels go together, never a placeholder. */
+  it("draws a child nothing at all while its model is unknown", () => {
+    const { container } = renderRow(row({ depth: 1 }), {}, { execution: null });
+    const line = rowOne(container).nextElementSibling!;
+
+    expect(line.querySelector("[data-better-sidebar-provider]")).toBeNull();
+    expect(line.textContent).toBe("");
+  });
+
+  /** The time is metadata, so it reads at row 2's weight, not the title's. */
+  it("draws the time at the same colour as row 2's labels", () => {
+    const { container } = renderRow(
+      row({ projectName: "bb", workspaceLabel: "main" }),
+    );
+    const time = trailing(container).lastElementChild!;
+    const labels = rowOne(container).nextElementSibling!.firstElementChild!;
+
+    expect(time.className).toContain("text-muted-foreground/70");
+    expect(labels.className).toContain("text-muted-foreground/70");
+  });
+
+  /**
+   * Whitespace alone divides the labels; no dot is drawn between them. Each
+   * label carries its own mark, so a dot would be a second divider on a line
+   * that is 10px tall. The `·` inside the model label is not a divider: it
+   * joins the model to its effort, which read as one fact.
+   */
+  it.each([
+    ["all three labels", {}],
+    ["project hidden", { showProjectName: false }],
+    ["branch hidden", { showBranch: false }],
+    ["project and branch hidden", { showProjectName: false, showBranch: false }],
+  ])("draws no divider between labels: %s", (_label, props) => {
+    const { container } = renderRow(
+      row({ projectName: "bb", workspaceLabel: "main" }),
+      {},
+      { execution: { model: "claude-opus-5", reasoningLevel: "low" }, ...props },
+    );
+    const line = rowOne(container).nextElementSibling!.firstElementChild!;
+
+    const dividers = [...line.children].filter(
+      (child) => child.textContent === "·",
+    );
+    expect(dividers).toHaveLength(0);
+  });
+
+  it("sizes every row-1 mark alike, and every row-2 mark alike but smaller", () => {
+    const { container } = renderRow(
+      row({
+        thread: thread({ indicator: "waiting-for-input" }),
+        projectName: "bb",
+        workspaceLabel: "main",
+      }),
+    );
+
+    const status = rowOne(container).firstElementChild!.firstElementChild!;
+    expect(status.className).toContain(ROW1_ICON);
+    const cluster = container.querySelector("[data-better-sidebar-row-actions]")!;
+    const buttonGlyphs = cluster.querySelectorAll("svg");
+    expect(buttonGlyphs).toHaveLength(3);
+    for (const glyph of buttonGlyphs) {
+      expect(glyph.getAttribute("class")).toContain(ROW1_ICON);
+    }
+
+    const line = rowOne(container).nextElementSibling!.firstElementChild!;
+    for (const glyph of line.querySelectorAll("svg")) {
+      expect(glyph.getAttribute("class")).toContain(ROW2_ICON);
+    }
+
+    // Row 2's marks are the smaller of the two, or the line reads as icons
+    // with a caption rather than labels with marks.
+    expect(ROW1_ICON).not.toBe(ROW2_ICON);
   });
 
   /**
@@ -474,41 +762,52 @@ describe("ThreadRow row 1 layout (B57)", () => {
     expect(parentIndex).toBe(1);
   });
 
-  /** B57.3: no base left inset; only B9's per-depth nesting indent survives. */
-  it("starts the provider glyph at the row's left edge (B57.3)", () => {
+  /**
+   * Superseding B57.3. The row's base inset is symmetric — content sits
+   * inside its rounded background rather than flush against both edges — and
+   * B9's per-depth indent adds to the left of it.
+   */
+  it("insets the row equally on both sides, then indents by depth", () => {
     const { container: root } = renderRow(row({ depth: 0 }));
     const rootBox = rowElement(root).firstElementChild as HTMLElement;
-    expect(rootBox.style.paddingLeft).toBe("0px");
+    expect(rootBox.style.paddingLeft).toBe("8px");
+    expect(rootBox.style.paddingRight).toBe("8px");
     cleanup();
 
+    // 8px base + 2 x 12px nesting. The RIGHT side never moves: only the left
+    // carries the indent, or a deep child's time would drift inward.
     const { container: child } = renderRow(row({ depth: 2 }));
     const childBox = rowElement(child).firstElementChild as HTMLElement;
-    expect(childBox.style.paddingLeft).toBe("24px");
+    expect(childBox.style.paddingLeft).toBe("32px");
+    expect(childBox.style.paddingRight).toBe("8px");
   });
 
   /**
    * B57.4. `RowSignals` stays mounted at zero width because it owns the
    * IntersectionObserver ref, and under the old per-element margins it changed
-   * what the trailing cluster measured. The gap between the status glyph and
-   * the time must not depend on which siblings happen to draw.
+   * what the trailing cluster measured. Status has left this cluster for the
+   * leading column, so the rule now governs the time alone: a mounted
+   * zero-width sibling must contribute no gap.
    */
-  it("keeps status-to-time spacing identical whatever else draws (B57.4)", () => {
-    const withStatus = renderRow(
+  it("keeps the trailing time's spacing independent of its siblings (B57.4)", () => {
+    const { container } = renderRow(
       row({ thread: thread({ indicator: "waiting-for-input" }) }),
     );
-    const cluster = rowOne(withStatus.container).lastElementChild!;
-    const [signals, status, time] = Array.from(cluster.children);
+    const cluster = trailing(container);
+    const [signals, time] = Array.from(cluster.children);
 
-    // The signals span carries no margin of its own, so a mounted zero-width
-    // element contributes no gap; every element that draws carries the same one.
     expect(signals.getAttribute("class")).not.toContain("ml-");
-    expect(status.getAttribute("class")).toContain("ml-1.5");
     expect(time.getAttribute("class")).toContain("ml-1.5");
-    cleanup();
+  });
 
-    const { container } = renderRow(row({ thread: thread({ indicator: "none" }) }));
-    const bare = rowOne(container).lastElementChild!;
-    expect(bare.lastElementChild!.getAttribute("class")).toContain("ml-1.5");
+  /** The glyph is centred in its column, so it carries no margin of its own. */
+  it("gives the status glyph no margin now that it leads the row", () => {
+    const { container } = renderRow(
+      row({ thread: thread({ indicator: "waiting-for-input" }) }),
+    );
+    const glyphBox = rowOne(container).firstElementChild!.firstElementChild!;
+
+    expect(glyphBox.getAttribute("class")).not.toContain("ml-");
   });
 
   it("renders row 1 only on a child, time included (B52.1, B51.4)", () => {
@@ -551,49 +850,76 @@ describe("ThreadRow row 2 under pressure (B56)", () => {
   const LONG_BRANCH = "bb/create-customizable-plugin-version-with-a-very-long-slug";
 
   function rowTwoLabels(container: HTMLElement) {
-    const one = rowOne(container);
-    const two = one.nextElementSibling!.firstElementChild!;
-    return {
-      project: two.firstElementChild!,
-      branch: two.children[1]!,
+    const two = rowOne(container).nextElementSibling!;
+    // By name, not by index: separators sit between the labels, so a
+    // positional probe breaks whenever the line gains or loses one.
+    const at = (name: string) => {
+      const el = two.querySelector(`[data-better-sidebar-row2="${name}"]`);
+      if (el === null) throw new Error(`no row-2 ${name}`);
+      return el;
     };
+    return { project: at("project"), branch: at("branch") };
   }
 
   /**
-   * B56.1/B56.2, the first polarity: a ten-character project name survives a
-   * branch four times its length. `shrink-0` takes the project out of the
-   * proportional shrink; the branch is the only shrinkable child left, so it
-   * absorbs the whole deficit.
+   * Superseding B56.1 and B56.2, which made the branch the ONE shrinkable
+   * label and capped the project at 45%. A narrow panel then had no way to
+   * share the loss: the branch was starved to its bare glyph while the
+   * project rendered in full, and the model — pinned `shrink-0` behind it —
+   * overflowed the panel with nothing left to take the deficit.
+   *
+   * Every label shrinks now, and none caps its own width. With
+   * `flex-basis: auto` the shrink factor is weighted by natural width, so the
+   * longest label gives up the most and all three keep a readable head.
    */
-  it("leaves a 10-character project intact beside a long branch (B56.1, B56.2)", () => {
+  it("lets every label shrink, and caps none of them", () => {
     const { container } = renderRow(
       row({ projectName: "bb-plugins", workspaceLabel: LONG_BRANCH }),
+      {},
+      { execution: { model: "claude-opus-5", reasoningLevel: "low" } },
     );
-    const { project, branch } = rowTwoLabels(container);
+    const two = rowOne(container).nextElementSibling!.firstElementChild!;
 
-    expect(project.textContent).toBe("bb-plugins");
-    expect(project.getAttribute("class")).toContain("shrink-0");
-    expect(branch.getAttribute("class")).toContain("shrink");
-    expect(branch.getAttribute("class")).toContain("min-w-0");
-    expect(branch.querySelector(".truncate")!.textContent).toBe(LONG_BRANCH);
+    for (const name of ["project", "branch", "model"]) {
+      const label = two.querySelector(`[data-better-sidebar-row2="${name}"]`)!;
+      const className = label.getAttribute("class")!;
+      expect(className).toContain("shrink");
+      expect(className).not.toContain("shrink-0");
+      // `min-w-0` is what allows a flex child below its own content.
+      expect(className).toContain("min-w-0");
+      expect(className).not.toContain("max-w-");
+      // The text truncates; the mark beside it never shrinks.
+      expect(label.querySelector(".truncate")).not.toBeNull();
+    }
+  });
+
+  /** The hard stop: no label may paint past the row's inset. */
+  it("clips the line rather than letting it overflow the row", () => {
+    const { container } = renderRow(
+      row({ projectName: "bb-plugins", workspaceLabel: LONG_BRANCH }),
+      {},
+      { execution: { model: "claude-opus-5", reasoningLevel: "low" } },
+    );
+    const two = rowOne(container).nextElementSibling!.firstElementChild!;
+
+    expect(two.getAttribute("class")).toContain("overflow-hidden");
   });
 
   /**
-   * B56.2, the other polarity: the project is not exempt from truncation, it
-   * is capped. A name that alone exceeds ~45% of row 2 still truncates —
-   * expressed as a percentage of the line, so no pixel is guessed.
+   * Row 1's fixed 28px box leaves ~5px of half-leading under a 13px title,
+   * which read as a gap between the two lines. The 4px is taken back on row 2
+   * rather than off row 1's height, so a row with no second line still
+   * measures exactly one bb row (B54).
    */
-  it("still truncates a project name over its own cap (B56.2)", () => {
+  it("pulls row 2 up without shortening row 1", () => {
     const { container } = renderRow(
-      row({
-        projectName: "a-project-name-far-longer-than-half-this-row",
-        workspaceLabel: "main",
-      }),
+      row({ projectName: "bb", workspaceLabel: "main" }),
     );
-    const { project } = rowTwoLabels(container);
 
-    expect(project.getAttribute("class")).toContain("max-w-[45%]");
-    expect(project.getAttribute("class")).toContain("truncate");
+    // Row 2's wrapper: the sibling right after row 1.
+    const line = rowOne(container).nextElementSibling!;
+    expect(line.className).toContain("-mt-1");
+    expect(rowOne(container).className).toContain("h-7");
   });
 
   /** B56.3: with room to spare, nothing is truncated and nothing is padded. */
@@ -657,6 +983,49 @@ describe("ThreadRow pull request", () => {
         },
       }),
     });
+
+  /**
+   * The chip used to trail the branch, so its x moved row to row with whatever
+   * that row's branch happened to be. Pinned to the trailing edge it forms one
+   * column, under row 1's own trailing cluster.
+   */
+  it("pins the chip to the trailing edge, past every other row-2 child", () => {
+    const { container } = renderRow(withEnvironment(), {
+      sidebarPullRequests: { t1: pr() },
+    });
+
+    const pinned = prChip().closest(".ml-auto");
+    expect(pinned).not.toBeNull();
+
+    const line = pinned!.parentElement!;
+    expect(Array.from(line.children).indexOf(pinned!)).toBe(
+      line.children.length - 1,
+    );
+  });
+
+  it("keeps the chip whole and truncates the branch instead", () => {
+    const { container } = renderRow(
+      row({
+        thread: thread({
+          environment: {
+            id: "e1",
+            name: "better-sidebar",
+            branchName: "feat/a-branch-name-long-enough-to-need-the-whole-line",
+            workspaceDisplayKind: "managed-worktree",
+          },
+        }),
+        workspaceLabel: "feat/a-branch-name-long-enough-to-need-the-whole-line",
+      }),
+      { sidebarPullRequests: { t1: pr() } },
+    );
+
+    // The chip never shrinks — the number is the identifying part and it is
+    // already short. The labels beside it are what give up width.
+    expect(prChip().closest(".ml-auto")!.className).toContain("shrink-0");
+    const branch = container.querySelector('[data-better-sidebar-row2="branch"]')!;
+    expect(branch.getAttribute("class")).toContain("shrink");
+    expect(branch.textContent).toContain("feat/a-branch-name");
+  });
 
   it("makes one PR hook call and shares it with the chip (B33)", () => {
     const { container } = renderRow(withEnvironment(), {
@@ -768,14 +1137,31 @@ describe("ThreadRow hidden elements skip their work (B59, B61)", () => {
   });
 
   /**
-   * Only the mark is hidden, never its box: with the setting off, row 1's
-   * first child still measures `size-3.5`, so the title and row 2 keep the x
-   * they have with the setting on.
+   * Only the mark is hidden, never its column. The column measures the same
+   * 22px either way, so the title and row 2 keep the x they have with the
+   * setting on.
    */
-  it("keeps the provider column reserved when showProviderGlyph is off", () => {
-    const { container } = renderRow(row(), {}, { showProviderGlyph: false });
+  /**
+   * The mark used to sit flush against the row's left border, with the whole
+   * `gap-2` on its right. The column now owns that gap (`-mr-2` cancels it)
+   * and centres the mark inside, without moving the title off 22px.
+   */
+  /**
+   * Row 1's status sits in a 22px gutter; row 2 is indented past that gutter
+   * by the same 22px. So the title and the WHOLE of row 2 — provider mark
+   * first — share one left edge.
+   */
+  it("starts row 2 at the title's x, past row 1's status gutter", () => {
+    const { container } = renderRow(
+      row({ projectName: "bb", workspaceLabel: "main" }),
+    );
+    const gutter = rowOne(container).firstElementChild!;
 
-    expect(rowOne(container).firstElementChild!.className).toContain("size-3.5");
+    expect(gutter.className).toContain("w-[22px]");
+    expect(gutter.className).toContain("justify-center");
+    expect(rowOne(container).nextElementSibling!.className).toContain(
+      "pl-[22px]",
+    );
   });
 
   /**
@@ -790,17 +1176,17 @@ describe("ThreadRow hidden elements skip their work (B59, B61)", () => {
       { lastActivityAt: NOW - 5 * MINUTE },
     );
 
-    expect(rowOne(container).lastElementChild!.textContent).toBe("5m");
+    expect(trailing(container).textContent).toBe("5m");
   });
 
   it("falls back to updatedAt until the lookup lands (B82)", () => {
     const { container } = renderRow(row({ thread: thread({ updatedAt: NOW - DAY }) }));
 
-    expect(rowOne(container).lastElementChild!.textContent).toBe("1d");
+    expect(trailing(container).textContent).toBe("1d");
   });
 
   it("draws no relative time when showRelativeTime is off", () => {
     const { container } = renderRow(row(), {}, { showRelativeTime: false });
-    expect(rowOne(container).lastElementChild!.textContent).not.toContain("1d");
+    expect(trailing(container).textContent).not.toContain("1d");
   });
 });

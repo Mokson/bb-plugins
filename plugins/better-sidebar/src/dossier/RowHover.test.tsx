@@ -82,6 +82,7 @@ function handlers(
     rowSignals: () => ({ signals: [] }),
     threadExecutions: () => ({ executions: [] }),
     lastActivity: () => ({ activity: [] }),
+    localHost: () => ({ hostId: null }),
     ...overrides,
   };
 }
@@ -176,12 +177,14 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+const CLOSE_GRACE_MS = 150;
+
 describe("RowHover hover intent (B26)", () => {
-  it("opens after ~250ms and not before", async () => {
+  it("opens after ~900ms and not before", async () => {
     render(["t1"]);
     hover("t1");
 
-    await advance(249);
+    await advance(899);
     expect(screen.queryByText("Thread t1")).toBeNull();
 
     await advance(1);
@@ -207,11 +210,86 @@ describe("RowHover hover intent (B26)", () => {
     await advance(299);
     expect(screen.queryByText("Thread t1")).toBeNull();
 
-    // The release lands here; hover intent re-arms and needs its own 250ms.
+    // The release lands here; hover intent re-arms and needs its own 900ms.
     await advance(1);
     expect(screen.queryByText("Thread t1")).toBeNull();
-    await advance(250);
+    await advance(900);
     expect(screen.getByText("Thread t1")).not.toBeNull();
+  });
+});
+
+/**
+ * `pointerleave` fires only on a boundary crossing, so it is missed whenever
+ * the row leaves the pointer instead of the pointer leaving the row. Each of
+ * these used to strand an open card with nothing left to close it.
+ */
+describe("RowHover close fallbacks", () => {
+  it("closes when the pointer moves elsewhere without a pointerleave", async () => {
+    render(["t1"]);
+    hover("t1");
+    await advance(950);
+    expect(screen.getByText("Thread t1")).not.toBeNull();
+
+    // The row moved out from under the pointer, so no pointerleave arrives.
+    await act(async () => {
+      fireEvent.pointerMove(document.body);
+    });
+    await advance(CLOSE_GRACE_MS);
+    expect(screen.queryByText("Thread t1")).toBeNull();
+  });
+
+  it("keeps the grace window bounded while the pointer keeps moving outside", async () => {
+    render(["t1"]);
+    const trigger = hover("t1");
+    await advance(950);
+
+    unhover(trigger);
+    // Continuous movement outside must not restart the pending close timer.
+    for (let i = 0; i < 5; i += 1) {
+      await act(async () => {
+        fireEvent.pointerMove(document.body);
+      });
+      await advance(40);
+    }
+    expect(screen.queryByText("Thread t1")).toBeNull();
+  });
+
+  it("still lets the pointer cross onto the card", async () => {
+    render(["t1"]);
+    const trigger = hover("t1");
+    await advance(950);
+
+    unhover(trigger);
+    const card = document.querySelector("[data-better-sidebar-dossier]");
+    if (card === null) throw new Error("no dossier");
+    await act(async () => {
+      fireEvent.pointerMove(card);
+      fireEvent.pointerEnter(card.parentElement as Element);
+    });
+    await advance(2_000);
+    expect(screen.getByText("Thread t1")).not.toBeNull();
+  });
+
+  it("closes on a sidebar scroll, which moves no pointer at all", async () => {
+    render(["t1"]);
+    hover("t1");
+    await advance(950);
+
+    await act(async () => {
+      fireEvent.scroll(document.body);
+    });
+    expect(screen.queryByText("Thread t1")).toBeNull();
+  });
+
+  it("closes when the window loses focus", async () => {
+    render(["t1"]);
+    hover("t1");
+    await advance(950);
+
+    await act(async () => {
+      window.dispatchEvent(new Event("blur"));
+    });
+    expect(screen.queryByText("Thread t1")).toBeNull();
   });
 });
 
@@ -228,7 +306,7 @@ describe("RowHover request accounting (B27, B28)", () => {
     const slot = render(["t1", "t2", "t3"]);
     for (const id of ["t1", "t2", "t3"]) {
       const trigger = hover(id);
-      await advance(300);
+      await advance(950);
       unhover(trigger);
       await advance(10);
     }
@@ -240,14 +318,14 @@ describe("RowHover request accounting (B27, B28)", () => {
   it("a second hover inside the TTL renders on the first paint with no new call", async () => {
     const slot = render(["t1"]);
     const trigger = hover("t1");
-    await advance(300);
+    await advance(950);
     expect(screen.getByText("claude-opus-5 · high")).not.toBeNull();
     const afterFirst = slot.inspection.rpcCalls.length;
 
     unhover(trigger);
     await advance(1_000);
     hover("t1");
-    await advance(250);
+    await advance(900);
 
     // Populated content, and not one further request.
     expect(screen.getByText("claude-opus-5 · high")).not.toBeNull();
@@ -277,7 +355,7 @@ describe("RowHover density: compact (B60.1, B61.3)", () => {
   it("shows the rich card at density detailed", async () => {
     const slot = render(["t1"], { settings: { density: "detailed" } });
     hover("t1");
-    await advance(300);
+    await advance(950);
     expect(screen.getByText("claude-opus-5 · high")).not.toBeNull();
     expect(
       slot.inspection.rpcCalls.filter((c) => c.method === "threadDossier").length,
@@ -287,7 +365,7 @@ describe("RowHover density: compact (B60.1, B61.3)", () => {
   it("carries the full branch in the rich variant too", async () => {
     render(["t1"]);
     hover("t1");
-    await advance(300);
+    await advance(950);
     expect(
       screen.getByText("feat/t1-a-branch-row-two-truncates"),
     ).not.toBeNull();
@@ -312,7 +390,7 @@ describe("RowHover error branch reachability (ruling 10)", () => {
     });
 
     const trigger = hover("t1");
-    await advance(300);
+    await advance(950);
     expect(screen.getByRole("alert").textContent).toBe("backend unavailable");
 
     // The pointer leaves the row on its way to the button.

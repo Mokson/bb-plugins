@@ -3,6 +3,7 @@ import type { PluginSidebarPullRequest } from "@get-bb/plugin-sdk/app";
 import { cn } from "../lib/utils";
 import { Glyph } from "../ui/Glyph";
 import { HoverPopover } from "../ui/HoverPopover";
+import { ROW2_ICON } from "./row-metrics";
 
 /**
  * B63, superseding B34. The chip is tinted by `state` — what this PR is —
@@ -102,7 +103,7 @@ export function PrChip({
       onPointerOver={() => setOpen(true)}
       onPointerOut={() => setOpen(false)}
     >
-      <Glyph name="pull-request" className="size-3" aria-hidden />
+      <Glyph name="pull-request" className={ROW2_ICON} aria-hidden />
       {`#${pullRequest.number}`}
     </span>
   );

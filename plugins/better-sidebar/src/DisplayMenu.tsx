@@ -3,6 +3,8 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import type { PluginSidebarProject } from "@get-bb/plugin-sdk/app";
 import { cn } from "./lib/utils";
 import { usePortalScopeProps } from "./lib/portal-scope";
+import { CONTROL_BUTTON_CLASS } from "./ui/control-button";
+import { COLLISION_PADDING } from "./ui/overlay";
 import { Glyph } from "./ui/Glyph";
 import type { GroupBy } from "./model/types";
 
@@ -22,8 +24,7 @@ const MENU_SURFACE = cn(
   "rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md",
 );
 
-/** Keeps every edge of the menu off every edge of the viewport (B79.1). */
-const COLLISION_PADDING = 8;
+
 
 /** B65's five values, in the order the settings form lists them. */
 const GROUP_BY_OPTIONS: readonly { value: GroupBy; label: string }[] = [
@@ -106,9 +107,10 @@ export function DisplayMenu({
   return (
     <div
       data-better-sidebar-display-options=""
-      // B73.2: no inset of its own. The scroll container carries the 8px
-      // column for every child; a second inset here would sit chrome at 16px.
-      className="relative flex h-6 items-center gap-1 pb-1 pt-1"
+      // Inline in the first section header now, not a row of its own: no
+      // height and no vertical padding, or it would stretch the header it
+      // sits in. The header carries the row's 8px inset for both.
+      className="relative flex items-center gap-1"
     >
       {scopedProject === null ? null : (
         <span
@@ -132,11 +134,7 @@ export function DisplayMenu({
       <DropdownMenu.Root>
         <DropdownMenu.Trigger
           aria-label="Display options"
-          className={cn(
-            "ml-auto flex size-5 shrink-0 items-center justify-center rounded",
-            "text-muted-foreground hover:text-foreground",
-            "focus:outline-none focus:ring-1 focus:ring-ring",
-          )}
+          className={CONTROL_BUTTON_CLASS}
         >
           <Glyph name="sliders" aria-hidden="true" className="size-3.5" />
         </DropdownMenu.Trigger>

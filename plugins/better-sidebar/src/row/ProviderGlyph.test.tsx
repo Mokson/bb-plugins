@@ -6,6 +6,7 @@ import {
   renderSlot,
 } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginProvidersState } from "@get-bb/plugin-sdk/app";
+import { ROW1_ICON, ROW2_ICON } from "./row-metrics";
 
 installTestPluginRuntime();
 
@@ -141,7 +142,8 @@ describe("ProviderGlyph", () => {
 
     expect(container.querySelector("[data-better-sidebar-provider]")).toBeNull();
     // The box survives, so the row does not reflow when the logo arrives.
-    expect(getByRole("img").className).toContain("size-3.5");
+    // Its size is the line's shared icon size, not a number of its own.
+    expect(getByRole("img").className).toContain(ROW1_ICON);
   });
 
   /**
@@ -225,5 +227,84 @@ describe("ProviderGlyph", () => {
     expect(
       container.querySelector('[data-better-sidebar-provider="dot"]'),
     ).not.toBeNull();
+  });
+});
+
+describe("ProviderGlyph sizes", () => {
+  /**
+   * Each line's marks agree with each other and with that line's text: 12px
+   * beside the 13px title, 10px beside row 2's `text-2xs`. The logo fills its
+   * box, so the mark measures exactly the line's icon size.
+   */
+  it("fills its box at both sizes, so the mark measures the icon size", () => {
+    for (const [size, expected] of [
+      ["default", ROW1_ICON],
+      ["small", ROW2_ICON],
+    ] as const) {
+      const { getByRole, container } = renderSlot(
+        { component: ProviderGlyph },
+        { providerId: "acp-claude-code", size },
+        {
+          providers: {
+            status: "ready",
+            providers: [
+              provider({ id: "acp-claude-code", logoUrl: "/logo.svg" }),
+            ],
+          },
+        },
+      );
+
+      expect(getByRole("img").className).toContain(expected);
+      // `mask`, or the light/dark pair when the provider carries a tint.
+      const masks = container.querySelectorAll(
+        '[data-better-sidebar-provider^="mask"]',
+      );
+      expect(masks.length).toBeGreaterThan(0);
+      for (const mask of masks) expect(mask.className).toContain(expected);
+      cleanup();
+    }
+  });
+});
+
+describe("ProviderGlyph monochrome", () => {
+  /**
+   * Row 2 is a run of muted labels; a full-colour brand mark inside it is the
+   * loudest thing on the row and pulls the eye off the words it sits among.
+   */
+  it("ignores the provider's tint and draws one untinted mask", () => {
+    const tinted = provider({
+      id: "acp-claude-code",
+      logoUrl: "/logo.svg",
+      strings: {
+        expiredHint: "expired",
+        installUrl: "https://example.test",
+        signInHint: "sign in",
+        iconTint: { light: "rgb(1, 2, 3)", dark: "rgb(4, 5, 6)" },
+      },
+    });
+
+    const colour = renderSlot(
+      { component: ProviderGlyph },
+      { providerId: "acp-claude-code" },
+      { providers: { status: "ready", providers: [tinted] } },
+    );
+    expect(
+      colour.container.querySelectorAll('[data-better-sidebar-provider^="mask-"]'),
+    ).toHaveLength(2);
+    cleanup();
+
+    const mono = renderSlot(
+      { component: ProviderGlyph },
+      { providerId: "acp-claude-code", monochrome: true },
+      { providers: { status: "ready", providers: [tinted] } },
+    );
+    // One mask, in the line's own colour, rather than a light/dark pair.
+    expect(
+      mono.container.querySelectorAll('[data-better-sidebar-provider^="mask-"]'),
+    ).toHaveLength(0);
+    const mask = mono.container.querySelector(
+      '[data-better-sidebar-provider="mask"]',
+    )!;
+    expect(mask.className).toContain("bg-muted-foreground");
   });
 });

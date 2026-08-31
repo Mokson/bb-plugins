@@ -8,17 +8,31 @@ export type GroupBy = "date" | "project" | "host" | "status" | "none";
 /** B60: one axis for row 2, the hover card and the signal glyphs. */
 export type Density = "compact" | "default" | "detailed";
 
-/** B59: the seven settings, all server-backed through `bb.settings.define`. */
+/** The settings, all server-backed through `bb.settings.define` (B59). */
 export interface BetterSidebarSettings {
   groupBy: GroupBy;
   density: Density;
   showPrChip: boolean;
-  showProviderGlyph: boolean;
   showRelativeTime: boolean;
   /** B11: archived children under an expanded parent. */
   showArchivedChildren: boolean;
   /** B58: the child-threads chip in bb's thread header. */
   showHeaderChip: boolean;
+  /**
+   * A hard off-switch for row 2. With it on, `density` and the grouping mode
+   * still decide (B60): `compact` draws none, and grouping by project already
+   * says the project.
+   */
+  showSecondRow: boolean;
+  /** Row 2's project name. Redundant when the grouping or scope already says it. */
+  showProjectName: boolean;
+  /** Row 2's git branch — the longest label on the line, and the one that truncates. */
+  showBranch: boolean;
+  /**
+   * Row 2's model and effort. The only field on the line that costs a backend
+   * lookup, so it is the only one whose toggle also switches off a request.
+   */
+  showModel: boolean;
 }
 
 export type DateBucketKey = "today" | "yesterday" | "last-7" | "last-30" | "older";
@@ -83,8 +97,18 @@ export interface ListModelInput {
   readonly projectFilter: string | null;
   /** B68. `null` falls back to `latestAttentionAt` order, the B68.3 seed. */
   readonly sectionOrder: SectionOrder | null;
+  /**
+   * The machine bb runs on. A row whose host matches drops the host name from
+   * its workspace label (B16's last resort). `null` while the lookup is in
+   * flight, or when it failed — every row keeps its label.
+   */
+  readonly localHostId: string | null;
   readonly collapsedSections: ReadonlySet<SectionKey>;
-  readonly collapsedThreadIds: ReadonlySet<string>;
+  /**
+   * B10, inverted: the parents the user has OPENED. A parent with children is
+   * collapsed until it appears here.
+   */
+  readonly expandedThreadIds: ReadonlySet<string>;
 }
 
 export interface RenderRow {

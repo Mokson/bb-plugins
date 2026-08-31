@@ -8,6 +8,7 @@ import {
   resolveTitle,
   resolveWorkspaceLabel,
   sectionKeyOf,
+  usesHostLabel,
 } from "./list-model";
 // The REAL reconciler, not a copy of it (F6). Every entrance-order test below
 // drives `useSectionOrder`'s own output into `buildListModel`, so the hook and
@@ -78,9 +79,13 @@ function input(
     searchQuery: "",
     now: NOW,
     projectFilter: null,
+    localHostId: null,
     sectionOrder: null,
     collapsedSections: new Set<SectionKey>(),
-    collapsedThreadIds: new Set<string>(),
+    // Every parent opened. The model's own default is CLOSED, but most cases
+    // below are about ordering and sectioning and want the full tree; the
+    // closed default has its own tests.
+    expandedThreadIds: new Set(threads.map((entry) => entry.id)),
     ...overrides,
   };
 }
@@ -89,10 +94,13 @@ const DEFAULT_SETTINGS: BetterSidebarSettings = {
   groupBy: "date",
   density: "default",
   showPrChip: true,
-  showProviderGlyph: true,
   showRelativeTime: true,
   showArchivedChildren: true,
   showHeaderChip: true,
+  showSecondRow: true,
+  showProjectName: true,
+  showBranch: true,
+  showModel: true,
 };
 
 /**
@@ -244,6 +252,64 @@ describe("nesting (B9) and archived children (B11)", () => {
     expect(busy.sections[0]!.rows[0]!.childCount).toBe(16);
   });
 
+  /**
+   * B10, inverted. The rule the app runs on: a parent with children is closed
+   * unless its id is in the expanded set. Every other case in this file opts
+   * INTO the open tree through `input()`, so this is the one that pins the
+   * default itself.
+   */
+  it("collapses every parent by default, whatever the depth", () => {
+    const threads = [
+      thread("parent"),
+      thread("child", { parentThreadId: "parent" }),
+      thread("grandchild", { parentThreadId: "child" }),
+      thread("other"),
+    ];
+    const model = buildListModel(
+      input(threads, { expandedThreadIds: new Set<string>() }),
+    );
+
+    expect(sequence(model)).toEqual(["other", "parent"]);
+  });
+
+  it("opens one level at a time, never the whole subtree at once", () => {
+    const threads = [
+      thread("parent"),
+      thread("child", { parentThreadId: "parent" }),
+      thread("grandchild", { parentThreadId: "child" }),
+    ];
+
+    // Opening the parent reveals its child, whose own subtree stays closed.
+    expect(
+      sequence(
+        buildListModel(input(threads, { expandedThreadIds: new Set(["parent"]) })),
+      ),
+    ).toEqual(["parent", "child"]);
+
+    expect(
+      sequence(
+        buildListModel(
+          input(threads, { expandedThreadIds: new Set(["parent", "child"]) }),
+        ),
+      ),
+    ).toEqual(["parent", "child", "grandchild"]);
+  });
+
+  /** An id in the set whose parent is closed reveals nothing on its own. */
+  it("keeps a grandchild hidden while its parent's parent is closed", () => {
+    const threads = [
+      thread("parent"),
+      thread("child", { parentThreadId: "parent" }),
+      thread("grandchild", { parentThreadId: "child" }),
+    ];
+
+    expect(
+      sequence(
+        buildListModel(input(threads, { expandedThreadIds: new Set(["child"]) })),
+      ),
+    ).toEqual(["parent"]);
+  });
+
   it("keeps a section's count invariant across collapsing a subtree in it (B53.5)", () => {
     const threads = [
       thread("parent"),
@@ -253,7 +319,7 @@ describe("nesting (B9) and archived children (B11)", () => {
     ];
     const expanded = buildListModel(input(threads));
     const collapsed = buildListModel(
-      input(threads, { collapsedThreadIds: new Set(["parent"]) }),
+      input(threads, { expandedThreadIds: new Set<string>() }),
     );
 
     expect(expanded.sections[0]!.rows).toHaveLength(4);
@@ -272,7 +338,7 @@ describe("nesting (B9) and archived children (B11)", () => {
     expect(
       sequence(
         buildListModel(
-          input(threads, { collapsedThreadIds: new Set(["parent"]) }),
+          input(threads, { expandedThreadIds: new Set<string>() }),
         ),
       ),
     ).toEqual(["parent"]);
@@ -351,6 +417,7 @@ describe("workspace label (B16 under the §7 ruling)", () => {
           },
           host: { id: "h", name: "mac" },
         }),
+        null,
       ),
     ).toBe("feat/x");
   });
@@ -362,6 +429,7 @@ describe("workspace label (B16 under the §7 ruling)", () => {
         thread("a", {
           environment: { ...env, workspaceDisplayKind: "unmanaged-worktree" },
         }),
+        null,
       ),
     ).toBe("wt");
     expect(
@@ -370,20 +438,97 @@ describe("workspace label (B16 under the §7 ruling)", () => {
           environment: { ...env, workspaceDisplayKind: "other" },
           host: { id: "h", name: "mac" },
         }),
+        null,
       ),
     ).toBe("mac");
   });
 
   it("yields null for a null environment without throwing", () => {
-    expect(resolveWorkspaceLabel(thread("a", { environment: null }))).toBeNull();
+    expect(resolveWorkspaceLabel(thread("a", { environment: null }), null)).toBeNull();
     expect(
       resolveWorkspaceLabel(
         thread("a", {
           environment: null,
           host: { id: "h", name: "mac" },
         }),
+        null,
       ),
     ).toBeNull();
+  });
+
+  it("drops the machine name when the thread runs on this machine", () => {
+    const local = thread("a", {
+      environment: {
+        id: "e",
+        name: null,
+        branchName: null,
+        workspaceDisplayKind: "other",
+      },
+      host: { id: "host_1", name: "maxbook" },
+    });
+
+    expect(resolveWorkspaceLabel(local, "host_1")).toBeNull();
+    // A different machine is exactly the case the name is worth drawing for.
+    expect(resolveWorkspaceLabel(local, "host_2")).toBe("maxbook");
+    // Unknown local host: nothing is hidden.
+    expect(resolveWorkspaceLabel(local, null)).toBe("maxbook");
+  });
+
+  it("keeps a branch even on this machine, because a branch is not the machine", () => {
+    const local = thread("a", {
+      environment: {
+        id: "e",
+        name: null,
+        branchName: "feat/x",
+        workspaceDisplayKind: "other",
+      },
+      host: { id: "host_1", name: "maxbook" },
+    });
+
+    expect(resolveWorkspaceLabel(local, "host_1")).toBe("feat/x");
+  });
+
+  it("asks for the local host only for a thread whose label would use it", () => {
+    const withBranch = thread("a", {
+      environment: {
+        id: "e",
+        name: null,
+        branchName: "feat/x",
+        workspaceDisplayKind: "other",
+      },
+      host: { id: "host_1", name: "maxbook" },
+    });
+    const withoutHost = thread("b", {
+      environment: {
+        id: "e",
+        name: null,
+        branchName: null,
+        workspaceDisplayKind: "other",
+      },
+      host: null,
+    });
+    const needsIt = thread("c", {
+      environment: {
+        id: "e",
+        name: null,
+        branchName: null,
+        workspaceDisplayKind: "other",
+      },
+      host: { id: "host_1", name: "maxbook" },
+    });
+
+    // B16 skips the WHOLE chain without an environment, machine included, so
+    // a thread with none cannot spend the request either.
+    const noEnvironment = thread("d", {
+      environment: null,
+      host: { id: "host_1", name: "maxbook" },
+    });
+
+    expect(usesHostLabel(withBranch)).toBe(false);
+    expect(usesHostLabel(withoutHost)).toBe(false);
+    expect(usesHostLabel(noEnvironment)).toBe(false);
+    expect(usesHostLabel(needsIt)).toBe(true);
+    expect(resolveWorkspaceLabel(noEnvironment, null)).toBeNull();
   });
 
   it("yields null when the whole chain is empty", () => {
@@ -398,6 +543,7 @@ describe("workspace label (B16 under the §7 ruling)", () => {
           },
           host: null,
         }),
+        null,
       ),
     ).toBeNull();
   });
@@ -613,7 +759,7 @@ describe("entrance order (B68, B69)", () => {
       thread("tail", { latestAttentionAt: NOW - 5000 }),
     ];
     // Mounted while `p` is collapsed: the children were never rendered.
-    const collapsed = { collapsedThreadIds: new Set(["p"]) };
+    const collapsed = { expandedThreadIds: new Set<string>() };
     const seeded = mount(threads);
     expect(sequence(buildListModel(input(threads, { ...collapsed, sectionOrder: seeded })))).toEqual([
       "p",

@@ -94,6 +94,7 @@ function render(threadIds: string[], signals: RowSignal[]) {
         }),
         threadExecutions: () => ({ executions: [] }),
         lastActivity: () => ({ activity: [] }),
+        localHost: () => ({ hostId: null }),
       },
     },
   );
@@ -262,6 +263,7 @@ describe("useRowSignals batching (§7 B37-B40 ruling)", () => {
           },
           threadExecutions: () => ({ executions: [] }),
           lastActivity: () => ({ activity: [] }),
+          localHost: () => ({ hostId: null }),
         },
       },
     );

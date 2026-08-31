@@ -4,7 +4,7 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { useCollapse } from "./useCollapse";
 
 const SECTIONS_KEY = "better-sidebar:collapsed-sections";
-const THREADS_KEY = "better-sidebar:collapsed-threads";
+const THREADS_KEY = "better-sidebar:expanded-threads";
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -13,10 +13,11 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("useCollapse", () => {
-  it("starts with nothing collapsed", () => {
+  it("starts with no section folded and no subtree opened", () => {
     const { result } = renderHook(() => useCollapse());
     expect(result.current.collapsedSections.size).toBe(0);
-    expect(result.current.collapsedThreadIds.size).toBe(0);
+    // Empty means every parent is at its default, which is CLOSED.
+    expect(result.current.expandedThreadIds.size).toBe(0);
   });
 
   it("toggles a section and survives a remount by reading localStorage back", () => {
@@ -38,12 +39,26 @@ describe("useCollapse", () => {
     expect(window.localStorage.getItem(SECTIONS_KEY)).toBe("[]");
   });
 
-  it("persists collapsed subtrees separately from sections (B10)", () => {
+  it("persists opened subtrees separately from sections (B10)", () => {
     const { result } = renderHook(() => useCollapse());
     act(() => result.current.toggleThread("t-parent"));
-    expect(result.current.collapsedThreadIds.has("t-parent")).toBe(true);
+    expect(result.current.expandedThreadIds.has("t-parent")).toBe(true);
     expect(result.current.collapsedSections.size).toBe(0);
     expect(window.localStorage.getItem(THREADS_KEY)).toBe('["t-parent"]');
+  });
+
+  /**
+   * The stored list flipped meaning from "collapsed" to "expanded". Reusing
+   * the key would have handed anyone with a saved value the exact inverse of
+   * the tree they left.
+   */
+  it("ignores a value stored under the old collapsed-threads key", () => {
+    window.localStorage.setItem(
+      "better-sidebar:collapsed-threads",
+      '["t-parent"]',
+    );
+    const { result } = renderHook(() => useCollapse());
+    expect(result.current.expandedThreadIds.size).toBe(0);
   });
 
   it.each([

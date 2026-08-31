@@ -15,10 +15,13 @@ export const SETTINGS_DEFAULTS: BetterSidebarSettings = {
   groupBy: "date",
   density: "default",
   showPrChip: true,
-  showProviderGlyph: true,
   showRelativeTime: true,
   showArchivedChildren: true,
   showHeaderChip: true,
+  showSecondRow: true,
+  showProjectName: true,
+  showBranch: true,
+  showModel: true,
 };
 
 /**
@@ -26,8 +29,10 @@ export const SETTINGS_DEFAULTS: BetterSidebarSettings = {
  * settings values to `BetterSidebarSettings`. An absent value, a value of the
  * wrong type, or an unrecognized enum member all fall back to the default
  * (B59.2) — a future settings option added server-side must degrade, never
- * crash. B59 removed `secondRow` and `tooltip`; their stored values orphan
- * here, because a key this function does not read cannot reach the list.
+ * crash. B59 removed `secondRow` and `tooltip`, and `showProviderGlyph` went with
+ * the mark it governed — the provider now hides with the model it qualifies.
+ * Their stored values orphan here, because a key this function does not read
+ * cannot reach the list.
  */
 export function parseSettings(
   values: Record<string, string | boolean> | undefined,
@@ -36,10 +41,6 @@ export function parseSettings(
     groupBy: pick(values?.groupBy, GROUP_BY_VALUES, SETTINGS_DEFAULTS.groupBy),
     density: pick(values?.density, DENSITY_VALUES, SETTINGS_DEFAULTS.density),
     showPrChip: flag(values?.showPrChip, SETTINGS_DEFAULTS.showPrChip),
-    showProviderGlyph: flag(
-      values?.showProviderGlyph,
-      SETTINGS_DEFAULTS.showProviderGlyph,
-    ),
     showRelativeTime: flag(
       values?.showRelativeTime,
       SETTINGS_DEFAULTS.showRelativeTime,
@@ -49,6 +50,13 @@ export function parseSettings(
       SETTINGS_DEFAULTS.showArchivedChildren,
     ),
     showHeaderChip: flag(values?.showHeaderChip, SETTINGS_DEFAULTS.showHeaderChip),
+    showSecondRow: flag(values?.showSecondRow, SETTINGS_DEFAULTS.showSecondRow),
+    showProjectName: flag(
+      values?.showProjectName,
+      SETTINGS_DEFAULTS.showProjectName,
+    ),
+    showBranch: flag(values?.showBranch, SETTINGS_DEFAULTS.showBranch),
+    showModel: flag(values?.showModel, SETTINGS_DEFAULTS.showModel),
   };
 }
 

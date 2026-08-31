@@ -1,18 +1,30 @@
-import { useCallback, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import {
   experimental_useSidebarThreads as useSidebarThreads,
+  useBbNavigate,
   useSettings,
   type PluginSidebarThread,
   type PluginThreadListProps,
 } from "@get-bb/plugin-sdk/app";
 import { cn } from "./lib/utils";
 import { useResolvedSettings } from "./useResolvedSettings";
-import { buildListModel, sectionKeyOf } from "./model/list-model";
+import { buildListModel, sectionKeyOf, usesHostLabel } from "./model/list-model";
+import { ROW1_ICON } from "./row/row-metrics";
+import { useLocalHostId } from "./row/useLocalHostId";
+import { useThreadExecutions } from "./header/useThreadExecutions";
 import { dimLevelFor } from "./model/buckets";
 import type { Density, GroupBy, RenderSection } from "./model/types";
 import { ALL_PROJECTS, DisplayMenu } from "./DisplayMenu";
 import { ThreadRow } from "./row/ThreadRow";
 import { useLastActivity } from "./row/useLastActivity";
+import { CONTROL_BUTTON_CLASS } from "./ui/control-button";
 import { Glyph } from "./ui/Glyph";
 import { ListEmpty, ListError, ListLoading, ListNoMatches } from "./ui/ListStates";
 import { useCollapse } from "./useCollapse";
@@ -69,6 +81,17 @@ function ThreadListBody({
     [settings.groupBy, now],
   );
   const sectionOrder = useSectionOrder(threads, sectionOf);
+  const navigate = useBbNavigate();
+  // The setting is a hard off-switch; with it on, B60's density and grouping
+  // rule still decides.
+  const showSecondRow =
+    settings.showSecondRow && showsSecondRow(settings.density, settings.groupBy);
+  // B61: a machine name is only ever drawn as the branch label's last resort,
+  // so every switch that hides that label also cancels the request — and so
+  // does a list where no thread's chain reaches the machine step at all.
+  const localHostId = useLocalHostId(
+    showSecondRow && settings.showBranch && threads.some(usesHostLabel),
+  );
 
   const model = useMemo(
     () =>
@@ -79,9 +102,10 @@ function ThreadListBody({
         searchQuery,
         now,
         projectFilter: projectFilter === ALL_PROJECTS ? null : projectFilter,
+        localHostId,
         sectionOrder,
         collapsedSections: collapse.collapsedSections,
-        collapsedThreadIds: collapse.collapsedThreadIds,
+        expandedThreadIds: collapse.expandedThreadIds,
       }),
     [
       threads,
@@ -92,9 +116,10 @@ function ThreadListBody({
       searchQuery,
       now,
       projectFilter,
+      localHostId,
       sectionOrder,
       collapse.collapsedSections,
-      collapse.collapsedThreadIds,
+      collapse.expandedThreadIds,
     ],
   );
 
@@ -122,6 +147,27 @@ function ThreadListBody({
     header.focus();
   }, []);
 
+  /*
+   * B61: model and effort are fetched for the rows the list is actually
+   * drawing, and for nothing else. A collapsed parent's children contribute no
+   * id, a hidden second row contributes none, and `showModel: false` empties
+   * the set outright — which is the only field on row 2 whose toggle also
+   * switches off a request.
+   */
+  const executionIds = useMemo(
+    () =>
+      showSecondRow && settings.showModel
+        ? model.sections.flatMap((section) =>
+            section.rows.map((entry) => entry.thread.id),
+          )
+        : [],
+    [model, showSecondRow, settings.showModel],
+  );
+  const { executions } = useThreadExecutions(
+    executionIds,
+    executionIds.length > 0,
+  );
+
   if (status === "loading") return <ListLoading />;
   if (status === "error") return <ListError onRetry={onRetry} />;
 
@@ -133,6 +179,25 @@ function ThreadListBody({
   // B64.5: the control renders above every ready state, compact included —
   // including the empty ones, which is the only place the user can undo a scope
   // that hid everything.
+  const newThread = (
+    <button
+      type="button"
+      aria-label="New thread"
+      title="New thread"
+      onClick={() => navigate.toCompose({ focusPrompt: true })}
+      className={CONTROL_BUTTON_CLASS}
+    >
+      <Glyph
+        name="new-thread"
+        aria-hidden="true"
+        // bb draws this one at stroke-width 1.5; the bubble plus a `+` is
+        // dense enough that the plugin's own 2 reads as a blob at 14px.
+        strokeWidth={1.5}
+        className="size-4"
+      />
+    </button>
+  );
+
   const displayMenu = (
     <DisplayMenu
       projects={projects}
@@ -143,6 +208,13 @@ function ThreadListBody({
       // B79.4: a 320px panel gets the flat menu, which fits it.
       isCompactViewport={isCompactViewport}
     />
+  );
+
+  const controls = (
+    <span className="ml-auto flex shrink-0 items-center gap-0.5">
+      {newThread}
+      {displayMenu}
+    </span>
   );
 
   if (model.sections.length === 0) {
@@ -161,7 +233,6 @@ function ThreadListBody({
     );
   }
 
-  const showSecondRow = showsSecondRow(settings.density, settings.groupBy);
   // Rebuilt each render so the jump table cannot outlive the sections it indexes.
   headersRef.current = [];
 
@@ -175,12 +246,15 @@ function ThreadListBody({
       className="flex h-full flex-col overflow-y-auto px-2 py-1"
       onKeyDown={onKeyDown}
     >
-      {displayMenu}
       {model.sections.map((section, index) => (
         <section key={section.key} data-sidebar-section={section.key}>
           <SectionHeader
             section={section}
             onToggle={() => collapse.toggleSection(section.key)}
+            // The panel's controls live on the FIRST header rather than on a
+            // strip of their own: that strip was a whole row spent on two
+            // icons, and the header already reaches the same trailing edge.
+            actions={index === 0 ? controls : null}
             ref={(node) => {
               headersRef.current[index] = node;
             }}
@@ -193,17 +267,21 @@ function ThreadListBody({
               // B82: the row's own `updatedAt` until the lookup lands.
               lastActivityAt={lastActivity.get(row.thread.id)}
               showSecondRow={showSecondRow}
+              // B71.3: undefined until the batch lands, then the resolved
+              // model or null for a thread that never ran.
+              execution={executions.get(row.thread.id) ?? null}
               // B61: each of these skips work, not pixels — the PR hook is
               // never called and the signal observer is never mounted.
               showPrChip={settings.showPrChip}
-              showProviderGlyph={settings.showProviderGlyph}
+              showProjectName={settings.showProjectName}
+              showBranch={settings.showBranch}
               showRelativeTime={settings.showRelativeTime}
               showSignals={settings.density === "detailed"}
               isCompactViewport={isCompactViewport}
               // B47: the host clears its search field and closes the mobile
               // drawer here, so every open path goes through it.
               onNavigate={onNavigate}
-              isSubtreeCollapsed={collapse.collapsedThreadIds.has(row.thread.id)}
+              isSubtreeCollapsed={!collapse.expandedThreadIds.has(row.thread.id)}
               onToggleSubtree={
                 row.childCount > 0 ? () => collapse.toggleThread(row.thread.id) : undefined
               }
@@ -230,24 +308,32 @@ function showsSecondRow(density: Density, groupBy: GroupBy): boolean {
 function SectionHeader({
   section,
   onToggle,
+  actions,
   ref,
 }: {
   section: RenderSection;
   onToggle: () => void;
+  /** The panel's controls, on the first header only. */
+  actions?: ReactNode;
   ref: (node: HTMLElement | null) => void;
 }) {
-  // B53.1: the count sits at the far right of the header row. Left-adjacent it
-  // read as part of the label — `TODAY 22` looked like a title, not a tally.
-  const label = (
-    <>
-      <span className="flex-1 truncate text-left">{section.label}</span>
-      <span className="tabular-nums text-muted-foreground/70">{section.count}</span>
-    </>
-  );
-  const className = cn(
-    // B73.2: no inset of its own. The scroll container carries the 8px column,
-    // so the header's left edge and row 1's left edge are the same edge.
-    "flex w-full items-center gap-1.5 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide",
+  // Superseding B53.1: the header carries its label and nothing else. The
+  // tally answered a question nobody asks of a date bucket, and it put a
+  // second number in a column the row's own time already owns.
+  // `RenderSection.count` is still computed — the model's own root-only rule
+  // (B53.4) is tested there — it is simply not drawn.
+  // Intrinsic, not `flex-1`: the chevron sits beside the label rather than
+  // out at the trailing edge, so the label must not stretch past its text.
+  const label = <span className="min-w-0 truncate text-left">{section.label}</span>;
+  // The row the header occupies. It is never the focusable element: the
+  // collapsible variant nests a button inside it, and the panel's controls
+  // are buttons too — one interactive element inside another is invalid, and
+  // a click on the display menu would toggle the section under it.
+  const rowClass = cn(
+    // `px-2` is the row's own inset, so a header's label starts on the same x
+    // as the leading MARK of every row beneath it — which is where bb's own
+    // sidebar puts it.
+    "group/section flex w-full items-center gap-1.5 px-2 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide",
     "text-muted-foreground",
     dimClassFor(section),
   );
@@ -256,27 +342,46 @@ function SectionHeader({
   // that could hide them would defeat the reason they are hoisted at all.
   if (!section.isCollapsible) {
     return (
-      <h2 ref={ref} tabIndex={-1} className={className}>
+      <h2 ref={ref} tabIndex={-1} className={rowClass}>
         {label}
+        {actions}
       </h2>
     );
   }
+
   return (
-    <h2 className="contents">
+    <h2 className={rowClass}>
       <button
         ref={ref}
         type="button"
         tabIndex={-1}
         onClick={onToggle}
         aria-expanded={!section.isCollapsed}
-        className={cn(className, "hover:text-foreground")}
+        className="flex min-w-0 items-center gap-1.5 hover:text-foreground"
       >
+        {label}
+        {/* Beside the label it controls, not out at the trailing edge: the
+            control and the thing it collapses read as one target.
+
+            Revealed when the pointer is anywhere on the HEADER, not only on
+            the toggle: the group sits on the row, so reaching for the control
+            does not require having already found it — EXCEPT while the
+            section is collapsed. A collapsed section persists across reloads,
+            so a returning user would meet a header with no rows under it and
+            no visible control to open it. The one state that needs saying
+            keeps saying it. */}
         <Glyph
           name={section.isCollapsed ? "chevron-right" : "chevron-down"}
-          className="size-3 shrink-0"
+          className={cn(
+            ROW1_ICON,
+            "shrink-0 transition-opacity",
+            section.isCollapsed
+              ? "opacity-100"
+              : "opacity-0 group-hover/section:opacity-100 group-focus-within/section:opacity-100",
+          )}
         />
-        {label}
       </button>
+      {actions}
     </h2>
   );
 }

@@ -181,11 +181,6 @@ export default function plugin(bb: BbPluginApi) {
       description: "Off also skips the per-row pull-request subscription.",
       default: true,
     },
-    showProviderGlyph: {
-      type: "boolean",
-      label: "Show the provider logo",
-      default: true,
-    },
     showRelativeTime: {
       type: "boolean",
       label: "Show the relative time",
@@ -200,6 +195,30 @@ export default function plugin(bb: BbPluginApi) {
     showHeaderChip: {
       type: "boolean",
       label: "Show the child-threads chip in the thread header",
+      default: true,
+    },
+    showSecondRow: {
+      type: "boolean",
+      label: "Show the metadata row under each title",
+      description:
+        "Off hides it everywhere. On, density and grouping still decide: compact draws none, and grouping by project already says the project.",
+      default: true,
+    },
+    showProjectName: {
+      type: "boolean",
+      label: "Show the project name on the metadata row",
+      default: true,
+    },
+    showBranch: {
+      type: "boolean",
+      label: "Show the git branch on the metadata row",
+      default: true,
+    },
+    showModel: {
+      type: "boolean",
+      label: "Show the model and effort on the metadata row",
+      description:
+        "The only field on the row that costs a backend lookup. Off, the list asks for no execution options at all.",
       default: true,
     },
   });
@@ -230,6 +249,18 @@ export default function plugin(bb: BbPluginApi) {
         threadIds.map((threadId) => loadLastActivity(bb.sdk.threads, threadId)),
       ),
     }),
+    // A row's host name is worth drawing only when the work runs somewhere
+    // else. `primaryHostId` is bb's own machine; a config read that fails
+    // degrades to null, which keeps every label rather than hiding one wrongly.
+    localHost: async () => {
+      try {
+        const config = await bb.sdk.system.config();
+        return { hostId: config.primaryHostId ?? null };
+      } catch (error) {
+        bb.log.warn(`localHost: system.config failed: ${String(error)}`);
+        return { hostId: null };
+      }
+    },
   });
 
   // B28, re-worded by §7: `thread/tokenUsage/updated` is not subscribable, but

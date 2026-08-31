@@ -38,8 +38,49 @@ const WORKTREE_KINDS = new Set(["managed-worktree", "unmanaged-worktree"]);
  * B16 as re-worded in §7: `environment.branchName` → `environment.name` when the
  * workspace is a worktree → `host.name` → null, and the whole chain is skipped
  * when `environment` is null.
+ *
+ * `localHostId` cuts the chain one step short: the machine is the LAST resort,
+ * and it only says something when the work runs elsewhere. On the current
+ * machine it is the same word on every row, so the row draws nothing instead.
  */
-export function resolveWorkspaceLabel(thread: PluginSidebarThread): string | null {
+export function resolveWorkspaceLabel(
+  thread: PluginSidebarThread,
+  localHostId: string | null,
+): string | null {
+  const workspace = resolveWorkspaceOnly(thread);
+  if (workspace !== null) return workspace;
+  if (!reachesHostStep(thread)) return null;
+  if (thread.host === null || thread.host.id === localHostId) return null;
+  const host = thread.host.name.trim();
+  return host ? host : null;
+}
+
+/**
+ * True when this thread's label chain would fall through to its machine name.
+ *
+ * B61: the current machine's id costs one request, so it is fetched only when
+ * some thread could actually spend it. A list where every thread has a branch
+ * — or one drawing no second row at all — asks the backend nothing.
+ *
+ * Defined as the chain itself running out, rather than as its own copy of the
+ * branch and worktree tests: two copies of one fall-through drift the moment
+ * B16 gains a step.
+ */
+export function usesHostLabel(thread: PluginSidebarThread): boolean {
+  return thread.host !== null && reachesHostStep(thread);
+}
+
+/**
+ * True when B16's chain runs past every workspace step and arrives at the
+ * machine name. A thread with no `environment` never gets there: B16 skips the
+ * WHOLE chain in that case, machine included.
+ */
+function reachesHostStep(thread: PluginSidebarThread): boolean {
+  return Boolean(thread.environment) && resolveWorkspaceOnly(thread) === null;
+}
+
+/** B16's chain up to but not including the machine name. */
+function resolveWorkspaceOnly(thread: PluginSidebarThread): string | null {
   const environment = thread.environment;
   if (!environment) return null;
   const branch = environment.branchName?.trim();
@@ -48,8 +89,7 @@ export function resolveWorkspaceLabel(thread: PluginSidebarThread): string | nul
     const name = environment.name?.trim();
     if (name) return name;
   }
-  const host = thread.host?.name.trim();
-  return host ? host : null;
+  return null;
 }
 
 /** Descending `latestAttentionAt`, `id` breaking ties so the order is total (B5). */
@@ -170,7 +210,7 @@ function buildTree(input: ListModelInput): Tree {
       result =
         input.settings.showArchivedChildren &&
         parent !== undefined &&
-        !input.collapsedThreadIds.has(parent.id) &&
+        input.expandedThreadIds.has(parent.id) &&
         isVisible(parent, seen);
     }
     decided.set(thread.id, result);
@@ -269,12 +309,13 @@ function makeRow(
   sectionKey: SectionKey,
   depth: number,
   projectNames: ReadonlyMap<string, string>,
+  localHostId: string | null,
   projectNameFallback: string | null = null,
 ): RenderRow {
   return {
     thread,
     title: resolveTitle(thread),
-    workspaceLabel: resolveWorkspaceLabel(thread),
+    workspaceLabel: resolveWorkspaceLabel(thread, localHostId),
     depth,
     childCount: tree.childrenOf.get(thread.id)?.length ?? 0,
     projectName: projectNames.get(thread.projectId) ?? projectNameFallback,
@@ -293,8 +334,9 @@ function flattenSubtree(
   out: RenderRow[],
   depth = 0,
 ): void {
-  out.push(makeRow(root, tree, sectionKey, depth, projectNames));
-  if (input.collapsedThreadIds.has(root.id)) return;
+  out.push(makeRow(root, tree, sectionKey, depth, projectNames, input.localHostId));
+  // B10, inverted: a subtree is closed unless the user opened it.
+  if (!input.expandedThreadIds.has(root.id)) return;
   for (const child of tree.childrenOf.get(root.id) ?? []) {
     flattenSubtree(child, tree, input, sectionKey, projectNames, out, depth + 1);
   }
@@ -363,7 +405,15 @@ function buildSearchSections(
     sequence: sequenceOf(thread, input.sectionOrder),
   }));
   const rows = rankSearch(candidates, input.searchQuery).map((candidate) =>
-    makeRow(candidate.thread, tree, "search", 0, projectNames, candidate.projectName),
+    makeRow(
+      candidate.thread,
+      tree,
+      "search",
+      0,
+      projectNames,
+      input.localHostId,
+      candidate.projectName,
+    ),
   );
   if (rows.length === 0) return [];
   return [makeSection("search", rows, rows.length, input, dynamicLabels)];

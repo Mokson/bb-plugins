@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { cn } from "../lib/utils";
-import { TRAILING_GLYPH_BOX_CLASS } from "./StatusGlyph";
+import { GLYPH_BOX_CLASS, ROW1_ICON, ROW2_ICON } from "./row-metrics";
 import { useProviderMark } from "./useProviderMark";
 
 function providerMaskStyle(logoUrl: string): CSSProperties {
@@ -16,6 +16,20 @@ function providerMaskStyle(logoUrl: string): CSSProperties {
     WebkitMaskSize: "contain",
   };
 }
+
+/**
+ * The two sizes the row draws. `small` is row 2's inline mark, which sits in a
+ * `text-2xs` line beside the project name and would shout at the row-1 size.
+ * Every layer scales together — box, logo mask and unknown-provider dot — so
+ * the mark stays centred and the fallback stays proportionate.
+ */
+const MARK_SIZES = {
+  default: { box: ROW1_ICON, mask: ROW1_ICON, dot: "size-2" },
+  // The logo fills its box, so the mark measures the same as every other
+  // icon on its line. Only the unknown-provider DOT stays smaller: it is a
+  // dot, and one grown to a logo's width reads as a bullet.
+  small: { box: ROW2_ICON, mask: ROW2_ICON, dot: "size-1.5" },
+} as const;
 
 /**
  * B23-B25. The agent a thread runs on, resolved from bb's live provider
@@ -41,17 +55,28 @@ function providerMaskStyle(logoUrl: string): CSSProperties {
  */
 export function ProviderGlyph({
   providerId,
+  size = "default",
+  monochrome = false,
   className,
 }: {
   providerId: string;
+  size?: keyof typeof MARK_SIZES;
+  /**
+   * Ignore the provider's brand tint and draw in the line's own colour.
+   *
+   * Row 2 is a run of muted labels; a full-colour brand mark inside it is the
+   * loudest thing on the row and pulls the eye off the words it sits among.
+   */
+  monochrome?: boolean;
   className?: string;
 }) {
   const { mark, status } = useProviderMark(providerId);
 
-  const box = cn(TRAILING_GLYPH_BOX_CLASS, className);
+  const scale = MARK_SIZES[size];
+  const box = cn(GLYPH_BOX_CLASS, scale.box, className);
   const label = mark?.displayName ?? providerId;
   const logoUrl = mark?.logoUrl ?? null;
-  const tint = mark?.iconTint;
+  const tint = monochrome ? undefined : mark?.iconTint;
 
   // B80. A loading directory is an EMPTY directory, so without this branch every
   // row falls into case 3 below — and that dot means "bb does not know this
@@ -76,7 +101,7 @@ export function ProviderGlyph({
         <span
           aria-hidden
           data-better-sidebar-provider="dot"
-          className="size-2 rounded-full bg-muted-foreground/50"
+          className={cn(scale.dot, "rounded-full bg-muted-foreground/50")}
         />
       </span>
     );
@@ -89,7 +114,7 @@ export function ProviderGlyph({
         <span
           aria-hidden
           data-better-sidebar-provider="mask"
-          className="size-3 bg-muted-foreground/70"
+          className={cn(scale.mask, "bg-muted-foreground/70")}
           style={maskStyle}
         />
       ) : (
@@ -97,13 +122,13 @@ export function ProviderGlyph({
           <span
             aria-hidden
             data-better-sidebar-provider="mask-light"
-            className="size-3 dark:hidden"
+            className={cn(scale.mask, "dark:hidden")}
             style={{ ...maskStyle, backgroundColor: tint.light }}
           />
           <span
             aria-hidden
             data-better-sidebar-provider="mask-dark"
-            className="hidden size-3 dark:block"
+            className={cn("hidden dark:block", scale.mask)}
             style={{ ...maskStyle, backgroundColor: tint.dark }}
           />
         </>

@@ -1,22 +1,26 @@
 # bb plugin — Better Sidebar
 
 A replacement for bb's sidebar thread list, mounted through
-`app.slots.experimental_threadList`. Rows carry a second metadata line, a
-provider glyph, a status glyph, and a pull request chip, so a thread's project,
-branch, and state read without opening it.
+`app.slots.experimental_threadList`. A row leads with its status, carries a
+second metadata line, and reveals its actions on hover — so a thread's project,
+branch, model and state read without opening it.
 
-![The thread list, grouped by date, with metadata rows and a PR chip](docs/thread-list.png)
+<img src="docs/thread-list.png" width="760"
+  alt="The thread list grouped by date: status glyphs leading each row, a metadata line with provider, project, branch and model, hover actions on one row, an expanded parent with its subagents, and the hover dossier open beside it">
 
 ## What it adds
 
 - **Grouped sections** — threads group by date, project, host, status, or not at
-  all. Each section header carries its own thread count and collapses on click.
-- **A second metadata row** — the project name, the git branch, and the host the
-  thread runs on, under the title.
-- **A provider glyph** — the real provider mark for each thread, served from a
-  `localStorage` cache of the last directory answer so a reload draws it at
-  once. Only a first run withholds the mark, and it withholds rather than
-  drawing a placeholder.
+  all. Each header collapses on click and draws its label alone.
+- **A second metadata row** — the project, the git branch, and the model and
+  effort the thread runs on, under the title. Each label carries its own mark:
+  a folder, a branch glyph, and the provider's logo drawn monochrome beside the
+  model it names. The machine is named only when the thread runs somewhere
+  other than this one: on your own machine it is the same word on every row.
+- **Status leads the row** — the state glyph sits in the row's leading column,
+  where the eye lands. Each line's marks are sized against that line's text.
+- **Hover actions** — mark read or unread, archive, and an overflow menu
+  appear where the time sits, taking its place rather than covering the title.
 - **A relative time per row** — when the thread last did anything, read from
   its newest event. bb's `updatedAt` is a record write that lags a running
   agent and moves for every thread at once on a bulk write.
@@ -25,11 +29,14 @@ branch, and state read without opening it.
   paused thread, a token budget ring — sit in the row's signal cluster.
 - **A pull request chip** — the PR number for a thread whose branch has one,
   linking to the pull request.
-- **A hover dossier** — hovering a row opens a card with the branch, model and
-  effort, created and updated timestamps, context window used, and the token
-  counts split into input, cached input, output, and reasoning.
-- **Child thread collapse** — a thread that spawned subagents shows them
-  indented, behind one collapse control and a count chip on the parent.
+- **A hover dossier** — resting on a row opens a card with the full branch,
+  model and effort, created and updated timestamps in your own timezone, the
+  context window as a percentage, and token counts abbreviated with the share
+  of input served from cache. A field with no data is omitted, never zeroed.
+- **Child threads, collapsed by default** — a thread that spawned subagents
+  keeps them behind its chevron. Expanded, each child draws its own metadata
+  line carrying the model it was spawned on, which is the one fact its
+  parent's row cannot tell you.
 
 ## Display menu
 
@@ -38,7 +45,8 @@ persists per device, in `localStorage`, and overrides the `groupBy` setting from
 the moment you pick one. The project filter is session state: it survives no
 reload.
 
-![The display menu, with the Group by submenu open on Date, Project, Host, Status, None](docs/display-menu.png)
+<img src="docs/display-menu.png" width="620"
+  alt="The display menu with the Group by submenu open on Date, Project, Host, Status, None">
 
 ## Install
 
@@ -58,10 +66,13 @@ Open **Settings → Extensions → Plugins → Better Sidebar**.
 | `groupBy` | `date` | Default section grouping: `date`, `project`, `host`, `status`, `none`. A device that picked a grouping in the display menu ignores this. |
 | `density` | `default` | Row height: `compact`, `default`, `detailed`. |
 | `showPrChip` | on | Draws the pull request chip on rows whose branch has a PR. |
-| `showProviderGlyph` | on | Draws the provider mark. |
 | `showRelativeTime` | on | Shows `2h` instead of an absolute timestamp. |
 | `showArchivedChildren` | on | Keeps archived child threads under their parent. |
 | `showHeaderChip` | on | Shows the child thread count chip on a parent row. |
+| `showSecondRow` | on | Hard off-switch for the metadata row. With it on, `density` and the grouping mode still decide. |
+| `showProjectName` | on | Draws the project name on the metadata row. |
+| `showBranch` | on | Draws the git branch on the metadata row. |
+| `showModel` | on | Draws the model, its effort, and the provider mark beside them. The only field on the row that costs a backend lookup: off, the list requests no execution options at all. |
 
 An unset setting, a value of the wrong type, or an unrecognised enum member
 falls back to the default, so a settings key this version does not read cannot
