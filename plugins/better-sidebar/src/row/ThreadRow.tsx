@@ -50,7 +50,6 @@ const CHEVRON_BOX_CLASS =
   cn("relative flex shrink-0 items-center justify-center", ROW1_ICON);
 
 
-
 /** B51.5: a fixed slot per trailing element, so the time column aligns down the list. */
 const TRAILING_TEXT_CLASS =
   // Row 2's colour: the time is metadata about the thread, not part of its
@@ -70,9 +69,10 @@ export interface ThreadRowProps {
   /** B19/B60, decided by the list from `density` and the group mode. */
   showSecondRow: boolean;
   /**
-   * Model and effort for a CHILD row's second line, from the list's batched
-   * lookup. `null` while it is in flight and when the thread never ran; the
-   * line then draws its provider mark alone.
+   * Model and effort for row 2, from the list's batched lookup, on a root row
+   * and a child alike. `null` while it is in flight, when the thread never
+   * ran, and when `showModel` is off — the label and its provider mark are
+   * then both dropped.
    */
   execution?: { model: string; reasoningLevel: string } | null;
   /** B61.1: `false` skips `experimental_useSidebarThreadPullRequest` entirely. */
@@ -420,7 +420,6 @@ function RowBody({
               </div>
             ) : null}
           </div>
-
         </RowHover>
       </div>
     </RowContextMenu>

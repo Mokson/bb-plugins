@@ -80,7 +80,7 @@ export type GlyphName = keyof typeof PATHS;
  * Shared inline-SVG glyph primitive. No icon library is installed, so every
  * glyph in this plugin is drawn from an inline path. `size-3.5` is only the
  * default, for menus and other prose-sized surfaces; the row passes its
- * line's own size (`icon-sizes.ts`)
+ * line's own size (`row/row-metrics.ts`)
  * — an unrecognized `name` is impossible at the type level, so there is no
  * runtime fallback branch to test.
  */

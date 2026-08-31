@@ -12,21 +12,30 @@ type Call = ReturnType<typeof useRpc<typeof betterSidebarRpcContract>>["call"];
  * be pure waste. A failure resolves to null, and a null hides no label.
  */
 let hostId: string | null = null;
+// Separate from `hostId` because null is a real ANSWER — bb reporting no
+// primary host — and without this flag that answer looked like "not asked
+// yet", so every mount of the list re-issued the same request.
+let loaded = false;
 let inFlight: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 
 /** Test seam: the cache is module state and outlives `cleanup()`. */
 export function resetLocalHostId(): void {
   hostId = null;
+  loaded = false;
   inFlight = null;
   listeners.clear();
 }
 
 function load(call: Call): void {
-  if (hostId !== null || inFlight !== null) return;
+  // A FAILURE is deliberately not recorded as loaded: it leaves every row its
+  // machine name, which is the correct degradation, and a later mount may
+  // reach a backend that has recovered.
+  if (loaded || inFlight !== null) return;
   inFlight = call("localHost", {})
     .then((result) => {
       hostId = result.hostId;
+      loaded = true;
     })
     .catch(() => {
       // A machine name drawn on every row is the correct degradation.

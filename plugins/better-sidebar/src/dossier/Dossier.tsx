@@ -315,10 +315,22 @@ function percent(ratio: number): string {
  * as noise. Under 10,000 the exact number is short enough to keep, and it is
  * also the range where a rounded figure would lose real precision.
  * Never a currency figure (B30).
+ *
+ * The threshold is tested against the ROUNDED figure, not the raw value:
+ * 999,999 divided down and rounded to one decimal is 1000.0, which printed as
+ * `1000.0K` — three digits wide and a magnitude behind.
  */
 function compact(value: number): string {
   if (value < 10_000) return value.toLocaleString("en-US");
-  if (value < 1_000_000) return `${(value / 1_000).toFixed(1)}K`;
-  if (value < 1_000_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  for (const [unit, suffix] of MAGNITUDES) {
+    const scaled = value / unit;
+    if (Number(scaled.toFixed(1)) < 1000) return `${scaled.toFixed(1)}${suffix}`;
+  }
   return `${(value / 1_000_000_000).toFixed(1)}B`;
 }
+
+const MAGNITUDES: readonly [number, string][] = [
+  [1_000, "K"],
+  [1_000_000, "M"],
+  [1_000_000_000, "B"],
+];

@@ -38,31 +38,49 @@ const WORKTREE_KINDS = new Set(["managed-worktree", "unmanaged-worktree"]);
  * B16 as re-worded in §7: `environment.branchName` → `environment.name` when the
  * workspace is a worktree → `host.name` → null, and the whole chain is skipped
  * when `environment` is null.
+ *
+ * `localHostId` cuts the chain one step short: the machine is the LAST resort,
+ * and it only says something when the work runs elsewhere. On the current
+ * machine it is the same word on every row, so the row draws nothing instead.
  */
+export function resolveWorkspaceLabel(
+  thread: PluginSidebarThread,
+  localHostId: string | null,
+): string | null {
+  const workspace = resolveWorkspaceOnly(thread);
+  if (workspace !== null) return workspace;
+  if (!reachesHostStep(thread)) return null;
+  if (thread.host === null || thread.host.id === localHostId) return null;
+  const host = thread.host.name.trim();
+  return host ? host : null;
+}
+
 /**
  * True when this thread's label chain would fall through to its machine name.
  *
  * B61: the current machine's id costs one request, so it is fetched only when
  * some thread could actually spend it. A list where every thread has a branch
  * — or one drawing no second row at all — asks the backend nothing.
+ *
+ * Defined as the chain itself running out, rather than as its own copy of the
+ * branch and worktree tests: two copies of one fall-through drift the moment
+ * B16 gains a step.
  */
 export function usesHostLabel(thread: PluginSidebarThread): boolean {
-  const environment = thread.environment;
-  if (!environment || thread.host === null) return false;
-  if (environment.branchName?.trim()) return false;
-  if (
-    WORKTREE_KINDS.has(environment.workspaceDisplayKind) &&
-    environment.name?.trim()
-  ) {
-    return false;
-  }
-  return true;
+  return thread.host !== null && reachesHostStep(thread);
 }
 
-export function resolveWorkspaceLabel(
-  thread: PluginSidebarThread,
-  localHostId: string | null = null,
-): string | null {
+/**
+ * True when B16's chain runs past every workspace step and arrives at the
+ * machine name. A thread with no `environment` never gets there: B16 skips the
+ * WHOLE chain in that case, machine included.
+ */
+function reachesHostStep(thread: PluginSidebarThread): boolean {
+  return Boolean(thread.environment) && resolveWorkspaceOnly(thread) === null;
+}
+
+/** B16's chain up to but not including the machine name. */
+function resolveWorkspaceOnly(thread: PluginSidebarThread): string | null {
   const environment = thread.environment;
   if (!environment) return null;
   const branch = environment.branchName?.trim();
@@ -71,12 +89,7 @@ export function resolveWorkspaceLabel(
     const name = environment.name?.trim();
     if (name) return name;
   }
-  // The machine is the LAST resort of the chain, and it only says something
-  // when the work runs elsewhere. On the current machine it is the same word
-  // on every row, so the row draws nothing instead.
-  if (thread.host === null || thread.host.id === localHostId) return null;
-  const host = thread.host.name.trim();
-  return host ? host : null;
+  return null;
 }
 
 /** Descending `latestAttentionAt`, `id` breaking ties so the order is total (B5). */

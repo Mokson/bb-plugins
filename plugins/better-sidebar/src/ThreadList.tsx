@@ -81,12 +81,16 @@ function ThreadListBody({
     [settings.groupBy, now],
   );
   const sectionOrder = useSectionOrder(threads, sectionOf);
-  // B61: only a drawn second row can show a machine name, and only a thread
-  // whose label chain reaches that step needs one.
   const navigate = useBbNavigate();
+  // The setting is a hard off-switch; with it on, B60's density and grouping
+  // rule still decides.
+  const showSecondRow =
+    settings.showSecondRow && showsSecondRow(settings.density, settings.groupBy);
+  // B61: a machine name is only ever drawn as the branch label's last resort,
+  // so every switch that hides that label also cancels the request — and so
+  // does a list where no thread's chain reaches the machine step at all.
   const localHostId = useLocalHostId(
-    showsSecondRow(settings.density, settings.groupBy) &&
-      threads.some(usesHostLabel),
+    showSecondRow && settings.showBranch && threads.some(usesHostLabel),
   );
 
   const model = useMemo(
@@ -142,11 +146,6 @@ function ThreadListBody({
     header.scrollIntoView({ block: "start" });
     header.focus();
   }, []);
-
-  // The setting is a hard off-switch; with it on, B60's density and grouping
-  // rule still decides.
-  const showSecondRow =
-    settings.showSecondRow && showsSecondRow(settings.density, settings.groupBy);
 
   /*
    * B61: model and effort are fetched for the rows the list is actually
@@ -217,7 +216,6 @@ function ThreadListBody({
       {displayMenu}
     </span>
   );
-
 
   if (model.sections.length === 0) {
     // B64.4: a scope or a search that matched nothing is never the generic

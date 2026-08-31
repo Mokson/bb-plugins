@@ -427,6 +427,32 @@ describe("Dossier layout and labels", () => {
     expect(screen.getByText("404")).not.toBeNull();
   });
 
+  /**
+   * The magnitude is chosen from the ROUNDED figure. Tested against the raw
+   * value it printed `1000.0K` — three digits wide and a magnitude behind.
+   */
+  it("promotes a count that rounds up to the next magnitude", async () => {
+    render({
+      threadDossier: () => ({
+        ...full(),
+        economics: {
+          total: {
+            totalTokens: 999_999,
+            inputTokens: 500,
+            cachedInputTokens: 500,
+            outputTokens: 998_999,
+            reasoningOutputTokens: 0,
+          },
+          modelContextWindow: 200_000,
+        },
+      }),
+    });
+    await settle();
+
+    expect(screen.getByText("1.0M")).not.toBeNull();
+    expect(screen.queryByText("1000.0K")).toBeNull();
+  });
+
   it("omits a zero reasoning row and keeps a non-zero one", async () => {
     render({
       threadDossier: () => ({

@@ -417,6 +417,7 @@ describe("workspace label (B16 under the §7 ruling)", () => {
           },
           host: { id: "h", name: "mac" },
         }),
+        null,
       ),
     ).toBe("feat/x");
   });
@@ -428,6 +429,7 @@ describe("workspace label (B16 under the §7 ruling)", () => {
         thread("a", {
           environment: { ...env, workspaceDisplayKind: "unmanaged-worktree" },
         }),
+        null,
       ),
     ).toBe("wt");
     expect(
@@ -436,18 +438,20 @@ describe("workspace label (B16 under the §7 ruling)", () => {
           environment: { ...env, workspaceDisplayKind: "other" },
           host: { id: "h", name: "mac" },
         }),
+        null,
       ),
     ).toBe("mac");
   });
 
   it("yields null for a null environment without throwing", () => {
-    expect(resolveWorkspaceLabel(thread("a", { environment: null }))).toBeNull();
+    expect(resolveWorkspaceLabel(thread("a", { environment: null }), null)).toBeNull();
     expect(
       resolveWorkspaceLabel(
         thread("a", {
           environment: null,
           host: { id: "h", name: "mac" },
         }),
+        null,
       ),
     ).toBeNull();
   });
@@ -513,9 +517,18 @@ describe("workspace label (B16 under the §7 ruling)", () => {
       host: { id: "host_1", name: "maxbook" },
     });
 
+    // B16 skips the WHOLE chain without an environment, machine included, so
+    // a thread with none cannot spend the request either.
+    const noEnvironment = thread("d", {
+      environment: null,
+      host: { id: "host_1", name: "maxbook" },
+    });
+
     expect(usesHostLabel(withBranch)).toBe(false);
     expect(usesHostLabel(withoutHost)).toBe(false);
+    expect(usesHostLabel(noEnvironment)).toBe(false);
     expect(usesHostLabel(needsIt)).toBe(true);
+    expect(resolveWorkspaceLabel(noEnvironment, null)).toBeNull();
   });
 
   it("yields null when the whole chain is empty", () => {
@@ -530,6 +543,7 @@ describe("workspace label (B16 under the §7 ruling)", () => {
           },
           host: null,
         }),
+        null,
       ),
     ).toBeNull();
   });

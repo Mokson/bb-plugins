@@ -4,6 +4,7 @@ import type { PluginSidebarProject } from "@get-bb/plugin-sdk/app";
 import { cn } from "./lib/utils";
 import { usePortalScopeProps } from "./lib/portal-scope";
 import { CONTROL_BUTTON_CLASS } from "./ui/control-button";
+import { COLLISION_PADDING } from "./ui/overlay";
 import { Glyph } from "./ui/Glyph";
 import type { GroupBy } from "./model/types";
 
@@ -23,9 +24,7 @@ const MENU_SURFACE = cn(
   "rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md",
 );
 
-/** Keeps every edge of the menu off every edge of the viewport (B79.1). */
-/** Shared with the child-threads popover, so overlays clear the window edge alike. */
-export const COLLISION_PADDING = 8;
+
 
 /** B65's five values, in the order the settings form lists them. */
 const GROUP_BY_OPTIONS: readonly { value: GroupBy; label: string }[] = [

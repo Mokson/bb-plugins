@@ -30,3 +30,13 @@ export const ROW2_ICON = "size-2.5";
  */
 export const LEADING_COLUMN_CLASS =
   "-mr-2 flex w-[22px] shrink-0 items-center justify-center";
+
+/**
+ * The box a mark sits in, whatever its own artwork measures.
+ *
+ * Intrinsic: the caller passes the size for its line (`ROW1_ICON`,
+ * `ROW2_ICON`), and this centres the artwork inside it. Centring is the whole
+ * job — a logo mask and a fallback dot are different widths, and without a
+ * shared box they would sit on different axes within the same column.
+ */
+export const GLYPH_BOX_CLASS = "flex shrink-0 items-center justify-center";

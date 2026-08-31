@@ -710,6 +710,33 @@ describe("ThreadList — a hidden thing costs nothing (B61)", () => {
       slot.inspection.rpcCalls.filter((call) => call.method === "localHost"),
     ).toHaveLength(0);
   });
+
+  /**
+   * The machine name is only ever drawn as the BRANCH label's last resort, so
+   * every switch that hides that label also has to cancel the request.
+   */
+  it.each([
+    ["the metadata row is off", { showSecondRow: "false" }],
+    ["the branch label is off", { showBranch: "false" }],
+  ])("asks for no local host when %s", (_label, settings) => {
+    threadsState = ready([
+      thread({
+        environment: {
+          id: "e",
+          name: null,
+          branchName: null,
+          workspaceDisplayKind: "other",
+        },
+        host: { id: "host_1", name: "maxbook" },
+      }),
+    ]);
+
+    const slot = renderList({}, settings);
+
+    expect(
+      slot.inspection.rpcCalls.filter((call) => call.method === "localHost"),
+    ).toHaveLength(0);
+  });
 });
 
 describe("ThreadList — the machine name", () => {
