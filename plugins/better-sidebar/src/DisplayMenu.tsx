@@ -106,9 +106,10 @@ export function DisplayMenu({
   return (
     <div
       data-better-sidebar-display-options=""
-      // B73.2: no inset of its own. The scroll container carries the 8px
-      // column for every child; a second inset here would sit chrome at 16px.
-      className="relative flex h-6 items-center gap-1 pb-1 pt-1"
+      // Inline in the first section header now, not a row of its own: no
+      // height and no vertical padding, or it would stretch the header it
+      // sits in. The header carries the row's 8px inset for both.
+      className="relative flex items-center gap-1"
     >
       {scopedProject === null ? null : (
         <span

@@ -62,6 +62,9 @@ const PATHS = {
   // B76.1: the display-options trigger. Three tracks with a handle each, so
   // the button reads as "options for this view" rather than as a filter.
   sliders: "M4 6h9m4 0h3M4 12h3m4 0h10M4 18h9m4 0h3M13 4v4M7 10v4M13 16v4",
+  // lucide `CirclePlus`, the mark bb's own sidebar header uses for a new
+  // thread. Its nav item above the list draws the same circled plus.
+  "circle-plus": "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM8 12h8M12 8v8",
   // The hover cluster's overflow trigger (three dots, drawn as three dashes so
   // the stroke-only primitive can render them at 14px).
   "more-horizontal": "M5 12h.01M12 12h.01M19 12h.01",

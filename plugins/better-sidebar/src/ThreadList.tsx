@@ -1,6 +1,14 @@
-import { useCallback, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import {
   experimental_useSidebarThreads as useSidebarThreads,
+  useBbNavigate,
   useSettings,
   type PluginSidebarThread,
   type PluginThreadListProps,
@@ -74,6 +82,7 @@ function ThreadListBody({
   const sectionOrder = useSectionOrder(threads, sectionOf);
   // B61: only a drawn second row can show a machine name, and only a thread
   // whose label chain reaches that step needs one.
+  const navigate = useBbNavigate();
   const localHostId = useLocalHostId(
     showsSecondRow(settings.density, settings.groupBy) &&
       threads.some(usesHostLabel),
@@ -170,6 +179,22 @@ function ThreadListBody({
   // B64.5: the control renders above every ready state, compact included —
   // including the empty ones, which is the only place the user can undo a scope
   // that hid everything.
+  const newThread = (
+    <button
+      type="button"
+      aria-label="New thread"
+      title="New thread"
+      onClick={() => navigate.toCompose({ focusPrompt: true })}
+      className={cn(
+        "flex size-5 shrink-0 items-center justify-center rounded",
+        "text-muted-foreground hover:text-foreground",
+        "focus:outline-none focus:ring-1 focus:ring-ring",
+      )}
+    >
+      <Glyph name="circle-plus" aria-hidden="true" className="size-3.5" />
+    </button>
+  );
+
   const displayMenu = (
     <DisplayMenu
       projects={projects}
@@ -181,6 +206,14 @@ function ThreadListBody({
       isCompactViewport={isCompactViewport}
     />
   );
+
+  const controls = (
+    <span className="ml-auto flex shrink-0 items-center gap-0.5">
+      {newThread}
+      {displayMenu}
+    </span>
+  );
+
 
   if (model.sections.length === 0) {
     // B64.4: a scope or a search that matched nothing is never the generic
@@ -211,12 +244,15 @@ function ThreadListBody({
       className="flex h-full flex-col overflow-y-auto px-2 py-1"
       onKeyDown={onKeyDown}
     >
-      {displayMenu}
       {model.sections.map((section, index) => (
         <section key={section.key} data-sidebar-section={section.key}>
           <SectionHeader
             section={section}
             onToggle={() => collapse.toggleSection(section.key)}
+            // The panel's controls live on the FIRST header rather than on a
+            // strip of their own: that strip was a whole row spent on two
+            // icons, and the header already reaches the same trailing edge.
+            actions={index === 0 ? controls : null}
             ref={(node) => {
               headersRef.current[index] = node;
             }}
@@ -271,10 +307,13 @@ function showsSecondRow(density: Density, groupBy: GroupBy): boolean {
 function SectionHeader({
   section,
   onToggle,
+  actions,
   ref,
 }: {
   section: RenderSection;
   onToggle: () => void;
+  /** The panel's controls, on the first header only. */
+  actions?: ReactNode;
   ref: (node: HTMLElement | null) => void;
 }) {
   // Superseding B53.1: the header carries its label and nothing else. The
@@ -285,11 +324,14 @@ function SectionHeader({
   // Intrinsic, not `flex-1`: the chevron sits beside the label rather than
   // out at the trailing edge, so the label must not stretch past its text.
   const label = <span className="min-w-0 truncate text-left">{section.label}</span>;
-  const className = cn(
+  // The row the header occupies. It is never the focusable element: the
+  // collapsible variant nests a button inside it, and the panel's controls
+  // are buttons too — one interactive element inside another is invalid, and
+  // a click on the display menu would toggle the section under it.
+  const rowClass = cn(
     // `px-2` is the row's own inset, so a header's label starts on the same x
     // as the leading MARK of every row beneath it — which is where bb's own
-    // sidebar puts it. `gap-1.5` binds the chevron to the label it belongs to,
-    // rather than the row-1 `gap-2` that separated a column from its content.
+    // sidebar puts it.
     "flex w-full items-center gap-1.5 px-2 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide",
     "text-muted-foreground",
     dimClassFor(section),
@@ -299,20 +341,22 @@ function SectionHeader({
   // that could hide them would defeat the reason they are hoisted at all.
   if (!section.isCollapsible) {
     return (
-      <h2 ref={ref} tabIndex={-1} className={className}>
+      <h2 ref={ref} tabIndex={-1} className={rowClass}>
         {label}
+        {actions}
       </h2>
     );
   }
+
   return (
-    <h2 className="contents">
+    <h2 className={rowClass}>
       <button
         ref={ref}
         type="button"
         tabIndex={-1}
         onClick={onToggle}
         aria-expanded={!section.isCollapsed}
-        className={cn(className, "group/section hover:text-foreground")}
+        className="group/section flex min-w-0 items-center gap-1.5 hover:text-foreground"
       >
         {label}
         {/* Beside the label it controls, not out at the trailing edge: the
@@ -334,6 +378,7 @@ function SectionHeader({
           )}
         />
       </button>
+      {actions}
     </h2>
   );
 }

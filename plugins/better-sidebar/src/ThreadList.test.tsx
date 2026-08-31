@@ -266,14 +266,18 @@ describe("ThreadList — sections and collapse (B7, B10)", () => {
     ]);
     renderList();
 
-    const expanded = screen.getByRole("button", { name: /last 7 days/i });
+    // The dim class sits on the header ROW; the button inside it wraps only
+    // the label and chevron.
+    const headerRow = () =>
+      screen.getByRole("button", { name: /last 7 days/i }).closest("h2")!;
+    const expanded = headerRow();
     const dim = expanded.className.match(/opacity-\d+/)?.[0];
     expect(dim).toBeDefined();
 
-    fireEvent.click(expanded);
+    fireEvent.click(screen.getByRole("button", { name: /last 7 days/i }));
     expect(renderedIds()).toEqual(["new"]);
     expect(
-      screen.getByRole("button", { name: /last 7 days/i }).className,
+      headerRow().className,
     ).toContain(dim);
   });
 
@@ -784,7 +788,7 @@ describe("ThreadList — the host's 8px column (B73)", () => {
   }
 
   const listBox = () => document.querySelector("[data-better-sidebar-list]");
-  const headerBox = () => document.querySelector("[data-sidebar-section] h2, [data-sidebar-section] button");
+  const headerBox = () => document.querySelector("[data-sidebar-section] h2");
   const rowBox = () =>
     document.querySelector("[data-better-sidebar-row]")?.firstElementChild ?? null;
 
@@ -792,17 +796,19 @@ describe("ThreadList — the host's 8px column (B73)", () => {
     threadsState = ready([thread()]);
     renderList();
 
-    // Asserted once, from the container: this is the panel's only inset.
+    // Superseding B73.2. Two insets in series, on purpose: the container's
+    // separates each row's rounded background from the panel edge, and the
+    // row's own separates its content from that background's edges. The
+    // header takes the same second inset so its label lands on the row's
+    // leading mark.
     expect(hPadding(listBox())).toEqual(["px-2"]);
+    expect(hPadding(headerBox())).toEqual(["px-2"]);
 
-    // Row 1, the section header and the filter each carry none of their own,
-    // so all three inherit that single column — two insets in series would
-    // have put the chrome at 16px and left the rows at 8px.
+    // The row carries its inset as an inline style, symmetric and carrying
+    // the depth indent, so it declares no padding class at all.
     expect(hPadding(rowBox())).toEqual([]);
-    expect(hPadding(headerBox())).toEqual([]);
-    expect(
-      hPadding(document.querySelector("[data-better-sidebar-project-filter]")),
-    ).toEqual([]);
+    expect((rowBox() as HTMLElement).style.paddingLeft).toBe("8px");
+    expect((rowBox() as HTMLElement).style.paddingRight).toBe("8px");
   });
 
   /**
@@ -1085,11 +1091,12 @@ describe("ThreadList — one leading column", () => {
     threadsState = ready([thread({ id: "solo" })]);
     renderList();
 
-    const header = screen.getByRole("button", { name: /today/i });
-    expect(header.className).toContain("px-2");
+    const row = screen.getByRole("button", { name: /today/i }).closest("h2")!;
+    expect(row.className).toContain("px-2");
     // No reserved column: the label is the first thing on the line.
-    expect(header.firstElementChild!.className).not.toContain("w-[22px]");
-    expect(header.firstElementChild!.textContent).toBe("TODAY");
+    const toggle = row.firstElementChild!;
+    expect(toggle.firstElementChild!.className).not.toContain("w-[22px]");
+    expect(toggle.firstElementChild!.textContent).toBe("TODAY");
 
     // The row's own leading mark starts on that same inset, so the two share
     // an x. Measured in the running app at 16px for both.
@@ -1103,7 +1110,72 @@ describe("ThreadList — one leading column", () => {
     renderList();
 
     const header = screen.getByRole("heading", { name: /needs you/i });
-    expect(header.querySelector("svg")).toBeNull();
-    expect(header.textContent).toBe("NEEDS YOU");
+    // No toggle at all — not merely a hidden chevron. Probed by accessible
+    // name, because the panel's own controls live on this header too and
+    // Radix gives its menu trigger an `aria-expanded` of its own.
+    expect(screen.queryByRole("button", { name: /needs you/i })).toBeNull();
+    expect(header.firstElementChild!.textContent).toBe("NEEDS YOU");
+  });
+});
+
+/**
+ * The panel's controls moved onto the FIRST section header. They had a strip
+ * of their own above the list, which spent a whole row on two icons while the
+ * header beside them already reached the same trailing edge.
+ */
+describe("ThreadList — the panel controls", () => {
+  it("puts new-thread and display options on the first header only", () => {
+    threadsState = ready([
+      thread({ id: "a", latestAttentionAt: BEFORE_MIDNIGHT }),
+      thread({ id: "b", hasPendingInteraction: true }),
+    ]);
+    renderList();
+
+    const headers = document.querySelectorAll("[data-sidebar-section] h2");
+    expect(headers.length).toBeGreaterThan(1);
+    expect(headers[0]!.querySelector("[aria-label='New thread']")).not.toBeNull();
+    expect(
+      headers[0]!.querySelector("[aria-label='Display options']"),
+    ).not.toBeNull();
+    for (const header of [...headers].slice(1)) {
+      expect(header.querySelector("[aria-label='New thread']")).toBeNull();
+      expect(header.querySelector("[aria-label='Display options']")).toBeNull();
+    }
+  });
+
+  it("puts new thread to the LEFT of the display menu", () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    renderList();
+
+    const plus = screen.getByLabelText("New thread");
+    const options = screen.getByLabelText("Display options");
+    expect(plus.compareDocumentPosition(options)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it("opens the composer from the new-thread control", () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    const slot = renderList();
+
+    fireEvent.click(screen.getByLabelText("New thread"));
+    expect(slot.inspection.navigateCalls).toEqual([
+      { method: "toCompose", options: { focusPrompt: true } },
+    ]);
+  });
+
+  /**
+   * The header row is not the toggle: the collapsible variant nests a button
+   * inside it, and these controls are buttons too. One interactive element
+   * inside another is invalid, and a click on the display menu would collapse
+   * the section under it.
+   */
+  it("keeps the controls outside the section's toggle button", () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    renderList();
+
+    const toggle = screen.getByRole("button", { name: /today/i });
+    expect(toggle.querySelector("[aria-label='Display options']")).toBeNull();
+    expect(toggle.querySelector("[aria-label='New thread']")).toBeNull();
   });
 });
