@@ -282,14 +282,15 @@ function SectionHeader({
   // second number in a column the row's own time already owns.
   // `RenderSection.count` is still computed — the model's own root-only rule
   // (B53.4) is tested there — it is simply not drawn.
-  const label = <span className="min-w-0 flex-1 truncate text-left">{section.label}</span>;
+  // Intrinsic, not `flex-1`: the chevron sits beside the label rather than
+  // out at the trailing edge, so the label must not stretch past its text.
+  const label = <span className="min-w-0 truncate text-left">{section.label}</span>;
   const className = cn(
     // `px-2` is the row's own inset, so a header's label starts on the same x
     // as the leading MARK of every row beneath it — which is where bb's own
-    // sidebar puts it. The label held a 22px column while the chevron lived
-    // in it; with the chevron on the trailing edge the column was reserving
-    // space for nothing.
-    "flex w-full items-center gap-2 px-2 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide",
+    // sidebar puts it. `gap-1.5` binds the chevron to the label it belongs to,
+    // rather than the row-1 `gap-2` that separated a column from its content.
+    "flex w-full items-center gap-1.5 px-2 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide",
     "text-muted-foreground",
     dimClassFor(section),
   );
@@ -314,8 +315,8 @@ function SectionHeader({
         className={cn(className, "group/section hover:text-foreground")}
       >
         {label}
-        {/* Trailing, so it lands on the same edge as each row's time rather
-            than in the column the rows use for status.
+        {/* Beside the label it controls, not out at the trailing edge: the
+            control and the thing it collapses read as one target.
 
             Revealed on hover, like the row's own actions — EXCEPT while the
             section is collapsed. A collapsed section persists across reloads,
