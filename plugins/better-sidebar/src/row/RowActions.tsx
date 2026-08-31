@@ -85,9 +85,11 @@ export function RowActions({
         "group-focus-within/row:flex group-has-[[data-state=open]]/row:flex",
       )}
     >
+      {/* The same envelope the menu item draws: they are one action, and bb
+          draws read state as `Mail` / `MailOpen` rather than an eye. */}
       <ActionButton
         label={thread.isUnread ? "Mark read" : "Mark unread"}
-        glyph={thread.isUnread ? "check" : "eye-off"}
+        glyph={thread.isUnread ? "mail" : "mail-open"}
         onClick={() => void actions.setRead(thread.id, thread.isUnread)}
       />
       <ActionButton

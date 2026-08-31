@@ -434,7 +434,7 @@ describe("ThreadRow hover actions", () => {
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
     fireEvent.click(trigger);
 
-    for (const label of ["Open in split", "Pin", "Rename", "Delete…"]) {
+    for (const label of ["Open in split", "Pin", "Rename", "Delete"]) {
       expect(screen.getByText(label)).not.toBeNull();
     }
   });

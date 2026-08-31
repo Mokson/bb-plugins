@@ -127,20 +127,22 @@ describe("RowContextMenu", () => {
       within(menu())
         .getAllByRole("menuitem")
         .map((item) => item.textContent),
+      // bb's own order after the open actions: read state, pin, rename,
+      // then archive and delete.
     ).toEqual([
       "Open",
       "Open in split",
-      "Pin",
       "Mark unread",
+      "Pin",
       "Rename",
       "Archive",
-      "Delete…",
+      "Delete",
     ]);
   });
 
   it("offers no silent delete path — only the host's confirmation", () => {
     const rendered = open();
-    click("Delete…");
+    click("Delete");
     expect(rendered.inspection.sidebarActionCalls).toEqual([
       { method: "requestDelete", threadId: "thr_1" },
     ]);

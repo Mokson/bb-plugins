@@ -58,21 +58,24 @@ export function buildRowMenuItems({
       onSelect: onOpenPullRequest,
     });
   }
+  // bb's own order, read from its bundle: read state, then pin, then rename,
+  // then a separator, then archive and delete. Ours leads with the open
+  // actions bb reaches by clicking the row, which it has no items for.
   items.push(
     {
-      id: "pin",
-      glyph: "pin",
-      label: thread.isPinned ? "Unpin" : "Pin",
+      id: "read",
+      // `Mail` / `MailOpen`, as bb draws it. An eye said "seen", which is a
+      // different claim from "read".
+      glyph: thread.isUnread ? "mail" : "mail-open",
+      label: thread.isUnread ? "Mark read" : "Mark unread",
       separatorBefore: true,
-      onSelect: () => void actions.setPinned(thread.id, !thread.isPinned),
+      onSelect: () => void actions.setRead(thread.id, thread.isUnread),
     },
     {
-      id: "read",
-      // The check is the mark-read glyph everywhere: the menu item and the
-      // hover cluster's button are one action and must read as one.
-      glyph: thread.isUnread ? "check" : "eye-off",
-      label: thread.isUnread ? "Mark read" : "Mark unread",
-      onSelect: () => void actions.setRead(thread.id, thread.isUnread),
+      id: "pin",
+      glyph: thread.isPinned ? "pin-off" : "pin",
+      label: thread.isPinned ? "Unpin" : "Pin",
+      onSelect: () => void actions.setPinned(thread.id, !thread.isPinned),
     },
     { id: "rename", glyph: "pencil", label: "Rename", onSelect: requestRename },
     {
@@ -85,7 +88,8 @@ export function buildRowMenuItems({
     {
       id: "delete",
       glyph: "trash",
-      label: "Delete…",
+      // bb writes it without an ellipsis, though it also confirms.
+      label: "Delete",
       destructive: true,
       onSelect: () => void actions.requestDelete(thread.id),
     },
