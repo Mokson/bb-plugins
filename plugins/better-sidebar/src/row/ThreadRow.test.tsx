@@ -862,42 +862,47 @@ describe("ThreadRow row 2 under pressure (B56)", () => {
   }
 
   /**
-   * B56.1/B56.2, the first polarity: a ten-character project name survives a
-   * branch four times its length. `shrink-0` takes the project out of the
-   * proportional shrink; the branch is the only shrinkable child left, so it
-   * absorbs the whole deficit.
+   * Superseding B56.1 and B56.2, which made the branch the ONE shrinkable
+   * label and capped the project at 45%. A narrow panel then had no way to
+   * share the loss: the branch was starved to its bare glyph while the
+   * project rendered in full, and the model — pinned `shrink-0` behind it —
+   * overflowed the panel with nothing left to take the deficit.
+   *
+   * Every label shrinks now, and none caps its own width. With
+   * `flex-basis: auto` the shrink factor is weighted by natural width, so the
+   * longest label gives up the most and all three keep a readable head.
    */
-  it("leaves a 10-character project intact beside a long branch (B56.1, B56.2)", () => {
+  it("lets every label shrink, and caps none of them", () => {
     const { container } = renderRow(
       row({ projectName: "bb-plugins", workspaceLabel: LONG_BRANCH }),
+      {},
+      { execution: { model: "claude-opus-5", reasoningLevel: "low" } },
     );
-    const { project, branch } = rowTwoLabels(container);
+    const two = rowOne(container).nextElementSibling!.firstElementChild!;
 
-    expect(project.textContent).toBe("bb-plugins");
-    expect(project.getAttribute("class")).toContain("shrink-0");
-    expect(branch.getAttribute("class")).toContain("shrink");
-    expect(branch.getAttribute("class")).toContain("min-w-0");
-    expect(branch.querySelector(".truncate")!.textContent).toBe(LONG_BRANCH);
+    for (const name of ["project", "branch", "model"]) {
+      const label = two.querySelector(`[data-better-sidebar-row2="${name}"]`)!;
+      const className = label.getAttribute("class")!;
+      expect(className).toContain("shrink");
+      expect(className).not.toContain("shrink-0");
+      // `min-w-0` is what allows a flex child below its own content.
+      expect(className).toContain("min-w-0");
+      expect(className).not.toContain("max-w-");
+      // The text truncates; the mark beside it never shrinks.
+      expect(label.querySelector(".truncate")).not.toBeNull();
+    }
   });
 
-  /**
-   * B56.2, the other polarity: the project is not exempt from truncation, it
-   * is capped. A name that alone exceeds ~45% of row 2 still truncates —
-   * expressed as a percentage of the line, so no pixel is guessed.
-   */
-  it("still truncates a project name over its own cap (B56.2)", () => {
+  /** The hard stop: no label may paint past the row's inset. */
+  it("clips the line rather than letting it overflow the row", () => {
     const { container } = renderRow(
-      row({
-        projectName: "a-project-name-far-longer-than-half-this-row",
-        workspaceLabel: "main",
-      }),
+      row({ projectName: "bb-plugins", workspaceLabel: LONG_BRANCH }),
+      {},
+      { execution: { model: "claude-opus-5", reasoningLevel: "low" } },
     );
-    const { project } = rowTwoLabels(container);
+    const two = rowOne(container).nextElementSibling!.firstElementChild!;
 
-    // The cap is on the label's box; `truncate` is on the text inside it,
-    // beside the folder mark.
-    expect(project.getAttribute("class")).toContain("max-w-[45%]");
-    expect(project.querySelector(".truncate")).not.toBeNull();
+    expect(two.getAttribute("class")).toContain("overflow-hidden");
   });
 
   /**
@@ -1014,11 +1019,12 @@ describe("ThreadRow pull request", () => {
       { sidebarPullRequests: { t1: pr() } },
     );
 
-    // The chip never shrinks; the branch beside it is the shrinkable child.
+    // The chip never shrinks — the number is the identifying part and it is
+    // already short. The labels beside it are what give up width.
     expect(prChip().closest(".ml-auto")!.className).toContain("shrink-0");
-    const branch = container.querySelector(".min-w-0.shrink");
-    expect(branch).not.toBeNull();
-    expect(branch!.textContent).toContain("feat/a-branch-name");
+    const branch = container.querySelector('[data-better-sidebar-row2="branch"]')!;
+    expect(branch.getAttribute("class")).toContain("shrink");
+    expect(branch.textContent).toContain("feat/a-branch-name");
   });
 
   it("makes one PR hook call and shares it with the chip (B33)", () => {

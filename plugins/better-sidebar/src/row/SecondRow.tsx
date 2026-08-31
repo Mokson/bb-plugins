@@ -60,71 +60,51 @@ export function SecondRow({
    */
   const labels: { id: string; node: ReactNode }[] = [];
 
-  // B56.2: `shrink-0` takes the project name out of the proportional shrink
-  // that was starving it, and `max-w-[45%]` is the whole of its claim — it
-  // renders in full inside that share and truncates only when it alone
-  // exceeds it, never because the branch beside it is long.
   if (row.projectName !== null && showProjectName) {
     labels.push({
       id: "project",
       node: (
-        <span
-          data-better-sidebar-row2="project"
-          className="flex max-w-[45%] shrink-0 items-center gap-0.5"
-        >
-          <Glyph name="folder" className={cn(ROW2_ICON, "shrink-0")} aria-hidden />
-          <span className="truncate">{row.projectName}</span>
-        </span>
+        <Label id="project" glyph={<Glyph name="folder" className={MARK_CLASS} aria-hidden />}>
+          {row.projectName}
+        </Label>
       ),
     });
   }
 
-  // B56.1: the only shrinkable child left, so it absorbs the whole deficit.
-  // It is the longest label, the most repetitive down the list and the least
-  // identifying, so its tail is the right thing to lose.
   if (row.workspaceLabel !== null && showBranch) {
     labels.push({
       id: "branch",
       node: (
-        <span
-          data-better-sidebar-row2="branch"
-          className="flex min-w-0 shrink items-center gap-0.5"
+        <Label
+          id="branch"
+          glyph={<Glyph name="git-branch" className={MARK_CLASS} aria-hidden />}
         >
-          <Glyph
-            name="git-branch"
-            className={cn(ROW2_ICON, "shrink-0")}
-            aria-hidden
-          />
-          <span className="truncate">{row.workspaceLabel}</span>
-        </span>
+          {row.workspaceLabel}
+        </Label>
       ),
     });
   }
 
-  // After the branch and before the chip. `shrink-0` keeps B56.1 intact: the
-  // branch stays the ONE shrinkable child, so it absorbs the whole deficit
-  // rather than the two of them splitting it.
   if (execution !== null) {
-    // Model and effort stay ONE label. Split into two spans, with the
-    // spacing carried by `gap`, the line's accessible text collapsed to
-    // `claude-opus-5low`. The pair reads as one fact anyway.
     labels.push({
       id: "model",
       node: (
-        <span
-          data-better-sidebar-row2="model"
-          className="flex shrink-0 items-center gap-0.5"
+        <Label
+          id="model"
+          // The mark belongs to the model, not to the line: it says which
+          // agent ran this, which is the same fact the model names. It also
+          // means one setting governs both.
+          glyph={
+            providerId === null ? null : (
+              <ProviderGlyph providerId={providerId} size="small" monochrome />
+            )
+          }
         >
-          {/* The mark belongs to the model, not to the line: it says which
-              agent ran this, which is the same fact the model names. It also
-              means one setting governs both. */}
-          {providerId === null ? null : (
-            <ProviderGlyph providerId={providerId} size="small" monochrome />
-          )}
-          <span className="truncate">
-            {execution.model} · {execution.reasoningLevel}
-          </span>
-        </span>
+          {/* Model and effort stay ONE text node. Split into two spans, with
+              the spacing carried by `gap`, the line's accessible text
+              collapsed to `claude-opus-5low`. The pair reads as one fact. */}
+          {execution.model} · {execution.reasoningLevel}
+        </Label>
       ),
     });
   }
@@ -135,7 +115,11 @@ export function SecondRow({
         // Whitespace alone divides the labels. Each one already carries its
         // own mark, and a dot between two marked labels stacks a second
         // divider onto a line that is 10px tall.
-        "flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground/70",
+        //
+        // `overflow-hidden` is the hard stop: `min-w-0` lets the labels shrink
+        // to their content, and this clips whatever the last of them cannot
+        // give up, so the line can never paint past the row's inset.
+        "flex min-w-0 items-center gap-1.5 overflow-hidden text-2xs text-muted-foreground/70",
         DIM_CLASS[row.dimLevel],
       )}
     >
@@ -153,6 +137,46 @@ export function SecondRow({
         </span>
       )}
     </div>
+  );
+}
+
+/** Every mark on the line, at the line's own size and never squeezed. */
+const MARK_CLASS = cn(ROW2_ICON, "shrink-0");
+
+/**
+ * One label on row 2: a mark, then text that truncates.
+ *
+ * Superseding B56.1 and B56.2, which between them made the branch the ONE
+ * shrinkable label. That gave a narrow panel no way to share the loss: the
+ * branch was starved to its bare glyph while the project rendered in full,
+ * and the model — pinned `shrink-0` behind it — simply overflowed the panel
+ * with nothing left to take the deficit.
+ *
+ * Every label is shrinkable now, and none of them caps its own width. With
+ * `flex-basis: auto` the shrink factor is weighted by each label's natural
+ * width, so the longest gives up the most and all three keep a readable head.
+ *
+ * `min-w-0` on the label is what allows it below its content at all, and the
+ * mark stays `shrink-0` so the text loses characters rather than the mark
+ * losing pixels.
+ */
+function Label({
+  id,
+  glyph,
+  children,
+}: {
+  id: string;
+  glyph: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <span
+      data-better-sidebar-row2={id}
+      className="flex min-w-0 shrink items-center gap-0.5"
+    >
+      {glyph}
+      <span className="truncate">{children}</span>
+    </span>
   );
 }
 
