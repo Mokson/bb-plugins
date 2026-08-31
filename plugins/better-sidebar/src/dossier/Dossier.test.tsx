@@ -245,8 +245,10 @@ describe("Dossier contents (B29)", () => {
     expect(screen.getByText("Jan 1, 09:30")).not.toBeNull();
     expect(screen.getByText("Jan 1, 10:15")).not.toBeNull();
     expect(screen.getByRole("meter").getAttribute("aria-valuenow")).toBe("25");
+    // Billed total, then the input side (1,000 uncached + 900 cache-read)
+    // paired with output on one row.
     expect(screen.getByText("1,234")).not.toBeNull();
-    expect(screen.getByText("900")).not.toBeNull();
+    expect(screen.getByText("1,900 / 200")).not.toBeNull();
   });
 
   it("omits model and effort together when execution options never resolved (§7 B29)", async () => {
@@ -294,7 +296,7 @@ describe("Dossier economics (B30, B31)", () => {
 
     const text = slot.container.textContent ?? "";
     expect(screen.queryByText("Tokens")).toBeNull();
-    expect(screen.queryByText("Total")).toBeNull();
+    expect(screen.queryByText("Billed total")).toBeNull();
     expect(text).not.toMatch(/\b0\b/);
     expect(text).not.toContain("—");
     expect(screen.queryByRole("meter")).toBeNull();
@@ -419,12 +421,60 @@ describe("Dossier layout and labels", () => {
     });
     await settle();
 
+    // Billed total, then input / output on one row. Input is the WHOLE input
+    // side — 404 uncached plus 30,598,171 cache-read — not the 404 alone.
     expect(screen.getByText("30.7M")).not.toBeNull();
-    expect(screen.getByText("30.6M")).not.toBeNull();
-    expect(screen.getByText("96.7K")).not.toBeNull();
-    // Under 10,000 the exact figure is short enough to keep, and rounding it
-    // would lose real precision.
-    expect(screen.getByText("404")).not.toBeNull();
+    expect(screen.getByText("30.6M / 96.7K")).not.toBeNull();
+  });
+
+  /**
+   * The uncached figure alone is not the input. bb reports uncached and
+   * cache-read separately because they bill differently, and on a thread that
+   * caches well the uncached one is a rounding error against the input side.
+   */
+  it("counts cache reads as input rather than printing the uncached figure", async () => {
+    render({
+      threadDossier: () => ({
+        ...full(),
+        economics: {
+          total: {
+            totalTokens: 173_119_358,
+            inputTokens: 644,
+            cachedInputTokens: 172_935_530,
+            outputTokens: 183_184,
+            reasoningOutputTokens: 0,
+          },
+          modelContextWindow: 1_000_000,
+        },
+      }),
+    });
+    await settle();
+
+    expect(screen.getByText("172.9M / 183.2K")).not.toBeNull();
+    // The uncached count is never shown as the input on its own.
+    expect(screen.queryByText("644")).toBeNull();
+  });
+
+  /** Under 10,000 the exact figure is kept; rounding would lose precision. */
+  it("keeps a small count exact", async () => {
+    render({
+      threadDossier: () => ({
+        ...full(),
+        economics: {
+          total: {
+            totalTokens: 1_508,
+            inputTokens: 404,
+            cachedInputTokens: 0,
+            outputTokens: 1_104,
+            reasoningOutputTokens: 0,
+          },
+          modelContextWindow: 200_000,
+        },
+      }),
+    });
+    await settle();
+
+    expect(screen.getByText("404 / 1,104")).not.toBeNull();
   });
 
   /**
@@ -451,6 +501,7 @@ describe("Dossier layout and labels", () => {
 
     expect(screen.getByText("1.0M")).not.toBeNull();
     expect(screen.queryByText("1000.0K")).toBeNull();
+    expect(screen.queryByText(/1000\.0K/)).toBeNull();
   });
 
   it("omits a zero reasoning row and keeps a non-zero one", async () => {
@@ -546,7 +597,7 @@ describe("Dossier cache hit", () => {
 
     expect(screen.queryByText("Cache hit")).toBeNull();
     // The rest of the section still renders.
-    expect(screen.getByText("Total")).not.toBeNull();
+    expect(screen.getByText("Billed total")).not.toBeNull();
   });
 
   it("omits it with the whole section on a null economics payload", async () => {

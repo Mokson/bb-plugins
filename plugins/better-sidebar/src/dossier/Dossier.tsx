@@ -84,13 +84,21 @@ export function Dossier({
           never a zero, never a dash. */}
       {variant === "rich" && data?.economics ? (
         <Section title="Tokens">
-          <Field label="Total">{compact(data.economics.total.totalTokens)}</Field>
-          <Field label="Input">{compact(data.economics.total.inputTokens)}</Field>
-          <Field label="Cached input">
-            {compact(data.economics.total.cachedInputTokens)}
+          {/* The two sides of a request, on ONE row, so they read against
+              each other rather than with two cache rows between them.
+
+              INPUT is `inputTokens + cachedInputTokens`. bb reports those
+              separately — uncached and cache-read — and this card printed the
+              uncached figure alone under the label "Input", which on a thread
+              that caches almost everything said 644 for an input side of
+              172.9M. The split is a billing detail; the cache hit below says
+              it without pretending to be the whole. */}
+          <Field label="Input / output">
+            {`${compact(inputTotal(data.economics.total))} / ${compact(
+              data.economics.total.outputTokens,
+            )}`}
           </Field>
           <CacheHit total={data.economics.total} />
-          <Field label="Output">{compact(data.economics.total.outputTokens)}</Field>
           {/* A zero spends a row to say nothing. Every other count in this
               section is present whatever its value, because a real zero there
               is a measurement; reasoning output is simply absent on the
@@ -100,6 +108,14 @@ export function Dossier({
               {compact(data.economics.total.reasoningOutputTokens)}
             </Field>
           )}
+          {/* Last, and named for what it is: every request re-reads the whole
+              cached prefix, so this is a running BILL over the thread's life,
+              not the size of anything. Left as "Total" directly under the
+              context window's `175.8K / 1.0M` it invited a comparison between
+              two numbers that do not measure the same thing. */}
+          <Field label="Billed total">
+            {compact(data.economics.total.totalTokens)}
+          </Field>
         </Section>
       ) : null}
 
@@ -281,6 +297,20 @@ function CacheHit({
 }
 
 /**
+ * The whole input side of the thread: what the provider read, cached or not.
+ *
+ * bb reports the two separately because they bill differently. Either one
+ * alone understates the input — on a thread that caches well the uncached
+ * figure is a rounding error against it.
+ */
+function inputTotal(total: {
+  inputTokens: number;
+  cachedInputTokens: number;
+}): number {
+  return total.inputTokens + total.cachedInputTokens;
+}
+
+/**
  * The share of input tokens served from cache, or null when the thread has
  * read no input.
  *
@@ -293,7 +323,7 @@ export function cacheHitRate(total: {
   inputTokens: number;
   cachedInputTokens: number;
 }): number | null {
-  const read = total.inputTokens + total.cachedInputTokens;
+  const read = inputTotal(total);
   if (read <= 0) return null;
   return total.cachedInputTokens / read;
 }
