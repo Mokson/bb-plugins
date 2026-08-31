@@ -32,6 +32,7 @@ const { resetHoverSuppression } = await import("./dossier/RowHover");
 const { resetThreadExecutionsCache } = await import(
   "./header/useThreadExecutions"
 );
+const { resetLastActivityCache } = await import("./row/useLastActivity");
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
@@ -171,6 +172,9 @@ beforeEach(() => {
   resetLocalHostId();
   resetHoverSuppression();
   resetThreadExecutionsCache();
+  // Module state too, and its 30s TTL outlives a test that advanced the clock:
+  // a leaked entry silences the batch the next test is counting.
+  resetLastActivityCache();
 });
 
 afterEach(() => {
@@ -193,6 +197,24 @@ describe("ThreadList — the four list states", () => {
     threadsState = ready([thread()]);
     fireEvent.click(screen.getByRole("button", { name: /try again/i }));
     expect(renderedIds()).toEqual(["t1"]);
+  });
+
+  it("keeps the rendered list when the subscription re-enters loading", () => {
+    threadsState = ready([
+      thread({ id: "t1", latestAttentionAt: BEFORE_MIDNIGHT }),
+      thread({ id: "t2", latestAttentionAt: BEFORE_MIDNIGHT - MINUTE }),
+    ]);
+    const slot = renderList();
+    expect(renderedIds()).toEqual(["t1", "t2"]);
+
+    // A refresh: the host reports loading again and no threads meanwhile.
+    // Painting either the skeleton or the empty hint here is the flicker.
+    threadsState = { status: "loading", threads: [], projects: [] };
+    act(() => {
+      slot.lifecycle.rerender(<ThreadList {...props()} />);
+    });
+    expect(screen.queryAllByTestId("thread-skeleton")).toHaveLength(0);
+    expect(renderedIds()).toEqual(["t1", "t2"]);
   });
 
   it("renders the empty hint when there is nothing at all", () => {
@@ -688,7 +710,11 @@ describe("ThreadList — a hidden thing costs nothing (B61)", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Group by" }));
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Host" }));
 
-    expect(slot.inspection.rpcCalls).toHaveLength(0);
+    // Row 1's time label is drawn at every density, so its one batched
+    // `lastActivity` lookup (B82) is not a row-2 cost; nothing else is asked.
+    expect(
+      slot.inspection.rpcCalls.filter((call) => call.method !== "lastActivity"),
+    ).toHaveLength(0);
   });
 
   it("asks for no local host when every thread has a branch to show", () => {

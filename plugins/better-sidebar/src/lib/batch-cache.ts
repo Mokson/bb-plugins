@@ -35,7 +35,14 @@ export interface BatchCacheEntry<TValue> {
 export interface BatchCache<TValue, TMethod extends string> {
   /** Requests every id that is neither fresh nor already in flight. */
   ensure(threadIds: readonly string[], call: BatchCall<TMethod>): void;
-  /** The entry for one id, or undefined when it is unresolved or expired. */
+  /**
+   * The entry for one id, or undefined when it has never resolved.
+   *
+   * Stale-while-revalidate: an expired entry is still served. The TTL decides
+   * when to REFETCH, never what to draw — dropping the value at expiry made
+   * every row lose its model, effort and time label for the length of a round
+   * trip, once per TTL, which is the list flickering on a timer.
+   */
   get(threadId: string): BatchCacheEntry<TValue> | undefined;
   /** Repaint on any settled batch. Returns the unsubscribe. */
   subscribe(listener: () => void): () => void;
@@ -69,8 +76,12 @@ export function createBatchCache<TValue, TResult, TMethod extends string>(
 
   const settle = (chunk: readonly string[], values: ReadonlyMap<string, TValue> | null) => {
     for (const id of chunk) {
-      // An id the backend omitted is still resolved: it has no value.
-      store(id, values?.get(id) ?? options.missing, values === null);
+      // An id the backend omitted is still resolved: it has no value. A
+      // REJECTED batch is different — it says nothing about the id, so the
+      // last known value stands rather than blanking the row until the
+      // shorter error TTL lets a retry through.
+      const previous = values === null ? entries.get(id)?.value : undefined;
+      store(id, previous ?? values?.get(id) ?? options.missing, values === null);
       inFlight.delete(id);
     }
     for (const listener of [...listeners]) listener();
@@ -95,8 +106,7 @@ export function createBatchCache<TValue, TResult, TMethod extends string>(
       }
     },
     get(threadId) {
-      const entry = entries.get(threadId);
-      return entry !== undefined && entry.expiresAt > Date.now() ? entry : undefined;
+      return entries.get(threadId);
     },
     subscribe(listener) {
       listeners.add(listener);
