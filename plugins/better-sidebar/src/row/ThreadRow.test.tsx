@@ -689,17 +689,17 @@ describe("ThreadRow row 1 layout (B57)", () => {
   });
 
   /**
-   * The divider sits BETWEEN labels, never before the first or after the
-   * last. Every label on the line is independently hideable — by setting or
-   * by absent data — so a separator baked onto a label would strand a leading
-   * or trailing dot the moment its neighbour disappeared.
+   * Whitespace alone divides the labels; no dot is drawn between them. Each
+   * label carries its own mark, so a dot would be a second divider on a line
+   * that is 10px tall. The `·` inside the model label is not a divider: it
+   * joins the model to its effort, which read as one fact.
    */
   it.each([
-    ["all three labels", {}, 2],
-    ["project hidden", { showProjectName: false }, 1],
-    ["branch hidden", { showBranch: false }, 1],
-    ["project and branch hidden", { showProjectName: false, showBranch: false }, 0],
-  ])("draws one divider between each pair of labels: %s", (_label, props, expected) => {
+    ["all three labels", {}],
+    ["project hidden", { showProjectName: false }],
+    ["branch hidden", { showBranch: false }],
+    ["project and branch hidden", { showProjectName: false, showBranch: false }],
+  ])("draws no divider between labels: %s", (_label, props) => {
     const { container } = renderRow(
       row({ projectName: "bb", workspaceLabel: "main" }),
       {},
@@ -708,14 +708,9 @@ describe("ThreadRow row 1 layout (B57)", () => {
     const line = rowOne(container).nextElementSibling!.firstElementChild!;
 
     const dividers = [...line.children].filter(
-      (child) => child.textContent === "·" && child.hasAttribute("aria-hidden"),
+      (child) => child.textContent === "·",
     );
-    expect(dividers).toHaveLength(expected);
-
-    // Never first: the provider mark leads, and a dot after a logo reads as
-    // punctuation with nothing before it.
-    expect(line.firstElementChild!.textContent).not.toBe("·");
-    expect(line.lastElementChild!.textContent).not.toBe("·");
+    expect(dividers).toHaveLength(0);
   });
 
   it("sizes every row-1 mark alike, and every row-2 mark alike but smaller", () => {

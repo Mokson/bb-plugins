@@ -21,10 +21,11 @@ const DIM_CLASS: Record<RenderRow["dimLevel"], string> = {
 };
 
 /**
- * Row 2: `project · workspace · PR chip`, on root rows only (B52).
+ * Row 2 for a ROOT row: project, branch, model and effort, then the PR chip.
  *
- * Time and the provider glyph both left this line for row 1 (B51.2, B51.4).
- * The line reads left to right, except for the PR chip: it is pinned to the
+ * Every label carries its own mark, and each is independently hideable — by
+ * setting or by absent data — so the line is assembled from whatever survives.
+ * It reads left to right, except for the PR chip: that is pinned to the
  * trailing edge so the numbers form one column down the list rather than
  * starting at a different x on every row, wherever that row's branch ended.
  */
@@ -53,10 +54,9 @@ export function SecondRow({
   execution: { model: string; reasoningLevel: string } | null;
 }) {
   /*
-   * The labels as a LIST, so the separator can be interleaved rather than
-   * baked onto each one. Written inline, a leading `·` survives whenever the
-   * label before it is hidden — and every one of these is independently
-   * hideable through settings or absent from the data.
+   * The labels as a LIST. Every one of them is independently hideable —
+   * through settings or absent from the data — so the line is assembled from
+   * whatever survives rather than written out inline with gaps in it.
    */
   const labels: { id: string; node: ReactNode }[] = [];
 
@@ -105,10 +105,9 @@ export function SecondRow({
   // branch stays the ONE shrinkable child, so it absorbs the whole deficit
   // rather than the two of them splitting it.
   if (execution !== null) {
-    // Model and effort stay ONE label. Splitting them put the separator
-    // element between two spans, and with the spacing carried by `gap` the
-    // line's accessible text collapsed to `claude-opus-5low`. The pair reads
-    // as one fact anyway, and its own `·` is the pattern the rest follows.
+    // Model and effort stay ONE label. Split into two spans, with the
+    // spacing carried by `gap`, the line's accessible text collapsed to
+    // `claude-opus-5low`. The pair reads as one fact anyway.
     labels.push({
       id: "model",
       node: (
@@ -133,17 +132,15 @@ export function SecondRow({
   return (
     <div
       className={cn(
-        // `gap-1` rather than `gap-1.5`: the separator now carries the
-        // division, so the whitespace only has to keep it off its neighbours.
-        "flex min-w-0 items-center gap-1 text-2xs text-muted-foreground/70",
+        // Whitespace alone divides the labels. Each one already carries its
+        // own mark, and a dot between two marked labels stacks a second
+        // divider onto a line that is 10px tall.
+        "flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground/70",
         DIM_CLASS[row.dimLevel],
       )}
     >
-      {labels.map((label, index) => (
-        <Fragment key={label.id}>
-          {index === 0 ? null : <Separator />}
-          {label.node}
-        </Fragment>
+      {labels.map((label) => (
+        <Fragment key={label.id}>{label.node}</Fragment>
       ))}
 
       {pullRequest === null ? null : (
@@ -156,23 +153,6 @@ export function SecondRow({
         </span>
       )}
     </div>
-  );
-}
-
-/**
- * The one divider row 2 uses, between every pair of labels it draws.
- *
- * `aria-hidden` because it is punctuation: a screen reader announcing "middle
- * dot" between a project and a branch reads worse than the pause it stands
- * for. Dimmer than the labels, so the eye groups on the words rather than on
- * the marks between them, and `shrink-0` so a squeezed line loses branch
- * characters rather than its own structure.
- */
-function Separator() {
-  return (
-    <span aria-hidden className="shrink-0 text-muted-foreground/40">
-      ·
-    </span>
   );
 }
 
@@ -203,7 +183,9 @@ export function ChildSecondRow({
   return (
     <div
       className={cn(
-        "flex min-w-0 items-center gap-1 text-2xs text-muted-foreground/70",
+        // `gap-0.5`, matching the mark-to-model spacing on a root row: the
+        // pair is the same pair, so it sits at the same distance.
+        "flex min-w-0 items-center gap-0.5 text-2xs text-muted-foreground/70",
         DIM_CLASS[row.dimLevel],
       )}
     >
