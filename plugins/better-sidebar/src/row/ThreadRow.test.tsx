@@ -475,12 +475,12 @@ describe("ThreadRow chrome", () => {
   });
 
   it("renders the provider glyph with no environment and no PR (B17)", () => {
-    const { container } = renderRow(row(), {
-      providers: {
-        status: "ready",
-        providers: [],
-      },
-    });
+    const { container } = renderRow(
+      row(),
+      { providers: { status: "ready", providers: [] } },
+      // The mark rides on the model label, so it needs one to be drawn.
+      { execution: { model: "claude-opus-5", reasoningLevel: "low" } },
+    );
 
     const element = rowElement(container);
     expect(element.textContent).not.toContain("#");
@@ -609,9 +609,15 @@ describe("ThreadRow row 1 layout (B57)", () => {
    * The two marks swapped lines: status leads row 1, the provider mark leads
    * row 2, and they stack in one 22px gutter.
    */
-  it("leads row 2 with the provider mark, and row 1 with status", () => {
+  /**
+   * The mark belongs to the model, not to the line: it says which agent ran
+   * this, which is the same fact the model names. One setting governs both.
+   */
+  it("pairs the provider mark with the model, not the head of the line", () => {
     const { container } = renderRow(
       row({ projectName: "bb", workspaceLabel: "main" }),
+      {},
+      { execution: { model: "claude-opus-5", reasoningLevel: "low" } },
     );
 
     expect(
@@ -619,14 +625,26 @@ describe("ThreadRow row 1 layout (B57)", () => {
     ).toBeNull();
 
     const line = rowOne(container).nextElementSibling!.firstElementChild!;
-    const mark = line.firstElementChild!;
-    expect(mark.getAttribute("role")).toBe("img");
-    // The mark is the line's FIRST element, so the whole line starts at the
-    // title's x rather than the mark sitting out in row 1's status gutter.
-    const project = line.children[1]!;
-    expect(mark.compareDocumentPosition(project)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
+    const model = line.querySelector('[data-better-sidebar-row2="model"]')!;
+    expect(model.querySelector("[role='img']")).not.toBeNull();
+    expect(model.textContent).toContain("claude-opus-5 · low");
+
+    // The line now leads with the project, whose own mark is a folder.
+    expect(line.firstElementChild!.getAttribute("data-better-sidebar-row2")).toBe(
+      "project",
     );
+  });
+
+  it("drops the mark with the model it qualifies", () => {
+    const { container } = renderRow(
+      row({ projectName: "bb", workspaceLabel: "main" }),
+      {},
+      { execution: null },
+    );
+    const line = rowOne(container).nextElementSibling!;
+
+    expect(line.querySelector("[data-better-sidebar-provider]")).toBeNull();
+    expect(line.textContent).toContain("bb");
   });
 
   /**
@@ -635,33 +653,6 @@ describe("ThreadRow row 1 layout (B57)", () => {
    * `text-2xs`. Asserted against the shared constants, so a change has to be
    * made in one place rather than agreed across five files.
    */
-  /**
-   * `compact` draws no second row on any row, so the provider mark would have
-   * had nowhere to go. It is drawn ONCE per row: on row 2 when the row has
-   * one, and in the trailing cluster when it does not.
-   */
-  it("falls the provider mark back to the trailing cluster with no second row", () => {
-    const { container } = renderRow(row(), {}, { showSecondRow: false });
-
-    expect(rowOne(container).nextElementSibling).toBeNull();
-    expect(
-      trailing(container).querySelector("[data-better-sidebar-provider]"),
-    ).not.toBeNull();
-  });
-
-  it("never draws the provider mark twice when the row has a second line", () => {
-    const { container } = renderRow(
-      row({ projectName: "bb", workspaceLabel: "main" }),
-    );
-
-    expect(
-      container.querySelectorAll("[data-better-sidebar-provider]"),
-    ).toHaveLength(1);
-    expect(
-      trailing(container).querySelector("[data-better-sidebar-provider]"),
-    ).toBeNull();
-  });
-
   it("gives a child row a line of its own, carrying model and effort", () => {
     const { container } = renderRow(
       row({ depth: 1, projectName: "bb", workspaceLabel: "main" }),
@@ -676,12 +667,12 @@ describe("ThreadRow row 1 layout (B57)", () => {
     expect(line.querySelector("[data-better-sidebar-provider]")).not.toBeNull();
   });
 
-  /** B71.3: an unresolved model drops the labels, never a placeholder. */
-  it("keeps a child's mark and drops its labels while the model is unknown", () => {
+  /** B71.3, revised: mark and labels go together, never a placeholder. */
+  it("draws a child nothing at all while its model is unknown", () => {
     const { container } = renderRow(row({ depth: 1 }), {}, { execution: null });
     const line = rowOne(container).nextElementSibling!;
 
-    expect(line.querySelector("[data-better-sidebar-provider]")).not.toBeNull();
+    expect(line.querySelector("[data-better-sidebar-provider]")).toBeNull();
     expect(line.textContent).toBe("");
   });
 
@@ -746,9 +737,9 @@ describe("ThreadRow row 1 layout (B57)", () => {
     }
 
     const line = rowOne(container).nextElementSibling!.firstElementChild!;
-    expect(line.firstElementChild!.className).toContain(ROW2_ICON);
-    const branch = line.querySelector("svg")!;
-    expect(branch.getAttribute("class")).toContain(ROW2_ICON);
+    for (const glyph of line.querySelectorAll("svg")) {
+      expect(glyph.getAttribute("class")).toContain(ROW2_ICON);
+    }
 
     // Row 2's marks are the smaller of the two, or the line reads as icons
     // with a caption rather than labels with marks.
@@ -908,8 +899,10 @@ describe("ThreadRow row 2 under pressure (B56)", () => {
     );
     const { project } = rowTwoLabels(container);
 
+    // The cap is on the label's box; `truncate` is on the text inside it,
+    // beside the folder mark.
     expect(project.getAttribute("class")).toContain("max-w-[45%]");
-    expect(project.getAttribute("class")).toContain("truncate");
+    expect(project.querySelector(".truncate")).not.toBeNull();
   });
 
   /**
@@ -1147,22 +1140,6 @@ describe("ThreadRow hidden elements skip their work (B59, B61)", () => {
    * 22px either way, so the title and row 2 keep the x they have with the
    * setting on.
    */
-  /**
-   * The mark is inline now, not a reserved column, so turning it off simply
-   * removes it and the project name takes the line's first position. Row 2
-   * still begins at the title's x either way, because the 22px indent is on
-   * the wrapper rather than on any mark.
-   */
-  it("drops row 2's provider mark entirely when showProviderGlyph is off", () => {
-    const target = row({ projectName: "bb", workspaceLabel: "main" });
-    const { container } = renderRow(target, {}, { showProviderGlyph: false });
-
-    const wrapper = rowOne(container).nextElementSibling!;
-    expect(wrapper.querySelector("[data-better-sidebar-provider]")).toBeNull();
-    expect(wrapper.className).toContain("pl-[22px]");
-    expect(wrapper.firstElementChild!.firstElementChild!.textContent).toBe("bb");
-  });
-
   /**
    * The mark used to sit flush against the row's left border, with the whole
    * `gap-2` on its right. The column now owns that gap (`-mr-2` cancels it)

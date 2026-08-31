@@ -275,7 +275,6 @@ function ThreadListBody({
               // B61: each of these skips work, not pixels — the PR hook is
               // never called and the signal observer is never mounted.
               showPrChip={settings.showPrChip}
-              showProviderGlyph={settings.showProviderGlyph}
               showProjectName={settings.showProjectName}
               showBranch={settings.showBranch}
               showRelativeTime={settings.showRelativeTime}

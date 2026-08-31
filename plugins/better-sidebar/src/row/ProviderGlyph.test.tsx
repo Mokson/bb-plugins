@@ -265,3 +265,46 @@ describe("ProviderGlyph sizes", () => {
     }
   });
 });
+
+describe("ProviderGlyph monochrome", () => {
+  /**
+   * Row 2 is a run of muted labels; a full-colour brand mark inside it is the
+   * loudest thing on the row and pulls the eye off the words it sits among.
+   */
+  it("ignores the provider's tint and draws one untinted mask", () => {
+    const tinted = provider({
+      id: "acp-claude-code",
+      logoUrl: "/logo.svg",
+      strings: {
+        expiredHint: "expired",
+        installUrl: "https://example.test",
+        signInHint: "sign in",
+        iconTint: { light: "rgb(1, 2, 3)", dark: "rgb(4, 5, 6)" },
+      },
+    });
+
+    const colour = renderSlot(
+      { component: ProviderGlyph },
+      { providerId: "acp-claude-code" },
+      { providers: { status: "ready", providers: [tinted] } },
+    );
+    expect(
+      colour.container.querySelectorAll('[data-better-sidebar-provider^="mask-"]'),
+    ).toHaveLength(2);
+    cleanup();
+
+    const mono = renderSlot(
+      { component: ProviderGlyph },
+      { providerId: "acp-claude-code", monochrome: true },
+      { providers: { status: "ready", providers: [tinted] } },
+    );
+    // One mask, in the line's own colour, rather than a light/dark pair.
+    expect(
+      mono.container.querySelectorAll('[data-better-sidebar-provider^="mask-"]'),
+    ).toHaveLength(0);
+    const mask = mono.container.querySelector(
+      '[data-better-sidebar-provider="mask"]',
+    )!;
+    expect(mask.className).toContain("bg-muted-foreground");
+  });
+});

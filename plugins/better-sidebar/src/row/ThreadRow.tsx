@@ -16,7 +16,6 @@ import { useRenameEditor } from "../menu/useRenameEditor";
 import type { RenderRow } from "../model/types";
 import { RowActions } from "./RowActions";
 import { LEADING_COLUMN_CLASS, ROW1_ICON } from "./row-metrics";
-import { ProviderGlyph } from "./ProviderGlyph";
 import { relativeTimeLabel } from "./relative-time";
 import { ChildSecondRow, SecondRow } from "./SecondRow";
 import { StatusGlyph } from "./StatusGlyph";
@@ -78,8 +77,6 @@ export interface ThreadRowProps {
   execution?: { model: string; reasoningLevel: string } | null;
   /** B61.1: `false` skips `experimental_useSidebarThreadPullRequest` entirely. */
   showPrChip?: boolean;
-  /** B59: the provider logo at the row's left edge. */
-  showProviderGlyph?: boolean;
   /** B59: row 2's project name and branch. */
   showProjectName?: boolean;
   showBranch?: boolean;
@@ -135,7 +132,6 @@ function RowBody({
   lastActivityAt,
   showSecondRow,
   execution = null,
-  showProviderGlyph = true,
   showProjectName = true,
   showBranch = true,
   showRelativeTime = true,
@@ -362,15 +358,6 @@ function RowBody({
                 {/* B61.2: at `compact` and `default` this is not mounted, so
                     no observer exists and no `rowSignals` request is sent. */}
                 {showSignals ? <RowSignals threadId={thread.id} /> : null}
-                {/* The provider mark is drawn ONCE per row: on row 2 when the
-                    row has one, and here when it does not. Without this,
-                    `compact` — the density that draws no second row at all —
-                    showed no provider mark on any row. */}
-                {!showSecondRow && showProviderGlyph ? (
-                  <span className="ml-1.5">
-                    <ProviderGlyph providerId={thread.providerId} />
-                  </span>
-                ) : null}
                 {/* B51.4: the row's own time, on every row, at the right edge.
                     With time hidden the trailing cluster is fully intrinsic —
                     B51.5's fixed slot has no anchor left to pin. */}
@@ -418,7 +405,7 @@ function RowBody({
                     pullRequest={pullRequest}
                     isCompactViewport={isCompactViewport}
                     onOpenPullRequest={openPullRequest}
-                    providerId={showProviderGlyph ? thread.providerId : null}
+                    providerId={thread.providerId}
                     showProjectName={showProjectName}
                     showBranch={showBranch}
                     execution={execution}
@@ -426,7 +413,7 @@ function RowBody({
                 ) : (
                   <ChildSecondRow
                     row={row}
-                    providerId={showProviderGlyph ? thread.providerId : null}
+                    providerId={thread.providerId}
                     execution={execution}
                   />
                 )}

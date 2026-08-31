@@ -538,8 +538,7 @@ describe("registration", () => {
       "groupBy",
       "density",
       "showPrChip",
-      "showProviderGlyph",
-      "showRelativeTime",
+        "showRelativeTime",
       "showArchivedChildren",
       "showHeaderChip",
       "showSecondRow",
@@ -551,8 +550,7 @@ describe("registration", () => {
     expect(descriptors.density?.default).toBe("default");
     for (const key of [
       "showPrChip",
-      "showProviderGlyph",
-      "showRelativeTime",
+        "showRelativeTime",
       "showArchivedChildren",
       "showHeaderChip",
       "showSecondRow",

@@ -181,11 +181,6 @@ export default function plugin(bb: BbPluginApi) {
       description: "Off also skips the per-row pull-request subscription.",
       default: true,
     },
-    showProviderGlyph: {
-      type: "boolean",
-      label: "Show the provider logo",
-      default: true,
-    },
     showRelativeTime: {
       type: "boolean",
       label: "Show the relative time",

@@ -94,7 +94,6 @@ const DEFAULT_SETTINGS: BetterSidebarSettings = {
   groupBy: "date",
   density: "default",
   showPrChip: true,
-  showProviderGlyph: true,
   showRelativeTime: true,
   showArchivedChildren: true,
   showHeaderChip: true,

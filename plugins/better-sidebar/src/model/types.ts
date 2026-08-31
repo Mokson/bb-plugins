@@ -13,7 +13,6 @@ export interface BetterSidebarSettings {
   groupBy: GroupBy;
   density: Density;
   showPrChip: boolean;
-  showProviderGlyph: boolean;
   showRelativeTime: boolean;
   /** B11: archived children under an expanded parent. */
   showArchivedChildren: boolean;

@@ -57,10 +57,18 @@ const MARK_SIZES = {
 export function ProviderGlyph({
   providerId,
   size = "default",
+  monochrome = false,
   className,
 }: {
   providerId: string;
   size?: keyof typeof MARK_SIZES;
+  /**
+   * Ignore the provider's brand tint and draw in the line's own colour.
+   *
+   * Row 2 is a run of muted labels; a full-colour brand mark inside it is the
+   * loudest thing on the row and pulls the eye off the words it sits among.
+   */
+  monochrome?: boolean;
   className?: string;
 }) {
   const { mark, status } = useProviderMark(providerId);
@@ -69,7 +77,7 @@ export function ProviderGlyph({
   const box = cn(TRAILING_GLYPH_BOX_CLASS, scale.box, className);
   const label = mark?.displayName ?? providerId;
   const logoUrl = mark?.logoUrl ?? null;
-  const tint = mark?.iconTint;
+  const tint = monochrome ? undefined : mark?.iconTint;
 
   // B80. A loading directory is an EMPTY directory, so without this branch every
   // row falls into case 3 below — and that dot means "bb does not know this

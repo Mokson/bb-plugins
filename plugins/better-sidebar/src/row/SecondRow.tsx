@@ -42,7 +42,7 @@ export function SecondRow({
   pullRequest: PluginSidebarPullRequest | null;
   isCompactViewport: boolean;
   onOpenPullRequest: () => void;
-  /** B59's `showProviderGlyph`, already resolved: null draws no mark. */
+  /** The provider whose mark rides on the model label; null draws none. */
   providerId: string | null;
   showProjectName: boolean;
   showBranch: boolean;
@@ -70,9 +70,10 @@ export function SecondRow({
       node: (
         <span
           data-better-sidebar-row2="project"
-          className="max-w-[45%] shrink-0 truncate"
+          className="flex max-w-[45%] shrink-0 items-center gap-0.5"
         >
-          {row.projectName}
+          <Glyph name="folder" className={cn(ROW2_ICON, "shrink-0")} aria-hidden />
+          <span className="truncate">{row.projectName}</span>
         </span>
       ),
     });
@@ -111,8 +112,19 @@ export function SecondRow({
     labels.push({
       id: "model",
       node: (
-        <span data-better-sidebar-row2="model" className="shrink-0 truncate">
-          {execution.model} · {execution.reasoningLevel}
+        <span
+          data-better-sidebar-row2="model"
+          className="flex shrink-0 items-center gap-0.5"
+        >
+          {/* The mark belongs to the model, not to the line: it says which
+              agent ran this, which is the same fact the model names. It also
+              means one setting governs both. */}
+          {providerId === null ? null : (
+            <ProviderGlyph providerId={providerId} size="small" monochrome />
+          )}
+          <span className="truncate">
+            {execution.model} · {execution.reasoningLevel}
+          </span>
         </span>
       ),
     });
@@ -127,18 +139,6 @@ export function SecondRow({
         DIM_CLASS[row.dimLevel],
       )}
     >
-      {/* The provider mark leads the line, at the small size: it sits in a
-          `text-2xs` row beside the project name and would shout at row 1's
-          size. It is the line's first element, so the whole line — mark
-          included — begins at the title's x.
-
-          No separator after it: it is a mark, not a label, and a dot between
-          a logo and the first word reads as punctuation with nothing before
-          it. */}
-      {providerId === null ? null : (
-        <ProviderGlyph providerId={providerId} size="small" />
-      )}
-
       {labels.map((label, index) => (
         <Fragment key={label.id}>
           {index === 0 ? null : <Separator />}
@@ -195,7 +195,7 @@ export function ChildSecondRow({
   execution,
 }: {
   row: RenderRow;
-  /** B59's `showProviderGlyph`, already resolved: null draws no mark. */
+  /** The provider whose mark rides on the model label; null draws none. */
   providerId: string | null;
   /** null while the lookup is in flight, and when the thread never ran. */
   execution: { model: string; reasoningLevel: string } | null;
@@ -207,15 +207,19 @@ export function ChildSecondRow({
         DIM_CLASS[row.dimLevel],
       )}
     >
-      {providerId === null ? null : (
-        <ProviderGlyph providerId={providerId} size="small" />
-      )}
-      {/* B71.3: an unresolved execution drops the labels and keeps the line's
-          mark, rather than drawing a placeholder for a model nobody chose. */}
+      {/* B71.3, revised: the mark belongs to the model, so an unresolved
+          execution now drops both rather than leaving a mark with nothing to
+          qualify. A placeholder for a model nobody chose is still never
+          drawn. */}
       {execution === null ? null : (
-        <span className="min-w-0 truncate">
-          {execution.model} · {execution.reasoningLevel}
-        </span>
+        <>
+          {providerId === null ? null : (
+            <ProviderGlyph providerId={providerId} size="small" monochrome />
+          )}
+          <span className="min-w-0 truncate">
+            {execution.model} · {execution.reasoningLevel}
+          </span>
+        </>
       )}
     </div>
   );
