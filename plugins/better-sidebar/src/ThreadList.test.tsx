@@ -1043,6 +1043,40 @@ describe("ThreadList — a child row's second line", () => {
  * the shared class, because jsdom lays nothing out.
  */
 describe("ThreadList — one leading column", () => {
+  /**
+   * The chevron moved to the trailing edge, where each row's time sits, and
+   * is revealed on hover like the row's own actions. The leading column stays
+   * behind it, empty: it is what holds the label on the titles' x.
+   */
+  it("puts the chevron last and the empty column first", () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    renderList();
+    const header = screen.getByRole("button", { name: /today/i });
+
+    expect(header.firstElementChild!.className).toContain("w-[22px]");
+    expect(header.firstElementChild!.children).toHaveLength(0);
+    expect(header.lastElementChild!.tagName.toLowerCase()).toBe("svg");
+    expect(header.lastElementChild!.getAttribute("class")).toContain(
+      "group-hover/section:opacity-100",
+    );
+  });
+
+  /**
+   * A collapsed section persists across reloads, so a returning user would
+   * meet a header with no rows under it and no visible way to open it.
+   */
+  it("keeps the chevron visible while the section is collapsed", () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    renderList();
+
+    fireEvent.click(screen.getByRole("button", { name: /today/i }));
+    const chevron = screen.getByRole("button", { name: /today/i })
+      .lastElementChild!;
+
+    expect(chevron.getAttribute("class")).toContain("opacity-100");
+    expect(chevron.getAttribute("class")).not.toContain("opacity-0");
+  });
+
   it("gives a collapsible header the same leading column as a row", () => {
     threadsState = ready([thread({ id: "solo" })]);
     renderList();

@@ -312,15 +312,31 @@ function SectionHeader({
         tabIndex={-1}
         onClick={onToggle}
         aria-expanded={!section.isCollapsed}
-        className={cn(className, "hover:text-foreground")}
+        className={cn(className, "group/section hover:text-foreground")}
       >
-        <span className={LEADING_COLUMN_CLASS}>
-          <Glyph
-            name={section.isCollapsed ? "chevron-right" : "chevron-down"}
-            className={ROW1_ICON}
-          />
-        </span>
+        {/* The leading column stays, empty. It is what keeps the label on the
+            same x as the titles beneath it; the chevron moved out of it, not
+            the alignment it provides. */}
+        <span aria-hidden className={LEADING_COLUMN_CLASS} />
         {label}
+        {/* Trailing, so it lands on the same edge as each row's time rather
+            than in the column the rows use for status.
+
+            Revealed on hover, like the row's own actions — EXCEPT while the
+            section is collapsed. A collapsed section persists across reloads,
+            so a returning user would meet a header with no rows under it and
+            no visible control to open it. The one state that needs saying
+            keeps saying it. */}
+        <Glyph
+          name={section.isCollapsed ? "chevron-right" : "chevron-down"}
+          className={cn(
+            ROW1_ICON,
+            "shrink-0 transition-opacity",
+            section.isCollapsed
+              ? "opacity-100"
+              : "opacity-0 group-hover/section:opacity-100 group-focus-within/section:opacity-100",
+          )}
+        />
       </button>
     </h2>
   );
