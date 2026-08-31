@@ -11,6 +11,7 @@ import {
 import { cn } from "../lib/utils";
 import { parseSettings } from "../settings";
 import { usePortalScopeProps } from "../lib/portal-scope";
+import { COLLISION_PADDING } from "../DisplayMenu";
 import { resolveTitle } from "../model/list-model";
 import { ProviderGlyph } from "../row/ProviderGlyph";
 import { StatusGlyph } from "../row/StatusGlyph";
@@ -148,17 +149,30 @@ function ChipBody({ threadId, isCompactViewport }: PluginThreadHeaderActionProps
           side="bottom"
           align="end"
           sideOffset={6}
+          collisionPadding={COLLISION_PADDING}
           aria-label="Child threads"
-          className="z-50 w-80 overflow-hidden rounded-xl border border-border bg-popover shadow-lg"
+          className="z-50 flex w-80 flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-lg"
+          // A parent with seventeen subagents overflowed the viewport and the
+          // card simply clipped: `overflow-hidden` is what rounds the corners,
+          // and nothing under it could scroll. Radix measures the room its
+          // side actually has and publishes it here, so the cap follows the
+          // window instead of guessing a row count.
+          style={{
+            maxHeight: "var(--radix-popover-content-available-height)",
+          }}
           {...portalScopeProps}
         >
-          <div className="flex items-center gap-2 px-3 pb-1 pt-2.5">
+          {/* `shrink-0`, so the count stays put while the list below scrolls
+              rather than being the first thing squeezed out of view. */}
+          <div className="flex shrink-0 items-center gap-2 px-3 pb-1 pt-2.5">
             <span className="text-xs font-semibold">Children</span>
             <span className="ml-auto text-2xs text-muted-foreground">
               {children.length}
             </span>
           </div>
-          <ul className="flex flex-col gap-px p-1.5 pt-0.5">
+          {/* `min-h-0` is what lets a flex child shrink below its content and
+              hand the overflow to its own scrollbar. */}
+          <ul className="flex min-h-0 flex-col gap-px overflow-y-auto p-1.5 pt-0.5">
             {children.map((child) => (
               <li key={child.id} className="list-none">
                 <button

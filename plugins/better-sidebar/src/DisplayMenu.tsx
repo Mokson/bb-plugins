@@ -23,7 +23,8 @@ const MENU_SURFACE = cn(
 );
 
 /** Keeps every edge of the menu off every edge of the viewport (B79.1). */
-const COLLISION_PADDING = 8;
+/** Shared with the child-threads popover, so overlays clear the window edge alike. */
+export const COLLISION_PADDING = 8;
 
 /** B65's five values, in the order the settings form lists them. */
 const GROUP_BY_OPTIONS: readonly { value: GroupBy; label: string }[] = [

@@ -779,3 +779,44 @@ describe("settings gate (B72)", () => {
     expect(executionCalls(slot)).toHaveLength(0);
   });
 });
+
+/**
+ * A parent with seventeen subagents overflowed the viewport and the card
+ * clipped: `overflow-hidden` is what rounds its corners, and nothing beneath
+ * it could scroll.
+ */
+describe("ChildThreadsChip overflow", () => {
+  function open(children: PluginSidebarThread[]) {
+    render([thread("parent"), ...children]);
+    fireEvent.click(chip());
+  }
+
+  it("caps the card at the room Radix measured and scrolls the list", () => {
+    open(
+      Array.from({ length: 40 }, (_, index) =>
+        child(`kid_${index}`, "parent", { title: `Child ${index}` }),
+      ),
+    );
+
+    const card = screen.getByLabelText("Child threads");
+    expect(card.style.maxHeight).toBe(
+      "var(--radix-popover-content-available-height)",
+    );
+    expect(card.className).toContain("flex-col");
+
+    const list = card.querySelector("ul")!;
+    expect(list.className).toContain("overflow-y-auto");
+    // Without `min-h-0` a flex child refuses to shrink below its content, so
+    // the list would grow past the cap instead of scrolling inside it.
+    expect(list.className).toContain("min-h-0");
+    expect(list.children).toHaveLength(40);
+  });
+
+  it("keeps the header out of the scroll area", () => {
+    open([child("kid_0", "parent")]);
+
+    const card = screen.getByLabelText("Child threads");
+    expect(card.firstElementChild!.className).toContain("shrink-0");
+    expect(card.firstElementChild!.textContent).toContain("Children");
+  });
+});
