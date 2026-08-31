@@ -697,6 +697,36 @@ describe("ThreadRow row 1 layout (B57)", () => {
     expect(labels.className).toContain("text-muted-foreground/70");
   });
 
+  /**
+   * The divider sits BETWEEN labels, never before the first or after the
+   * last. Every label on the line is independently hideable — by setting or
+   * by absent data — so a separator baked onto a label would strand a leading
+   * or trailing dot the moment its neighbour disappeared.
+   */
+  it.each([
+    ["all three labels", {}, 2],
+    ["project hidden", { showProjectName: false }, 1],
+    ["branch hidden", { showBranch: false }, 1],
+    ["project and branch hidden", { showProjectName: false, showBranch: false }, 0],
+  ])("draws one divider between each pair of labels: %s", (_label, props, expected) => {
+    const { container } = renderRow(
+      row({ projectName: "bb", workspaceLabel: "main" }),
+      {},
+      { execution: { model: "claude-opus-5", reasoningLevel: "low" }, ...props },
+    );
+    const line = rowOne(container).nextElementSibling!.firstElementChild!;
+
+    const dividers = [...line.children].filter(
+      (child) => child.textContent === "·" && child.hasAttribute("aria-hidden"),
+    );
+    expect(dividers).toHaveLength(expected);
+
+    // Never first: the provider mark leads, and a dot after a logo reads as
+    // punctuation with nothing before it.
+    expect(line.firstElementChild!.textContent).not.toBe("·");
+    expect(line.lastElementChild!.textContent).not.toBe("·");
+  });
+
   it("sizes every row-1 mark alike, and every row-2 mark alike but smaller", () => {
     const { container } = renderRow(
       row({
@@ -834,13 +864,15 @@ describe("ThreadRow row 2 under pressure (B56)", () => {
   const LONG_BRANCH = "bb/create-customizable-plugin-version-with-a-very-long-slug";
 
   function rowTwoLabels(container: HTMLElement) {
-    const one = rowOne(container);
-    const two = one.nextElementSibling!.firstElementChild!;
-    // The provider mark leads the line, so the labels start one child in.
-    return {
-      project: two.children[1]!,
-      branch: two.children[2]!,
+    const two = rowOne(container).nextElementSibling!;
+    // By name, not by index: separators sit between the labels, so a
+    // positional probe breaks whenever the line gains or loses one.
+    const at = (name: string) => {
+      const el = two.querySelector(`[data-better-sidebar-row2="${name}"]`);
+      if (el === null) throw new Error(`no row-2 ${name}`);
+      return el;
     };
+    return { project: at("project"), branch: at("branch") };
   }
 
   /**

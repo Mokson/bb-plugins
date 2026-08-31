@@ -1,3 +1,4 @@
+import { Fragment, type ReactNode } from "react";
 import type { PluginSidebarPullRequest } from "@get-bb/plugin-sdk/app";
 import { cn } from "../lib/utils";
 import { Glyph } from "../ui/Glyph";
@@ -51,52 +52,99 @@ export function SecondRow({
    */
   execution: { model: string; reasoningLevel: string } | null;
 }) {
+  /*
+   * The labels as a LIST, so the separator can be interleaved rather than
+   * baked onto each one. Written inline, a leading `·` survives whenever the
+   * label before it is hidden — and every one of these is independently
+   * hideable through settings or absent from the data.
+   */
+  const labels: { id: string; node: ReactNode }[] = [];
+
+  // B56.2: `shrink-0` takes the project name out of the proportional shrink
+  // that was starving it, and `max-w-[45%]` is the whole of its claim — it
+  // renders in full inside that share and truncates only when it alone
+  // exceeds it, never because the branch beside it is long.
+  if (row.projectName !== null && showProjectName) {
+    labels.push({
+      id: "project",
+      node: (
+        <span
+          data-better-sidebar-row2="project"
+          className="max-w-[45%] shrink-0 truncate"
+        >
+          {row.projectName}
+        </span>
+      ),
+    });
+  }
+
+  // B56.1: the only shrinkable child left, so it absorbs the whole deficit.
+  // It is the longest label, the most repetitive down the list and the least
+  // identifying, so its tail is the right thing to lose.
+  if (row.workspaceLabel !== null && showBranch) {
+    labels.push({
+      id: "branch",
+      node: (
+        <span
+          data-better-sidebar-row2="branch"
+          className="flex min-w-0 shrink items-center gap-0.5"
+        >
+          <Glyph
+            name="git-branch"
+            className={cn(ROW2_ICON, "shrink-0")}
+            aria-hidden
+          />
+          <span className="truncate">{row.workspaceLabel}</span>
+        </span>
+      ),
+    });
+  }
+
+  // After the branch and before the chip. `shrink-0` keeps B56.1 intact: the
+  // branch stays the ONE shrinkable child, so it absorbs the whole deficit
+  // rather than the two of them splitting it.
+  if (execution !== null) {
+    // Model and effort stay ONE label. Splitting them put the separator
+    // element between two spans, and with the spacing carried by `gap` the
+    // line's accessible text collapsed to `claude-opus-5low`. The pair reads
+    // as one fact anyway, and its own `·` is the pattern the rest follows.
+    labels.push({
+      id: "model",
+      node: (
+        <span data-better-sidebar-row2="model" className="shrink-0 truncate">
+          {execution.model} · {execution.reasoningLevel}
+        </span>
+      ),
+    });
+  }
+
   return (
     <div
       className={cn(
-        "flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground/70",
+        // `gap-1` rather than `gap-1.5`: the separator now carries the
+        // division, so the whitespace only has to keep it off its neighbours.
+        "flex min-w-0 items-center gap-1 text-2xs text-muted-foreground/70",
         DIM_CLASS[row.dimLevel],
       )}
     >
       {/* The provider mark leads the line, at the small size: it sits in a
           `text-2xs` row beside the project name and would shout at row 1's
           size. It is the line's first element, so the whole line — mark
-          included — begins at the title's x. */}
+          included — begins at the title's x.
+
+          No separator after it: it is a mark, not a label, and a dot between
+          a logo and the first word reads as punctuation with nothing before
+          it. */}
       {providerId === null ? null : (
         <ProviderGlyph providerId={providerId} size="small" />
       )}
 
-      {/* B56.2: `shrink-0` takes the project name out of the proportional
-          shrink that was starving it, and `max-w-[45%]` is the whole of its
-          claim — it renders in full inside that share and truncates only when
-          it alone exceeds it, never because the branch beside it is long. */}
-      {row.projectName === null || !showProjectName ? null : (
-        <span className="max-w-[45%] shrink-0 truncate">{row.projectName}</span>
-      )}
-
-      {/* B56.1: the only shrinkable child left, so it absorbs the whole
-          deficit. It is the longest label, the most repetitive down the list
-          and the least identifying, so its tail is the right thing to lose. */}
-      {row.workspaceLabel === null || !showBranch ? null : (
-        <span className="flex min-w-0 shrink items-center gap-0.5">
-          <Glyph name="git-branch" className={cn(ROW2_ICON, "shrink-0")} aria-hidden />
-          <span className="truncate">{row.workspaceLabel}</span>
-        </span>
-      )}
-
-      {/* `ml-auto` pins the chip to the line's trailing edge instead of
-          letting it trail the branch, so it sits in one column down the list
-          and lands under row 1's own trailing cluster. `shrink-0` keeps it
-          whole: the branch beside it is the shrinkable child (B56.1), so a
-          long branch truncates rather than squeezing the chip. */}
-      {/* After the branch and before the chip. `shrink-0` keeps B56.1 intact:
-          the branch stays the ONE shrinkable child, so it absorbs the whole
-          deficit rather than the two of them splitting it. */}
-      {execution === null ? null : (
-        <span className="shrink-0 truncate">
-          {execution.model} · {execution.reasoningLevel}
-        </span>
-      )}
+      {labels.map((label, index) => (
+        <Fragment key={label.id}>
+          {index === 0 ? null : <Separator />}
+          {label.node}
+        </Fragment>
+      ))}
 
       {pullRequest === null ? null : (
         <span className="ml-auto shrink-0">
@@ -108,6 +156,23 @@ export function SecondRow({
         </span>
       )}
     </div>
+  );
+}
+
+/**
+ * The one divider row 2 uses, between every pair of labels it draws.
+ *
+ * `aria-hidden` because it is punctuation: a screen reader announcing "middle
+ * dot" between a project and a branch reads worse than the pause it stands
+ * for. Dimmer than the labels, so the eye groups on the words rather than on
+ * the marks between them, and `shrink-0` so a squeezed line loses branch
+ * characters rather than its own structure.
+ */
+function Separator() {
+  return (
+    <span aria-hidden className="shrink-0 text-muted-foreground/40">
+      ·
+    </span>
   );
 }
 
@@ -138,7 +203,7 @@ export function ChildSecondRow({
   return (
     <div
       className={cn(
-        "flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground/70",
+        "flex min-w-0 items-center gap-1 text-2xs text-muted-foreground/70",
         DIM_CLASS[row.dimLevel],
       )}
     >
