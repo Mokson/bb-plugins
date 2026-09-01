@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { loadCaseFile } from "../src/eval/cases.js";
-import { dryRun, removeWorktree } from "../src/eval/dryrun.js";
+import { dryRun, execGit, removeWorktree } from "../src/eval/dryrun.js";
 import { EvalStore } from "../src/eval/store.js";
 import { TempDatabase } from "./fakes.js";
 import { caseYaml, git, makeGitFixture, writeCases } from "./eval-fixtures.js";
@@ -61,6 +61,36 @@ describe("dry-run removes its worktrees unless --keep", () => {
     expect(readFileSync(join(plan.worktree, "total.txt"), "utf8")).toBe("patched\n");
 
     removeWorktree(fixture.repo, plan.worktree);
+  });
+
+  it("still removes the trees when recording the run itself fails", () => {
+    const store = new EvalStore(temp.openDatabase());
+    const exploding = {
+      ...store,
+      insertRun: () => {
+        throw new Error("disk full");
+      },
+    } as unknown as EvalStore;
+
+    let worktrees: string[] = [];
+    expect(() =>
+      dryRun({
+        store: exploding,
+        selected: [loadOne("unrecorded")],
+        worktreeRoot: join(fixture.root, "unrecorded-root"),
+        runId: "run-unrecorded",
+        // The plans are unreachable through the throw, so the paths are
+        // captured from the git runner as the trees are created.
+        git: (cwd, args) => {
+          if (args[0] === "worktree" && args[1] === "add") worktrees.push(args[4]!);
+          return execGit(cwd, args);
+        },
+      }),
+    ).toThrow("disk full");
+
+    expect(worktrees).toHaveLength(1);
+    for (const path of worktrees) expect(existsSync(path)).toBe(false);
+    worktrees = [];
   });
 
   it("gives each trial its own tree, so two trials cannot share state", () => {

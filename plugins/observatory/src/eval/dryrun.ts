@@ -242,19 +242,23 @@ export function dryRun(options: DryRunOptions): DryRunReport {
   }
 
   const cases = [...new Set(plans.map((plan) => plan.case))];
-  options.store.insertRun({
-    id: runId,
-    started_at: startedAt,
-    finished_at: startedAt,
-    tag: options.tag ?? null,
-    stack_sha: sha,
-    cases_json: JSON.stringify(cases),
-    status: "dry-run",
-    gate: null,
-  });
-
-  if (options.keep !== true) {
-    for (const entry of provisioned) removeWorktree(entry.repo, entry.worktree, git);
+  // The trees are provisioned by now, so teardown is a `finally`: a failed
+  // store write must not leave five checkouts behind on the way out.
+  try {
+    options.store.insertRun({
+      id: runId,
+      started_at: startedAt,
+      finished_at: startedAt,
+      tag: options.tag ?? null,
+      stack_sha: sha,
+      cases_json: JSON.stringify(cases),
+      status: "dry-run",
+      gate: null,
+    });
+  } finally {
+    if (options.keep !== true) {
+      for (const entry of provisioned) removeWorktree(entry.repo, entry.worktree, git);
+    }
   }
 
   return {
