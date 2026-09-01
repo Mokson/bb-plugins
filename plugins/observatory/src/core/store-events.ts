@@ -76,6 +76,10 @@ export class EventStore {
     [number],
     PendingSplitTurn
   >;
+  private readonly turnsForThreadStatement: Statement<
+    [string],
+    PendingSplitTurn
+  >;
   private readonly threadsByRootStatement: Statement<[string], { thread_id: string }>;
   private readonly updateSeatStatement: Statement;
   private readonly updateSplitStatement: Statement;
@@ -118,6 +122,21 @@ export class EventStore {
           AND t.completed_at IS NOT NULL
         ORDER BY t.started_at
         LIMIT ?`,
+    );
+    // Every real turn of one thread, pending or not. The join partitions over
+    // this, not over the pending queue: a matched turn between two pending
+    // ones is still a boundary. Synthetic sidechain children are excluded -
+    // they are outputs of the partition, never inputs to it.
+    this.turnsForThreadStatement = db.prepare(
+      `SELECT t.thread_id, t.turn_id, h.provider_id, h.provider_thread_id,
+              t.started_at, t.completed_at, t.cached_input_tokens,
+              t.output_tokens, t.input_tokens, t.reasoning_tokens,
+              t.model_requested, t.split_source
+         FROM obs_turn t
+         JOIN obs_thread h ON h.thread_id = t.thread_id
+        WHERE t.thread_id = ?
+          AND (t.split_source IS NULL OR t.split_source <> 'sidechain')
+        ORDER BY t.started_at, t.turn_id`,
     );
     this.threadsByRootStatement = db.prepare(
       "SELECT thread_id FROM obs_thread WHERE root_thread_id = ? ORDER BY depth, thread_id",
@@ -174,6 +193,11 @@ export class EventStore {
 
   listTurnsPendingSplit(limit = 500): PendingSplitTurn[] {
     return this.pendingSplitStatement.all(limit);
+  }
+
+  /** Every non-sidechain turn of one thread, oldest first. */
+  listTurnsForThread(threadId: string): PendingSplitTurn[] {
+    return this.turnsForThreadStatement.all(threadId);
   }
 
   listThreadsByRoot(rootThreadId: string): string[] {

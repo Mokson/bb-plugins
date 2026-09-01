@@ -54,6 +54,28 @@ export interface LogTurn {
   mcp_names: string | null;
 }
 
+/**
+ * bb provider id -> the log-side provider ids to try, best first.
+ *
+ * The two sides do not share a vocabulary. bb names the provider it drives
+ * (`pi`, `acp-omp`); the log indexer names the parser that read the file
+ * (`bb-pi-bridge`, `omp`). Joining on bb's id alone silently lost every pi and
+ * omp session, so the lookup walks this list and the first id with rows wins.
+ * An unlisted provider falls back to its own id, which is the identity case.
+ */
+const LOG_PROVIDER_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  "claude-code": ["claude-code"],
+  codex: ["codex"],
+  pi: ["bb-pi-bridge", "pi"],
+  "acp-omp": ["omp"],
+  "acp-opencode": ["opencode"],
+  "acp-cursor": ["acp-cursor"],
+};
+
+export function logProvidersFor(providerId: string): readonly string[] {
+  return LOG_PROVIDER_ALIASES[providerId] ?? [providerId];
+}
+
 export interface LogTurnQuery {
   provider: string;
   providerThreadId: string;
@@ -252,9 +274,13 @@ export function partitionRows(
   const live = turns
     .map((turn, index) => ({ index, start: startMs(turn) }))
     .filter(
-      (entry): entry is { index: number; start: number } => entry.start !== null,
+      (entry): entry is { index: number; start: number } =>
+        entry.start !== null,
     )
-    .map((entry) => ({ index: entry.index, at: entry.start - WINDOW_BEFORE_MS }))
+    .map((entry) => ({
+      index: entry.index,
+      at: entry.start - WINDOW_BEFORE_MS,
+    }))
     .sort((a, b) => a.at - b.at || a.index - b.index);
 
   // `log_key` breaks ts ties so two runs over the same rows agree.
@@ -264,7 +290,11 @@ export function partitionRows(
 
   let cursor = -1;
   for (const row of ordered) {
-    for (let next = live[cursor + 1]; next && next.at <= row.ts; next = live[cursor + 1]) {
+    for (
+      let next = live[cursor + 1];
+      next && next.at <= row.ts;
+      next = live[cursor + 1]
+    ) {
       cursor += 1;
     }
     const owner = cursor < 0 ? undefined : live[cursor];
@@ -333,6 +363,37 @@ interface SessionStats {
   unattributedAfter: number;
 }
 
+function sortTurns(turns: readonly PendingSplitTurn[]): PendingSplitTurn[] {
+  return turns
+    .slice()
+    .sort(
+      (a, b) =>
+        (a.started_at ?? "").localeCompare(b.started_at ?? "") ||
+        a.turn_id.localeCompare(b.turn_id),
+    );
+}
+
+/**
+ * The pending turns plus their already-matched siblings, deduped by turn id.
+ *
+ * The caller's own objects win for the turns it passed: they are what this
+ * pass was asked to join, and re-reading them would let an earlier pass's
+ * writes change the second pass's verdict. The store only supplies the
+ * siblings, which are needed as boundaries and nothing else.
+ */
+function allTurnsOf(
+  deps: JoinDeps,
+  pending: readonly PendingSplitTurn[],
+): PendingSplitTurn[] {
+  const byId = new Map(pending.map((turn) => [turn.turn_id, turn] as const));
+  for (const threadId of new Set(pending.map((turn) => turn.thread_id))) {
+    for (const turn of deps.events.listTurnsForThread(threadId)) {
+      if (!byId.has(turn.turn_id)) byId.set(turn.turn_id, turn);
+    }
+  }
+  return [...byId.values()];
+}
+
 /**
  * Match one session's pending turns against its log rows.
  *
@@ -349,23 +410,25 @@ export function joinSession(
     return summary;
   }
 
-  const ordered = turns
-    .slice()
-    .sort(
-      (a, b) =>
-        (a.started_at ?? "").localeCompare(b.started_at ?? "") ||
-        a.turn_id.localeCompare(b.turn_id),
-    );
+  // Partition over EVERY turn of the thread, not just the pending ones. A
+  // turn that already has a split is still a boundary: dropping it would fold
+  // its rows into the pending turn before it and double-count them.
+  const pendingIds = new Set(turns.map((turn) => turn.turn_id));
+  const ordered = sortTurns(allTurnsOf(deps, turns));
 
   // The whole session, not a union of windows: the partition itself decides
   // what belongs where, and a window filter here would only re-create the
   // stranding it replaces.
-  const rows = deps.logs.listLogTurns({
-    provider: first.provider_id,
-    providerThreadId: first.provider_thread_id,
-    tsFrom: 0,
-    tsTo: Number.MAX_SAFE_INTEGER,
-  });
+  let rows: LogTurn[] = [];
+  for (const provider of logProvidersFor(first.provider_id)) {
+    rows = deps.logs.listLogTurns({
+      provider,
+      providerThreadId: first.provider_thread_id,
+      tsFrom: 0,
+      tsTo: Number.MAX_SAFE_INTEGER,
+    });
+    if (rows.length > 0) break;
+  }
   const main = rows.filter((row) => row.is_sidechain !== 1);
   const sidechains = rows.filter((row) => row.is_sidechain === 1);
 
@@ -381,6 +444,9 @@ export function joinSession(
   summary.unattributedAfter = partition.after.length;
 
   ordered.forEach((turn, index) => {
+    // Matched turns are boundaries only: their split is already written and
+    // rewriting it here would re-price work this pass was not asked to touch.
+    if (!pendingIds.has(turn.turn_id)) return;
     const slice = partition.buckets[index] as LogTurn[];
     const sums = slice.length > 0 ? sumRows(slice) : null;
 
@@ -449,7 +515,13 @@ export function joinSession(
     });
   });
 
-  summary.sidechain = joinSidechains(deps, ordered, sidechains, stats);
+  summary.sidechain = joinSidechains(
+    deps,
+    ordered,
+    pendingIds,
+    sidechains,
+    stats,
+  );
 
   // A cheap slot that already exists, so the stats survive the process
   // without a schema change.
@@ -471,6 +543,7 @@ export function joinSession(
 function joinSidechains(
   deps: JoinDeps,
   ordered: readonly PendingSplitTurn[],
+  pendingIds: ReadonlySet<string>,
   sidechains: readonly LogTurn[],
   stats: SessionStats,
 ): number {
@@ -492,6 +565,7 @@ function joinSidechains(
     partition.buckets.forEach((slice, index) => {
       if (slice.length === 0) return;
       const turn = ordered[index] as PendingSplitTurn;
+      if (!pendingIds.has(turn.turn_id)) return;
       const sums = sumRows(slice);
       const turnId = sidechainTurnId(turn.turn_id, agentId);
       const child = price(

@@ -6,7 +6,7 @@
 // because eight tests share the shapes and eight copies drift apart.
 import { EventStore } from "../src/core/store-events.js";
 import type { LogTurn, PriceTurnResult } from "../src/core/join.js";
-import { ObservatoryStore } from "../src/core/store.js";
+import { ObservatoryStore, type SplitSource } from "../src/core/store.js";
 import { TempDatabase } from "./fakes.js";
 
 export const SESSION = "sess-1";
@@ -32,12 +32,15 @@ export interface RowSpec {
   loggedCostUsd?: number | null;
   sidechain?: boolean;
   agentId?: string | null;
+  /** Log-side provider id, which is not always bb's id for the same provider. */
+  provider?: string;
 }
 
 export function row(spec: RowSpec): LogTurn {
+  const provider = spec.provider ?? PROVIDER;
   return {
-    log_key: `${PROVIDER}:${SESSION}:${spec.key}`,
-    provider: PROVIDER,
+    log_key: `${provider}:${SESSION}:${spec.key}`,
+    provider,
     provider_thread_id: SESSION,
     ts: Date.parse(spec.at),
     model: spec.model === undefined ? "claude-opus-5" : spec.model,
@@ -61,19 +64,23 @@ export interface TurnSpec {
   cached?: number | null;
   output?: number | null;
   input?: number | null;
+  /** Anything but `unavailable` keeps the turn out of the pending queue. */
+  split?: SplitSource;
 }
 
 export class JoinHarness {
   readonly temp = new TempDatabase();
   readonly store: ObservatoryStore;
   readonly events: EventStore;
+  readonly provider: string;
 
-  constructor(turns: readonly TurnSpec[]) {
+  constructor(turns: readonly TurnSpec[], providerId: string = PROVIDER) {
+    this.provider = providerId;
     this.store = this.temp.open();
     this.events = new EventStore(this.store.db);
     this.store.upsertThread({
       thread_id: "thr-1",
-      provider_id: PROVIDER,
+      provider_id: providerId,
       provider_thread_id: SESSION,
     });
     for (const turn of turns) {
@@ -85,7 +92,7 @@ export class JoinHarness {
         input_tokens: turn.input ?? 0,
         cached_input_tokens: turn.cached ?? 0,
         output_tokens: turn.output ?? 0,
-        split_source: "unavailable",
+        split_source: turn.split ?? "unavailable",
       });
     }
   }
@@ -94,7 +101,10 @@ export class JoinHarness {
     return {
       store: this.store,
       events: this.events,
-      logs: { listLogTurns: () => rows.slice() },
+      logs: {
+        listLogTurns: (query: { provider: string }) =>
+          rows.filter((row) => row.provider === query.provider),
+      },
       priceTurn,
       catalog: null,
     };
@@ -117,7 +127,7 @@ export class JoinHarness {
     unattributedBefore: number;
     unattributedAfter: number;
   } {
-    const raw = this.store.getMeta(`join:${PROVIDER}:${SESSION}`);
+    const raw = this.store.getMeta(`join:${this.provider}:${SESSION}`);
     if (!raw) throw new Error("no join stats recorded");
     return JSON.parse(raw);
   }
