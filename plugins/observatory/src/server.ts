@@ -15,6 +15,9 @@ import type {
 } from "@get-bb/plugin-sdk";
 import { observatoryContract, type ModuleState, type StatusView } from "./contract.js";
 import { ObservatoryStore, applyMigrations } from "./core/store.js";
+import { EventStore, type CoverageView } from "./core/store-events.js";
+import { createIngest, type Ingest, type IngestCounters } from "./core/ingest.js";
+import type { LogTurnSource, PriceTurnFn } from "./core/join.js";
 import { LocalHostClient } from "./core/host-client.js";
 import {
   CORE_MODULE_ID,
@@ -142,23 +145,192 @@ export const SETTING_DESCRIPTORS = {
 } satisfies PluginSettingDescriptors;
 
 /**
- * Phase 0 modules: each one registers and logs, so the registry, the breaker
- * and the enabled-check are exercised end to end before any module has work.
+ * What core exposes to the CLI and, later, to the other modules. The handle is
+ * filled by the core module's `setup` and stays null when core is disabled or
+ * its setup tripped, which is exactly what the CLI must report.
  */
-export const MODULES: readonly ObservatoryModule[] = MODULE_IDS.map((id) =>
-  defineModule({
-    id,
-    setup(ctx) {
-      ctx.bb.log.info(`[${id}] registered`);
+export interface CoreRuntime {
+  store: ObservatoryStore;
+  events: EventStore;
+  ingest: Ingest;
+}
+
+export interface CoreHandle {
+  current: CoreRuntime | null;
+}
+
+/**
+ * The sibling log stack (parsers, pricing catalog, incremental indexer) is
+ * OPTIONAL: without it the plugin still ingests bb events and still reports
+ * turns, they just carry no cache split and no price. Loading it lazily is
+ * what lets core come up on a machine with no provider logs at all, and what
+ * keeps this seam honest about the one thing it cannot invent.
+ *
+ * MERGE NOTE: the four modules below are loaded through an unanalyzable
+ * specifier ONLY because the sibling seat that owns them has not landed yet —
+ * a static import of a missing file would break typecheck, the bundle and
+ * every existing test. Once `store-logs`, `pricing`, `catalog` and `indexer`
+ * exist, replace `loadLogStack`'s body with plain static imports: the bundler
+ * inlines them and the runtime URL below will no longer resolve.
+ */
+export interface LogStack {
+  logs: LogTurnSource;
+  priceTurn: PriceTurnFn;
+  catalog: unknown;
+  indexer: {
+    runOnce(args: { maxBytes?: number }): Promise<unknown>;
+    defaultRoots(): string[];
+  };
+  refreshCatalog(): Promise<unknown>;
+}
+
+async function loadLogStack(
+  bb: BbPluginApi,
+  db: ReturnType<BbPluginApi["storage"]["database"]>,
+  options: { refreshHours: number; roots: readonly string[] },
+): Promise<LogStack | null> {
+  try {
+    const base = import.meta.url;
+    const [storeLogs, pricing, catalogModule, indexerModule] =
+      await Promise.all([
+        import(new URL("./core/store-logs.js", base).href),
+        import(new URL("./core/pricing.js", base).href),
+        import(new URL("./core/catalog.js", base).href),
+        import(new URL("./core/indexer.js", base).href),
+      ]);
+    const logs = new storeLogs.LogStore(db) as LogTurnSource;
+    const loadCatalog = catalogModule.loadCatalog as (
+      db: unknown,
+      args: { refreshHours: number },
+    ) => Promise<unknown>;
+    const catalog = await loadCatalog(db, {
+      refreshHours: options.refreshHours,
+    });
+    const indexer = indexerModule.createLogIndexer({
+      store: logs,
+      host: new LocalHostClient(),
+      roots: options.roots,
+      log: bb.log,
+    }) as LogStack["indexer"];
+    return {
+      logs,
+      priceTurn: pricing.priceTurn as PriceTurnFn,
+      catalog,
+      indexer,
+      refreshCatalog: () => loadCatalog(db, { refreshHours: 0 }),
+    };
+  } catch (error) {
+    bb.log.warn(
+      `[core] log stack unavailable, cache splits stay unavailable: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return null;
+  }
+}
+
+function parseHours(value: string | boolean | undefined, fallback: number) {
+  const parsed = Number.parseFloat(typeof value === "string" ? value : "");
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/**
+ * Core: the only writer of the ledger. It owns the ingest service, the stale
+ * reconcile, the log pass and the pricing refresh, and hands the CLI a handle
+ * so `status`, `coverage` and `backfill` read the same objects the jobs use.
+ */
+export function createCoreModule(
+  handle: CoreHandle,
+  settings: () => Promise<Record<string, string | boolean | undefined>>,
+): ObservatoryModule {
+  return defineModule({
+    id: CORE_MODULE_ID,
+    async setup(ctx) {
+      const { bb } = ctx;
+      const db = ctx.db();
+      const store = new ObservatoryStore(db);
+      const events = new EventStore(db);
+      const values = await settings();
+      const extraRoots = parseRoots(values["roots_extra"]);
+      const stack = await loadLogStack(bb, db, {
+        refreshHours: parseHours(values["pricing_refreshHours"], 24),
+        roots: extraRoots,
+      });
+      const roots = stack
+        ? [...stack.indexer.defaultRoots(), ...extraRoots]
+        : extraRoots;
+
+      const ingest = createIngest({
+        bb,
+        store,
+        events,
+        logs: stack?.logs ?? null,
+        priceTurn: stack?.priceTurn ?? null,
+        catalog: stack?.catalog,
+      });
+      handle.current = { store, events, ingest };
+
+      bb.background.service("ingest", {
+        start: (signal) => ingest.start(signal),
+      });
+      bb.background.schedule(
+        "reconcile",
+        "*/1 * * * *",
+        ctx.job("reconcile", async () => {
+          await ingest.reconcileStale();
+        }),
+      );
+      bb.background.schedule(
+        "logs",
+        "*/5 * * * *",
+        ctx.job("logs", async () => {
+          if (!stack) return;
+          await stack.indexer.runOnce({ maxBytes: 5_000_000 });
+          ingest.rejoinPending();
+        }),
+      );
+      bb.background.schedule(
+        "pricing",
+        "0 */24 * * *",
+        ctx.job("pricing", async () => {
+          if (stack) await stack.refreshCatalog();
+        }),
+      );
+      bb.log.info(
+        `[core] ingest registered over ${roots.length} log roots` +
+          (stack ? "" : " (log stack absent)"),
+      );
     },
-  }),
-);
+  });
+}
+
+/**
+ * Non-core modules are still stubs: they are read-only analyzers over the
+ * ledger core writes, and they land in later phases behind these seams.
+ */
+export function buildModules(
+  handle: CoreHandle,
+  settings: () => Promise<Record<string, string | boolean | undefined>>,
+): readonly ObservatoryModule[] {
+  return MODULE_IDS.map((id) =>
+    id === CORE_MODULE_ID
+      ? createCoreModule(handle, settings)
+      : defineModule({
+          id,
+          setup(ctx) {
+            ctx.bb.log.info(`[${id}] registered`);
+          },
+        }),
+  );
+}
 
 const USAGE = [
   "Usage: bb observatory <command>",
   "",
-  "  status   Module states, breaker counts, store counts, settings",
-  "  doctor   Database, migrations, and provider log roots",
+  "  status     Module states, breaker counts, store counts, settings",
+  "  doctor     Database, migrations, and provider log roots",
+  "  coverage   Turn split coverage: log-exact, log-window, sidechain, n/a",
+  "  backfill   Drain history and re-join it: --since <ISO|Nd> [--provider p]",
 ].join("\n");
 
 export interface StatusDeps {
@@ -210,7 +382,10 @@ export async function buildStatus(deps: StatusDeps): Promise<StatusView> {
   };
 }
 
-export function formatStatus(status: StatusView): string {
+export function formatStatus(
+  status: StatusView,
+  ingest?: IngestCounters | null,
+): string {
   const lines = [`observatory ${status.phase}`, "", "modules"];
   for (const module of status.modules) {
     const state = module.tripped
@@ -231,7 +406,52 @@ export function formatStatus(status: StatusView): string {
   for (const setting of status.settings) {
     lines.push(`  ${setting.key.padEnd(28)} ${setting.value}`);
   }
+  if (ingest) {
+    lines.push("", "ingest");
+    for (const [key, value] of [
+      ["dirty", String(ingest.dirty)],
+      ["drains", String(ingest.drains)],
+      ["events", String(ingest.events)],
+      ["last drain", ingest.lastDrainAt ?? "never"],
+      ["last reconcile", ingest.lastReconcileAt ?? "never"],
+      ["last logs pass", ingest.lastLogsPassAt ?? "never"],
+    ] as const) {
+      lines.push(`  ${key.padEnd(28)} ${value}`);
+    }
+  }
   return lines.join("\n");
+}
+
+/** `--since 7d`, `--since 2026-09-01`. Returns epoch ms. */
+export function parseSince(value: string | undefined, now: number): number {
+  if (!value) return now - 7 * 24 * 60 * 60 * 1_000;
+  const relative = /^(\d+)d$/u.exec(value.trim());
+  if (relative) {
+    return now - Number(relative[1]) * 24 * 60 * 60 * 1_000;
+  }
+  const parsed = Date.parse(value);
+  // An unparseable --since would silently backfill everything, so it is the
+  // caller's error rather than a default.
+  if (Number.isNaN(parsed)) throw new Error(`unparseable --since: ${value}`);
+  return parsed;
+}
+
+export function formatCoverage(coverage: CoverageView): string {
+  const share = (n: number) =>
+    coverage.turns === 0 ? "  n/a" : `${((n / coverage.turns) * 100).toFixed(1)}%`;
+  return [
+    `turns          ${coverage.turns}`,
+    `log-exact      ${coverage.logExact} (${share(coverage.logExact)})`,
+    `log-window     ${coverage.logWindow} (${share(coverage.logWindow)})`,
+    `sidechain      ${coverage.sidechain}`,
+    `unavailable    ${coverage.unavailable} (${share(coverage.unavailable)})`,
+  ].join("\n");
+}
+
+/** `--provider codex` style flags. Absent flag returns undefined. */
+export function flagValue(argv: readonly string[], name: string): string | undefined {
+  const index = argv.indexOf(`--${name}`);
+  return index === -1 ? undefined : argv[index + 1];
 }
 
 export interface DoctorCheck {
@@ -303,6 +523,52 @@ function parseRoots(value: string | boolean | undefined): string[] {
     .filter((entry) => entry.length > 0);
 }
 
+/**
+ * Walk thread history backwards and drain each thread, then re-join. Unlike
+ * the scheduled pass this has no byte budget: a backfill is explicitly asked
+ * for, and stopping halfway would leave a coverage number nobody can read.
+ */
+async function backfill(
+  bb: BbPluginApi,
+  runtime: CoreRuntime,
+  argv: readonly string[],
+): Promise<{ exitCode: number; stdout?: string; stderr?: string }> {
+  let since: number;
+  try {
+    since = parseSince(flagValue(argv, "since"), Date.now());
+  } catch (error) {
+    return {
+      exitCode: 1,
+      stderr: `${error instanceof Error ? error.message : String(error)}\n`,
+    };
+  }
+  const provider = flagValue(argv, "provider");
+  const threads = await bb.sdk.threads.list({ includeHidden: true, limit: 500 });
+  const selected = threads.filter(
+    (thread) =>
+      thread.createdAt >= since &&
+      (provider === undefined || thread.providerId === provider),
+  );
+  let drained = 0;
+  for (const thread of selected) {
+    runtime.ingest.markDirty(thread.id);
+    drained += 1;
+  }
+  // Drain until the dirty set stops shrinking: a per-tick budget can requeue a
+  // long thread, and a backfill must actually finish it.
+  for (let pass = 0; pass < 100; pass += 1) {
+    await runtime.ingest.drainOnce();
+    if (runtime.ingest.counters().dirty === 0) break;
+  }
+  runtime.ingest.rejoinPending();
+  return {
+    exitCode: 0,
+    stdout: `backfilled ${drained} threads since ${new Date(since).toISOString()}\n${formatCoverage(
+      runtime.events.coverage(),
+    )}\n`,
+  };
+}
+
 export default async function observatory(bb: BbPluginApi): Promise<void> {
   const settings = bb.settings.define(SETTING_DESCRIPTORS);
   const readSettings = async (): Promise<
@@ -321,12 +587,13 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
   const host = new LocalHostClient();
   void host;
 
+  const core: CoreHandle = { current: null };
   const registry = new ModuleRegistry({
     bb,
     db: () => db,
     settings: readSettings,
   });
-  await registry.register(MODULES);
+  await registry.register(buildModules(core, readSettings));
 
   const status = () =>
     buildStatus({
@@ -357,11 +624,42 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
           "Checks the database opens, the migrations applied, and each provider log root exists.",
         usage: "bb observatory doctor",
       },
+      {
+        name: "coverage",
+        summary:
+          "How many turns have a proven cache split, and how many stay unavailable.",
+        usage: "bb observatory coverage",
+      },
+      {
+        name: "backfill",
+        summary:
+          "Drain thread history from --since, re-index the logs, and report coverage.",
+        usage: "bb observatory backfill --since <ISO|Nd> [--provider <id>]",
+      },
     ],
     async run(argv) {
       const [command] = argv;
       if (command === "status") {
-        return { exitCode: 0, stdout: `${formatStatus(await status())}\n` };
+        return {
+          exitCode: 0,
+          stdout: `${formatStatus(
+            await status(),
+            core.current?.ingest.counters() ?? null,
+          )}\n`,
+        };
+      }
+      if (command === "coverage" || command === "backfill") {
+        const runtime = core.current;
+        if (!runtime) {
+          return { exitCode: 1, stderr: "core module is not running\n" };
+        }
+        if (command === "coverage") {
+          return {
+            exitCode: 0,
+            stdout: `${formatCoverage(runtime.events.coverage())}\n`,
+          };
+        }
+        return backfill(bb, runtime, argv.slice(1));
       }
       if (command === "doctor") {
         const values = await readSettings();
