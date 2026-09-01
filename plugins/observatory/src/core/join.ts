@@ -264,25 +264,21 @@ export function partitionRows(
 
   let cursor = -1;
   for (const row of ordered) {
-    while (cursor + 1 < live.length && (live[cursor + 1] as { at: number }).at <= row.ts) {
+    for (let next = live[cursor + 1]; next && next.at <= row.ts; next = live[cursor + 1]) {
       cursor += 1;
     }
-    if (cursor < 0) {
-      before.push(row);
-      continue;
-    }
-    (buckets[(live[cursor] as { index: number }).index] as LogTurn[]).push(row);
+    const owner = cursor < 0 ? undefined : live[cursor];
+    if (!owner) before.push(row);
+    else buckets[owner.index]?.push(row);
   }
 
   const last = live[live.length - 1];
-  if (last) {
-    const end = endMs(turns[last.index] as PendingSplitTurn);
-    if (end !== null) {
-      const limit = end + WINDOW_AFTER_MS;
-      const slice = buckets[last.index] as LogTurn[];
-      buckets[last.index] = slice.filter((row) => row.ts <= limit);
-      after.push(...slice.filter((row) => row.ts > limit));
-    }
+  const end = last ? endMs(turns[last.index] as PendingSplitTurn) : null;
+  if (last && end !== null) {
+    const limit = end + WINDOW_AFTER_MS;
+    const slice = buckets[last.index] ?? [];
+    buckets[last.index] = slice.filter((row) => row.ts <= limit);
+    after.push(...slice.filter((row) => row.ts > limit));
   }
   return { buckets, before, after };
 }
