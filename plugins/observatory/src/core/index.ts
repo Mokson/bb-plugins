@@ -47,6 +47,7 @@ export {
   STALE_AFTER_MS,
   TICK_BUDGET_MS,
   createIngest,
+  type DrainListener,
   type Ingest,
   type IngestCounters,
   type IngestOptions,

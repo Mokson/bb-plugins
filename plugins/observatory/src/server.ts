@@ -8,6 +8,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 import type {
   BbPluginApi,
   PluginSettingDescriptor,
@@ -36,6 +37,16 @@ import {
   type ModuleId,
   type ObservatoryModule,
 } from "./module.js";
+import {
+  WATCH_CLI_COMMANDS,
+  WATCH_SETTING_DESCRIPTORS,
+  createWatchModule,
+  createWatchRpcHandlers,
+  runWatchCli,
+  watchContract,
+  type WatchHandle,
+} from "./watch/index.js";
+import { createTrajectory } from "./watch/trajectory.js";
 
 export const PHASE = "phase 0 scaffold";
 
@@ -94,6 +105,9 @@ export const SETTING_DESCRIPTORS = {
   ...Object.fromEntries(
     MODULE_IDS.map((id) => [moduleEnabledSettingKey(id), moduleToggle(id)]),
   ),
+  // Watch owns its rule toggles, thresholds and quiet hours; `watch_mode` and
+  // the two budget keys stay declared below because other modules read them.
+  ...WATCH_SETTING_DESCRIPTORS,
   "watch_mode": {
     type: "select",
     label: "Watch mode",
@@ -373,23 +387,31 @@ export function createCoreModule(
 }
 
 /**
- * Non-core modules are still stubs: they are read-only analyzers over the
- * ledger core writes, and they land in later phases behind these seams.
+ * Core writes the ledger, watch analyzes it, and the rest are still stubs
+ * landing in later phases behind these seams. Registration order matters:
+ * watch takes core's ingest handle, so core must have set it up first.
  */
 export function buildModules(
   handle: CoreHandle,
   settings: () => Promise<Record<string, string | boolean | undefined>>,
+  watch: WatchHandle,
 ): readonly ObservatoryModule[] {
-  return MODULE_IDS.map((id) =>
-    id === CORE_MODULE_ID
-      ? createCoreModule(handle, settings)
-      : defineModule({
-          id,
-          setup(ctx) {
-            ctx.bb.log.info(`[${id}] registered`);
-          },
-        }),
-  );
+  return MODULE_IDS.map((id) => {
+    if (id === CORE_MODULE_ID) return createCoreModule(handle, settings);
+    if (id === "watch") {
+      return createWatchModule({
+        handle: watch,
+        ingest: () => handle.current?.ingest ?? null,
+        settings,
+      });
+    }
+    return defineModule({
+      id,
+      setup(ctx) {
+        ctx.bb.log.info(`[${id}] registered`);
+      },
+    });
+  });
 }
 
 const USAGE = [
@@ -402,6 +424,9 @@ const USAGE = [
   "  backfill   Drain history and re-join it: --since <ISO|Nd> [--provider p]",
   "             --reset  re-read every event; rebuilds derived rows, never",
   "                      touches provider logs",
+  "  watch      Stall state per active thread: [--follow] [--json]",
+  "             explain <threadId>   signals and actions for one thread",
+  "             off|observe|steer    set the watch mode (stored in kv)",
 ].join("\n");
 
 export interface StatusDeps {
@@ -734,12 +759,13 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
   void host;
 
   const core: CoreHandle = { current: null };
+  const watch: WatchHandle = { current: null };
   const registry = new ModuleRegistry({
     bb,
     db: () => db,
     settings: readSettings,
   });
-  await registry.register(buildModules(core, readSettings));
+  await registry.register(buildModules(core, readSettings, watch));
 
   const status = () =>
     buildStatus({
@@ -753,6 +779,27 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
   bb.rpc.register(observatoryContract, {
     "observatory_status": () => status(),
   });
+
+  // ---- watch module surface (phase 2) --------------------------------------
+  // Kept in one block so a concurrent edit elsewhere in this file merges
+  // cleanly. Everything below reaches watch through `src/watch/index.ts`.
+  bb.rpc.register(watchContract, createWatchRpcHandlers(bb, watch));
+
+  const trajectory = createTrajectory({ db });
+  bb.agents.registerTool({
+    name: "observatory_trajectory",
+    description:
+      "Per-turn trajectory of a bb thread with OSCILLATION, LOOP and " +
+      "CONTEXT RESET markers plus waste attribution. Read your own run " +
+      "before deciding you are stuck.",
+    parameters: z
+      .object({ threadId: z.string().describe("bb thread id") })
+      .strict(),
+    execute: ({ threadId }) => ({
+      content: [{ type: "text", text: trajectory.render(threadId) }],
+    }),
+  });
+  // ---- end watch module surface --------------------------------------------
 
   bb.cli.register({
     name: "observatory",
@@ -789,9 +836,11 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
         usage:
           "bb observatory backfill --since <ISO|Nd> [--provider <id>] [--reset]",
       },
+      ...WATCH_CLI_COMMANDS,
     ],
     async run(argv) {
       const [command] = argv;
+      if (command === "watch") return runWatchCli(bb, watch, argv.slice(1));
       if (command === "status") {
         return {
           exitCode: 0,
