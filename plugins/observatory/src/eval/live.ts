@@ -11,6 +11,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Database } from "better-sqlite3";
 import type { EvalCase, LoadedCase } from "./cases.js";
+import type { CommandRunner } from "./assert.js";
 import type { GitRunner } from "./dryrun.js";
 import {
   buildSpawnPlan,
@@ -22,6 +23,7 @@ import {
 import type { GateReport } from "./gate.js";
 import { evaluateGate } from "./gate.js";
 import { teardownWorktree } from "./harvest.js";
+import { EMPTY_METRICS } from "./metrics.js";
 import type { RunCaseResult } from "./runner.js";
 import { runCase } from "./runner.js";
 import type { EvalStore } from "./store.js";
@@ -42,6 +44,8 @@ export interface LiveRunOptions {
   now?: () => Date;
   pollMs?: number;
   git?: GitRunner;
+  /** Injected so a test asserts against a ledger check it controls. */
+  run?: CommandRunner;
 }
 
 export interface TrialOutcome {
@@ -74,7 +78,7 @@ function failedTrial(
       threadId: null,
       artifactsDir: null,
       assertions: null,
-      metrics: { turns: 0, toolCalls: 0, tokens: 0, costUsd: 0, providerErrors: 0, subthreads: 0, wallMs: 0 },
+      metrics: EMPTY_METRICS,
       failReason: "spawn-failed",
       worktreeKept: false,
       detail,
@@ -95,7 +99,9 @@ export async function liveRun(options: LiveRunOptions): Promise<LiveRunReport> {
       path: entry.path,
       error: entry.error ?? "unknown error",
     }));
-  const valid = options.selected.flatMap((entry) => (entry.value ? [entry.value] : []));
+  const valid = options.selected.flatMap((entry) =>
+    entry.value ? [entry.value] : [],
+  );
   const names = valid.map((value) => value.name);
 
   const agentsDir = valid[0]?.harness.agents_dir;
@@ -150,7 +156,8 @@ export async function liveRun(options: LiveRunOptions): Promise<LiveRunReport> {
       : null;
   const status = cancelled
     ? "cancelled"
-    : invalid.length > 0 || outcomes.some((entry) => entry.result.status !== "pass")
+    : invalid.length > 0 ||
+        outcomes.some((entry) => entry.result.status !== "pass")
       ? "fail"
       : "pass";
   options.store.finishRun(runId, finishedAt, status, gate?.verdict ?? null);
@@ -191,23 +198,36 @@ async function runTrial(
       `provisioning failed: ${error instanceof Error ? error.message.trim() : String(error)}`,
     );
   }
-  const result = await runCase({
-    bb: options.bb,
-    db: options.db,
-    store: options.store,
-    runId,
-    case: value,
-    trial,
-    worktree,
-    spawn: buildSpawnPlan(value, worktree, trial, runId),
-    artifactsRoot: options.artifactsRoot,
-    stackShaAtStart: sha,
-    ...(options.checkLedgerScript === undefined
-      ? {}
-      : { checkLedgerScript: options.checkLedgerScript }),
-    ...(options.pollMs === undefined ? {} : { pollMs: options.pollMs }),
-    git,
-  });
+  let result: RunCaseResult;
+  try {
+    result = await runCase({
+      bb: options.bb,
+      db: options.db,
+      store: options.store,
+      runId,
+      case: value,
+      trial,
+      worktree,
+      spawn: buildSpawnPlan(value, worktree, trial, runId),
+      artifactsRoot: options.artifactsRoot,
+      stackShaAtStart: sha,
+      ...(options.checkLedgerScript === undefined
+        ? {}
+        : { checkLedgerScript: options.checkLedgerScript }),
+      ...(options.pollMs === undefined ? {} : { pollMs: options.pollMs }),
+      ...(options.run === undefined ? {} : { run: options.run }),
+      git,
+    });
+  } catch (error) {
+    // The runner owns teardown on every path it returns from, so a THROW is
+    // the one way a worktree could outlive its trial.
+    teardownWorktree({ case: value, worktree, failed: true, git });
+    return failedTrial(
+      value.name,
+      trial,
+      `the runner threw: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   return { case: value.name, trial, result };
 }
 
@@ -236,8 +256,10 @@ export function formatLiveRun(report: LiveRunReport): string {
         result.metrics.wallMs / 1000,
       )}s`,
     );
-    if (result.artifactsDir !== null) lines.push(`  artifacts ${result.artifactsDir}`);
-    if (result.failReason !== null) lines.push(`  reason    ${result.failReason}`);
+    if (result.artifactsDir !== null)
+      lines.push(`  artifacts ${result.artifactsDir}`);
+    if (result.failReason !== null)
+      lines.push(`  reason    ${result.failReason}`);
     if (result.detail !== "") lines.push(`  detail    ${result.detail}`);
     if (result.worktreeKept) lines.push("  worktree  kept (keep_on_fail)");
     for (const assertion of result.assertions?.outcomes ?? []) {

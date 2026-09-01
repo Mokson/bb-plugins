@@ -17,7 +17,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Database } from "better-sqlite3";
 import type { AssertionReport, CommandRunner } from "./assert.js";
-import { runStructuralAssertions } from "./assert.js";
+import { runJudge, runStructuralAssertions } from "./assert.js";
 import type { EvalCase } from "./cases.js";
 import type { GitRunner, SpawnPlan } from "./dryrun.js";
 import type { HarvestReport } from "./harvest.js";
@@ -94,11 +94,6 @@ export async function stopOwnedThread(
 ): Promise<void> {
   if (!store.ownsThread(threadId)) throw new ForeignThreadError(threadId);
   await bb.sdk.threads.stop({ threadId });
-}
-
-/** The operation id a title carries. Unique per run, case and trial. */
-export function operationId(runId: string, caseName: string, trial: number): string {
-  return `${runId}/${caseName}/${trial}`;
 }
 
 interface PendingLike {
@@ -392,7 +387,40 @@ export async function runCase(input: RunCaseInput): Promise<RunCaseResult> {
     ...(input.run === undefined ? {} : { run: input.run }),
   });
 
-  const failed = killed !== null || !assertions.pass;
+  // The judge runs ONLY after the structural keys agree. Asking a model
+  // whether a run was good, when the ledger is missing and the tests are red,
+  // buys an expensive opinion about nothing.
+  const outcomes = [...assertions.outcomes];
+  const judgeSpec = input.case.assert.judge;
+  if (judgeSpec !== undefined && assertions.pass && killed === null) {
+    try {
+      const verdict = await runJudge({
+        bb: input.bb,
+        projectId: input.spawn.projectId,
+        judge: judgeSpec,
+        artifactsDir: harvest.dir,
+      });
+      outcomes.push({
+        key: "judge",
+        pass: verdict.verdict === "pass",
+        detail: verdict.reason,
+      });
+    } catch (error) {
+      outcomes.push({
+        key: "judge",
+        pass: false,
+        detail: `the judge could not run: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      });
+    }
+  }
+  const graded: AssertionReport = {
+    pass: outcomes.every((entry) => entry.pass),
+    outcomes,
+  };
+
+  const failed = killed !== null || !graded.pass;
   const removed = teardownWorktree({
     case: input.case,
     worktree: input.worktree,
@@ -411,9 +439,9 @@ export async function runCase(input: RunCaseInput): Promise<RunCaseResult> {
     status,
     threadId,
     artifactsDir: harvest.dir,
-    assertions,
+    assertions: graded,
     metrics,
-    failReason: killed?.reason ?? (assertions.pass ? null : "assertions"),
+    failReason: killed?.reason ?? (graded.pass ? null : "assertions"),
     worktreeKept: !removed,
     detail: killed?.detail ?? harvest.notes.join("; "),
   };
