@@ -170,3 +170,41 @@ export function priceTurn(
     cacheSavingsUsd,
   };
 }
+
+/**
+ * Adapt the join's nullable token shape to this module's required one.
+ *
+ * The join carries `null` for "bb never said", which is not the same claim as
+ * zero anywhere else in the ledger; the pricer only ever bills what it is
+ * given, so the two meet here and nowhere else. `catalog` is read through the
+ * getter so a refresh takes effect without re-threading it through callers.
+ */
+export function priceTurnPort(
+  catalog: () => PricingCatalog,
+): (input: {
+  provider: string;
+  model: string | null;
+  inputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  cachedInputTokens: number | null;
+  outputTokens: number | null;
+  reasoningTokens: number | null;
+  loggedCostUsd: number | null;
+}) => PriceTurnResult {
+  return (input) =>
+    priceTurn(
+      {
+        provider: input.provider,
+        model: input.model,
+        inputTokens: input.inputTokens ?? 0,
+        cacheReadTokens: input.cacheReadTokens,
+        cacheWriteTokens: input.cacheWriteTokens,
+        cachedInputTokens: input.cachedInputTokens ?? 0,
+        outputTokens: input.outputTokens ?? 0,
+        reasoningTokens: input.reasoningTokens ?? 0,
+        loggedCostUsd: input.loggedCostUsd,
+      },
+      catalog(),
+    );
+}

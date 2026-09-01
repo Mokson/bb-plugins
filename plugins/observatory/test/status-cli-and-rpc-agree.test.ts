@@ -3,7 +3,14 @@
 // reader looking at the panel can never see different module states.
 import { describe, expect, it } from "vitest";
 import { statusSchema } from "../src/contract.js";
-import { MODULE_IDS, buildStatus, formatStatus, runDoctor } from "../src/server.js";
+import {
+  MODULE_IDS,
+  VERSION,
+  buildStatus,
+  formatStatus,
+  installedPath,
+  runDoctor,
+} from "../src/server.js";
 import { makeHarness } from "./fakes.js";
 
 const NOW = "2026-09-01T00:00:00.000Z";
@@ -39,6 +46,11 @@ describe("status", () => {
     }
     expect(text).toContain("threads     1");
     expect(text).toContain("turns       1");
+    // "which observatory am I talking to" is the first question of every
+    // support round, and a phase label answers neither half of it.
+    expect(text.split("\n")[0]).toBe(`observatory ${VERSION}`);
+    expect(text).toContain(`installed ${installedPath()}`);
+    expect(text).not.toContain("scaffold");
   });
 
   it("shows a tripped module as tripped on both surfaces", async () => {

@@ -8,6 +8,7 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import type {
   BbPluginApi,
@@ -16,12 +17,16 @@ import type {
 } from "@get-bb/plugin-sdk";
 import { observatoryContract, type ModuleState, type StatusView } from "./contract.js";
 import { ObservatoryStore, applyMigrations } from "./core/store.js";
-import { EventStore, type CoverageView } from "./core/store-events.js";
+import {
+  EventStore,
+  type CoverageView,
+  type ProviderCoverageView,
+} from "./core/store-events.js";
 import { createIngest, type Ingest, type IngestCounters } from "./core/ingest.js";
 import type { LogTurnSource, PriceTurnFn } from "./core/join.js";
 import { LocalHostClient } from "./core/host-client.js";
 import { LogStore } from "./core/store-logs.js";
-import { priceTurn } from "./core/pricing.js";
+import { priceTurnPort } from "./core/pricing.js";
 import { loadCatalog, type PricingCatalog } from "./core/catalog.js";
 import {
   createLogIndexer,
@@ -76,6 +81,25 @@ import {
 } from "./watch/index.js";
 
 export const PHASE = "phase 0 scaffold";
+
+/** Kept in step with package.json; the bundle cannot import that at runtime. */
+export const VERSION = "0.0.1";
+
+/**
+ * Where this build is actually installed.
+ *
+ * "which observatory am I talking to" is the first question of every support
+ * round, and with several worktrees installing over each other it is not
+ * answerable from the outside. `src/server.ts` sits one level under the
+ * plugin root, and the bundle keeps that shape.
+ */
+export function installedPath(): string {
+  try {
+    return fileURLToPath(new URL("..", import.meta.url));
+  } catch {
+    return "unknown";
+  }
+}
 
 /** Registration order is ingest-first: everything else reads what core wrote. */
 export const MODULE_IDS: readonly ModuleId[] = [
@@ -306,26 +330,10 @@ async function loadLogStack(
     let catalog = await loadCatalog(db, {
       refreshHours: options.refreshHours,
     });
-    /**
-     * The port hands pricing a catalog it types as `unknown`. The loaded
-     * catalog is read from this closure instead, so a refresh takes effect
-     * without re-threading it through every caller.
-     */
-    const priceTurnPort: PriceTurnFn = (input) =>
-      priceTurn(
-        {
-          provider: input.provider,
-          model: input.model,
-          inputTokens: input.inputTokens ?? 0,
-          cacheReadTokens: input.cacheReadTokens,
-          cacheWriteTokens: input.cacheWriteTokens,
-          cachedInputTokens: input.cachedInputTokens ?? 0,
-          outputTokens: input.outputTokens ?? 0,
-          reasoningTokens: input.reasoningTokens ?? 0,
-          loggedCostUsd: input.loggedCostUsd,
-        },
-        catalog,
-      );
+    // The port hands pricing a catalog it types as `unknown`. The loaded
+    // catalog is read through the getter instead, so a refresh takes effect
+    // without re-threading it through every caller.
+    const pricePort: PriceTurnFn = priceTurnPort(() => catalog);
     const indexer = createLogIndexer({
       store,
       host: new LocalHostClient(),
@@ -334,7 +342,7 @@ async function loadLogStack(
     });
     return {
       logs: toLogTurnSource(store),
-      priceTurn: priceTurnPort,
+      priceTurn: pricePort,
       catalog,
       indexer,
       refreshCatalog: async () => {
@@ -636,7 +644,12 @@ export function formatStatus(
   status: StatusView,
   ingest?: IngestCounters | null,
 ): string {
-  const lines = [`observatory ${status.phase}`, "", "modules"];
+  const lines = [
+    `observatory ${VERSION}`,
+    `installed ${installedPath()}`,
+    "",
+    "modules",
+  ];
   for (const module of status.modules) {
     const state = module.tripped
       ? `tripped (${module.failures} failures)`
@@ -686,16 +699,36 @@ export function parseSince(value: string | undefined, now: number): number {
   return parsed;
 }
 
-export function formatCoverage(coverage: CoverageView): string {
+export function formatCoverage(
+  coverage: CoverageView,
+  byProvider: readonly ProviderCoverageView[] = [],
+): string {
   const share = (n: number) =>
     coverage.turns === 0 ? "  n/a" : `${((n / coverage.turns) * 100).toFixed(1)}%`;
-  return [
+  const lines = [
     `turns          ${coverage.turns}`,
     `log-exact      ${coverage.logExact} (${share(coverage.logExact)})`,
     `log-window     ${coverage.logWindow} (${share(coverage.logWindow)})`,
     `sidechain      ${coverage.sidechain}`,
     `unavailable    ${coverage.unavailable} (${share(coverage.unavailable)})`,
-  ].join("\n");
+  ];
+  // The exactness bar is a per-provider bar: one provider without a log
+  // parser drags the whole-ledger number under it and hides a healthy one.
+  if (byProvider.length > 0) {
+    lines.push("", "by provider    turns  log-exact  log-window  n/a");
+    for (const row of byProvider) {
+      const pct =
+        row.turns === 0
+          ? "  n/a"
+          : `${((row.logExact / row.turns) * 100).toFixed(1)}%`;
+      lines.push(
+        `  ${row.provider.padEnd(13)}${String(row.turns).padStart(4)}  ` +
+          `${String(row.logExact).padStart(6)} ${pct.padStart(7)}  ` +
+          `${String(row.logWindow).padStart(9)}  ${String(row.unavailable).padStart(4)}`,
+      );
+    }
+  }
+  return lines.join("\n");
 }
 
 /** `--provider codex` style flags. Absent flag returns undefined. */
@@ -1014,11 +1047,14 @@ async function backfill(
     if (dirty === 0 || dirty >= remaining) break;
     remaining = dirty;
   }
-  runtime.ingest.rejoinPending();
+  // The whole history, not just turns still settling: a backfill exists to
+  // re-prove what an earlier, premature pass got wrong.
+  runtime.ingest.rejoinPending(true);
   return {
     exitCode: 0,
     stdout: `backfilled ${drained} threads since ${new Date(since).toISOString()}\n${formatCoverage(
-      runtime.events.coverage(),
+      runtime.events.coverage(provider ?? null),
+      runtime.events.coverageByProvider(provider ?? null),
     )}\n`,
   };
 }
@@ -1066,6 +1102,16 @@ async function indexNow(
       budget.maxBytes / (1024 * 1024),
     )}MB per pass`,
   );
+  // New rows are only worth anything once a turn claims them. The scheduled
+  // job always pairs the two, and an operator running the index by hand to
+  // explain a missing split got the rows without the join that consumes them.
+  const join = runtime.ingest.rejoinPending();
+  if (join) {
+    lines.push(
+      `join    log-exact ${join.logExact}  log-window ${join.logWindow}  ` +
+        `sidechain ${join.sidechain}  unavailable ${join.unavailable}`,
+    );
+  }
   return { exitCode: 0, stdout: `${lines.join("\n")}\n` };
 }
 
@@ -1233,8 +1279,8 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
       {
         name: "coverage",
         summary:
-          "How many turns have a proven cache split, and how many stay unavailable.",
-        usage: "bb observatory coverage",
+          "How many turns have a proven cache split, whole ledger and per provider.",
+        usage: "bb observatory coverage [--provider <id>]",
       },
       {
         name: "index",
@@ -1293,9 +1339,13 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
           return { exitCode: 1, stderr: "core module is not running\n" };
         }
         if (command === "coverage") {
+          const only = flagValue(argv, "provider") ?? null;
           return {
             exitCode: 0,
-            stdout: `${formatCoverage(runtime.events.coverage())}\n`,
+            stdout: `${formatCoverage(
+              runtime.events.coverage(only),
+              runtime.events.coverageByProvider(only),
+            )}\n`,
           };
         }
         if (command === "index") {

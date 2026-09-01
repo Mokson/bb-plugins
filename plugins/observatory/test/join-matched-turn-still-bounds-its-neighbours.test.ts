@@ -17,7 +17,10 @@ describe("a matched turn between two pending turns", () => {
         id: "t2",
         started: "2026-09-01T10:00:12.000Z",
         completed: "2026-09-01T10:00:20.000Z",
-        split: "log-window",
+        // `log-exact` is the terminal match: it and `sidechain` are the only
+        // states the pending queue skips, so this is what a boundary that is
+        // not itself re-joined looks like.
+        split: "log-exact",
       },
       {
         id: "t3",
