@@ -5,7 +5,7 @@
 // Nothing here decides anything — the store persists what core computed, so
 // the analyzers can be pure SQL over one shape.
 import type { Database, Statement } from "better-sqlite3";
-import { MIGRATIONS } from "./migrations.js";
+import { MIGRATIONS, OBS_LOG_TURN_COLUMNS } from "./migrations.js";
 
 export { MIGRATIONS };
 
@@ -128,12 +128,71 @@ export interface StoreCounts {
   actions: number;
 }
 
-/** Apply the schema. Idempotent: `bb.storage.migrate` skips applied indexes. */
+/** Errors a re-executed idempotent statement is allowed to raise. */
+const ALREADY_APPLIED = /already exists|duplicate column/i;
+
+/** The columns a table currently has, empty when the table does not exist. */
+function columnsOf(db: Database, table: string): string[] {
+  return db
+    .prepare<[string], { name: string }>("SELECT name FROM pragma_table_info(?)")
+    .all(table)
+    .map((row) => row.name);
+}
+
+/**
+ * Bring a pre-rebuild `obs_log_turn` to the current shape: SQLite cannot retype
+ * a column in place, so the table is copied. Guarded on the absence of `path`,
+ * which makes it a no-op on every database that has already been through it.
+ */
+function rebuildLogTurns(db: Database): void {
+  const columns = columnsOf(db, "obs_log_turn");
+  if (columns.length === 0 || columns.includes("path")) return;
+  // Copied rows carry a null `path`: it cannot be recovered from the row. The
+  // rename takes the old indexes with it, so they are recreated after.
+  db.exec(`
+    ALTER TABLE obs_log_turn RENAME TO obs_log_turn_v1;
+    CREATE TABLE obs_log_turn (${OBS_LOG_TURN_COLUMNS});
+    INSERT INTO obs_log_turn (
+      log_key, provider, provider_thread_id, path, ts, model, input,
+      cache_read, cache_write, output, reasoning, logged_cost_usd,
+      is_sidechain, agent_id, cwd, skill_names, mcp_names
+    )
+    SELECT log_key, provider, provider_thread_id, NULL, CAST(ts AS INTEGER),
+           model, input, cache_read, cache_write, output, reasoning,
+           logged_cost_usd, is_sidechain, agent_id, cwd, skill_names, mcp_names
+      FROM obs_log_turn_v1;
+    DROP TABLE obs_log_turn_v1;
+    CREATE INDEX IF NOT EXISTS obs_log_turn_session
+      ON obs_log_turn (provider, provider_thread_id, ts);
+    CREATE INDEX IF NOT EXISTS obs_log_turn_path ON obs_log_turn (path);
+  `);
+}
+
+/**
+ * Apply the schema, then heal it.
+ *
+ * `bb.storage.migrate` skips applied statements BY INDEX, and several branches
+ * appended to `MIGRATIONS` concurrently. Live databases therefore have indexes
+ * marked applied whose recorded statement is not the one shipping at that
+ * index, and the table it should have created is simply absent. Re-executing
+ * every statement directly closes that gap: each one is idempotent, so the only
+ * errors it can raise are "already exists" and "duplicate column", and anything
+ * else is a real fault that must not be swallowed.
+ */
 export function applyMigrations(
   db: Database,
   migrate: (db: Database, statements: string[]) => void,
 ): void {
   migrate(db, MIGRATIONS);
+  for (const statement of MIGRATIONS) {
+    try {
+      db.exec(statement);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!ALREADY_APPLIED.test(message)) throw error;
+    }
+  }
+  rebuildLogTurns(db);
 }
 
 type Nullable<T> = { [K in keyof T]: T[K] | null };

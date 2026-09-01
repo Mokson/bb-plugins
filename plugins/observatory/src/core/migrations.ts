@@ -7,6 +7,45 @@
 // Only `ObservatoryStore` writes these tables. Every module other than core
 // reads them.
 
+/**
+ * `obs_log_turn`'s current shape, shared by the create statement below and by
+ * the legacy rebuild in `applyMigrations`, so the two can never drift.
+ *
+ * `path` exists because rows are pruned by FILE identity: pruning by
+ * (provider, provider_thread_id) deleted the rows a moved Codex rollout had
+ * just written under its new path. `ts` is INTEGER because a TEXT column gives
+ * TEXT affinity, and range comparisons then only worked by the accident that
+ * epoch milliseconds are 13 digits wide.
+ */
+export const OBS_LOG_TURN_COLUMNS = `
+     log_key            TEXT PRIMARY KEY,
+     provider           TEXT,
+     provider_thread_id TEXT,
+     path               TEXT,
+     ts                 INTEGER,
+     model              TEXT,
+     input              INTEGER,
+     cache_read         INTEGER,
+     cache_write        INTEGER,
+     output             INTEGER,
+     reasoning          INTEGER,
+     logged_cost_usd    REAL,
+     is_sidechain       INTEGER,
+     agent_id           TEXT,
+     cwd                TEXT,
+     skill_names        TEXT,
+     mcp_names          TEXT
+   `;
+
+/**
+ * Every statement here must be idempotent: `bb.storage.migrate` keys applied
+ * migrations by INDEX, several branches appended concurrently, and live
+ * databases therefore carry indexes marked applied whose content differs from
+ * what ships here. `applyMigrations` re-executes the whole list to close that
+ * gap, so a statement that cannot run twice would break every existing
+ * install. Shape changes that are not expressible idempotently in SQL live as
+ * runtime-guarded steps in `applyMigrations` instead.
+ */
 export const MIGRATIONS: string[] = [
   `CREATE TABLE IF NOT EXISTS obs_thread (
      thread_id          TEXT PRIMARY KEY,
@@ -101,24 +140,7 @@ export const MIGRATIONS: string[] = [
      indexed_at         TEXT,
      parse_error        TEXT
    )`,
-  `CREATE TABLE IF NOT EXISTS obs_log_turn (
-     log_key            TEXT PRIMARY KEY,
-     provider           TEXT,
-     provider_thread_id TEXT,
-     ts                 TEXT,
-     model              TEXT,
-     input              INTEGER,
-     cache_read         INTEGER,
-     cache_write        INTEGER,
-     output             INTEGER,
-     reasoning          INTEGER,
-     logged_cost_usd    REAL,
-     is_sidechain       INTEGER,
-     agent_id           TEXT,
-     cwd                TEXT,
-     skill_names        TEXT,
-     mcp_names          TEXT
-   )`,
+  `CREATE TABLE IF NOT EXISTS obs_log_turn (${OBS_LOG_TURN_COLUMNS})`,
   `CREATE INDEX IF NOT EXISTS obs_log_turn_session
      ON obs_log_turn (provider, provider_thread_id, ts)`,
   `CREATE TABLE IF NOT EXISTS obs_match (
@@ -177,60 +199,44 @@ export const MIGRATIONS: string[] = [
      key   TEXT PRIMARY KEY,
      value TEXT
    )`,
-  // ---------------------------------------------------------------------
-  // `obs_log_turn` rebuild: a `path` column, and `ts` as a real INTEGER.
-  //
-  // Two defects share one rebuild because SQLite cannot change a column's
-  // type in place and a second rebuild would copy the table twice.
-  //
-  //  - `path`. Rows were pruned by (provider, provider_thread_id), which is
-  //    not the identity of a FILE. Codex moves finished rollouts from
-  //    `~/.codex/sessions` to `~/.codex/archived_sessions`; both roots are
-  //    scanned, so pruning the vanished old path deleted the rows the new
-  //    path had just written. The `IS NULL` form of that delete was worse
-  //    still: it took every null-thread row the provider had.
-  //  - `ts`. Declared TEXT, so SQLite's TEXT affinity stored the bound
-  //    integer as a string. Range comparisons only worked by the accident
-  //    that epoch milliseconds are 13 digits wide today; the first
-  //    narrower value (a second-resolution stamp, a 1970 default) sorts
-  //    ahead of everything and silently drops out of every window query.
-  //
-  // Copied rows carry a null `path`: it cannot be recovered from the row.
-  // `PARSER_VERSION` is bumped alongside this migration, so every file is
-  // reparsed once and re-upserts its rows with the path filled in.
-  `ALTER TABLE obs_log_turn RENAME TO obs_log_turn_v1`,
-  `CREATE TABLE obs_log_turn (
-     log_key            TEXT PRIMARY KEY,
-     provider           TEXT,
-     provider_thread_id TEXT,
-     path               TEXT,
-     ts                 INTEGER,
-     model              TEXT,
-     input              INTEGER,
-     cache_read         INTEGER,
-     cache_write        INTEGER,
-     output             INTEGER,
-     reasoning          INTEGER,
-     logged_cost_usd    REAL,
-     is_sidechain       INTEGER,
-     agent_id           TEXT,
-     cwd                TEXT,
-     skill_names        TEXT,
-     mcp_names          TEXT
-   )`,
-  `INSERT INTO obs_log_turn (
-     log_key, provider, provider_thread_id, path, ts, model, input,
-     cache_read, cache_write, output, reasoning, logged_cost_usd,
-     is_sidechain, agent_id, cwd, skill_names, mcp_names
-   )
-   SELECT log_key, provider, provider_thread_id, NULL, CAST(ts AS INTEGER),
-          model, input, cache_read, cache_write, output, reasoning,
-          logged_cost_usd, is_sidechain, agent_id, cwd, skill_names, mcp_names
-     FROM obs_log_turn_v1`,
-  // Takes the old `obs_log_turn_session` index with it: an index follows its
-  // table through a rename, so the name is free again below.
-  `DROP TABLE obs_log_turn_v1`,
-  `CREATE INDEX IF NOT EXISTS obs_log_turn_session
-     ON obs_log_turn (provider, provider_thread_id, ts)`,
+  // The `obs_log_turn` rebuild that added `path` and retyped `ts` is not
+  // expressible as an idempotent statement, so it lives as a guarded step in
+  // `applyMigrations`; only its indexes remain here. `PARSER_VERSION` is
+  // bumped alongside it, so every file is reparsed once and re-upserts its
+  // rows with the path filled in.
   `CREATE INDEX IF NOT EXISTS obs_log_turn_path ON obs_log_turn (path)`,
+  // Phase 4, context module. A snapshot is one scan of one cwd: what the
+  // prefix of every request in that project is made of. It is kept rather
+  // than recomputed so composition can be compared across days, and so a
+  // calibration factor has a history to be judged against.
+  `CREATE TABLE IF NOT EXISTS obs_ctx_snapshot (
+     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+     project_id         TEXT,
+     cwd                TEXT NOT NULL,
+     taken_at           TEXT NOT NULL,
+     provider           TEXT,
+     total_est_tokens   INTEGER NOT NULL,
+     calibration_factor REAL,
+     calibration_error  REAL
+   )`,
+  `CREATE INDEX IF NOT EXISTS obs_ctx_snapshot_cwd
+     ON obs_ctx_snapshot (cwd, taken_at)`,
+  // One row per surface block. `duplicate_of` names the block this one
+  // overlaps and `dead` marks a skill description no indexed session ever
+  // used: both are derived once at scan time so the panel and the CLI read
+  // the same verdict rather than each recomputing it.
+  `CREATE TABLE IF NOT EXISTS obs_ctx_block (
+     snapshot_id  INTEGER NOT NULL,
+     surface      TEXT NOT NULL
+                  CHECK (surface IN ('instruction','skill','mcp','plugin-tool')),
+     path         TEXT,
+     name         TEXT,
+     bytes        INTEGER NOT NULL,
+     est_tokens   INTEGER NOT NULL,
+     hash         TEXT,
+     duplicate_of TEXT,
+     dead         INTEGER NOT NULL DEFAULT 0
+   )`,
+  `CREATE INDEX IF NOT EXISTS obs_ctx_block_snapshot
+     ON obs_ctx_block (snapshot_id)`,
 ];

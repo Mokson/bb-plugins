@@ -55,6 +55,33 @@ import {
   loadUsageSnapshot,
   usagePreferences,
 } from "./spend/usage.js";
+import { contextContract } from "./context/contract.js";
+import type { PluginToolDescriptor } from "./context/scan.js";
+import {
+  contextThread,
+  formatContext,
+  formatSurfaces,
+  formatThreadContext,
+  takeSnapshot,
+  type ContextDeps,
+} from "./context/snapshot.js";
+import { auditContract } from "./audit/contract.js";
+import {
+  auditExport,
+  auditSession,
+  auditSessions,
+  buildAuditPack,
+  formatSession,
+  formatSessions,
+  writeAuditPack,
+  type AuditDeps,
+} from "./audit/pack.js";
+import {
+  failureRows,
+  formatFailures,
+  muteFailure,
+} from "./audit/failures.js";
+import { auditInsights, formatInsights } from "./audit/insights.js";
 import {
   CORE_MODULE_ID,
   ModuleRegistry,
@@ -530,6 +557,245 @@ export function createSpendModule(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Context and audit (phase 4).
+//
+// Both are read-mostly analyzers, and neither is on the ingest hot path: the
+// context scan reads the filesystem on a daily schedule and on demand, and
+// audit materializes everything it reports on request and stores nothing at
+// all. That is why neither takes a commit hook — a hook is for work that must
+// happen the moment a turn lands, and being one day stale about which skills
+// are mounted costs nothing.
+// ---------------------------------------------------------------------------
+
+/**
+ * The tools this plugin mounts, as the context scan sees them.
+ *
+ * Every description here is charged to every session the plugin is enabled in,
+ * so the scan measures them beside the skills and the MCP servers rather than
+ * exempting the plugin from its own audit.
+ */
+export const CONTEXT_TOOL = {
+  name: "observatory_context",
+  description:
+    "What this project's prompt prefix is made of: instructions, skills, MCP servers and plugin tools, with duplicates and dead skills. Optionally one thread's compaction estimate.",
+} as const;
+
+export const AUDIT_PACK_TOOL = {
+  name: "observatory_audit_pack",
+  description:
+    "Session metrics against the 7-day median, verification coverage, unverified edits, failures and insight facets for a thread or deliver run folder.",
+} as const;
+
+export const FAILURES_TOOL = {
+  name: "observatory_failures",
+  description:
+    "Top failure signatures across recent threads, with counts and when each was last seen.",
+} as const;
+
+/** A function, not a constant: `COST_TOOL` is declared further down the file. */
+export function agentTools(): PluginToolDescriptor[] {
+  return [COST_TOOL, CONTEXT_TOOL, AUDIT_PACK_TOOL, FAILURES_TOOL].map(
+    (tool) => ({ name: tool.name, description: tool.description }),
+  );
+}
+
+/** What the context surfaces read. Context owns its two tables and no others. */
+export interface ContextRuntime {
+  store: ObservatoryStore;
+}
+
+export interface ContextHandle {
+  current: ContextRuntime | null;
+}
+
+/** Audit stores nothing, so its runtime is the ledger handle and a clock. */
+export interface AuditHandle {
+  current: { store: ObservatoryStore } | null;
+}
+
+/** Distinct working directories one daily scan will cover. */
+const CONTEXT_SCAN_CWD_LIMIT = 20;
+
+function contextDeps(handle: ContextHandle): ContextDeps {
+  const runtime = handle.current;
+  if (!runtime) throw new Error("context module is not running");
+  return {
+    db: runtime.store.db,
+    store: runtime.store,
+    pluginTools: agentTools(),
+  };
+}
+
+function auditDeps(handle: AuditHandle): AuditDeps {
+  const runtime = handle.current;
+  if (!runtime) throw new Error("audit module is not running");
+  return { db: runtime.store.db, store: runtime.store };
+}
+
+/**
+ * Context: one scan of the prefix per project, daily and on demand.
+ *
+ * The daily pass exists so the composition table has a history to compare
+ * against; the on-demand path is what a person and an agent both call, and it
+ * rescans rather than serving the stored rows, because a stale answer about
+ * which files are mounted is worse than no answer.
+ */
+export function createContextModule(
+  core: CoreHandle,
+  handle: ContextHandle,
+): ObservatoryModule {
+  return defineModule({
+    id: "context",
+    setup(ctx) {
+      const runtime = core.current;
+      if (!runtime) {
+        ctx.bb.log.warn("[context] core is not running; scans unavailable");
+        return;
+      }
+      handle.current = { store: runtime.store };
+      ctx.bb.background.schedule(
+        "context-scan",
+        "0 3 * * *",
+        ctx.job("context-scan", () => {
+          const deps = contextDeps(handle);
+          const cwds = deps.db
+            .prepare<[number], { cwd: string }>(
+              `SELECT DISTINCT cwd FROM obs_thread
+                WHERE cwd IS NOT NULL
+                ORDER BY COALESCE(last_seen_at, created_at) DESC LIMIT ?`,
+            )
+            .all(CONTEXT_SCAN_CWD_LIMIT);
+          for (const row of cwds) {
+            takeSnapshot(deps, { cwd: row.cwd, refresh: true });
+          }
+        }),
+      );
+      ctx.bb.log.info("[context] scan registered");
+    },
+  });
+}
+
+/** Audit: pure read of the ledger, plus the run-folder export. */
+export function createAuditModule(
+  core: CoreHandle,
+  handle: AuditHandle,
+): ObservatoryModule {
+  return defineModule({
+    id: "audit",
+    setup(ctx) {
+      const runtime = core.current;
+      if (!runtime) {
+        ctx.bb.log.warn("[audit] core is not running; reports unavailable");
+        return;
+      }
+      handle.current = { store: runtime.store };
+      ctx.bb.log.info("[audit] session, failure and insight reports registered");
+    },
+  });
+}
+
+export const CONTEXT_COMMANDS = ["context"] as const;
+export const AUDIT_COMMANDS = ["audit", "failures", "insights"] as const;
+
+/** `bb observatory context [surfaces] [--thread id] [--cwd path] [--json]`. */
+export function runContextCommand(
+  deps: () => ContextDeps,
+  argv: readonly string[],
+): { exitCode: number; stdout?: string; stderr?: string } {
+  try {
+    const resolved = deps();
+    const threadId = flagValue(argv, "thread");
+    if (threadId !== undefined) {
+      const view = contextThread(resolved, threadId);
+      return hasFlag(argv, "json")
+        ? { exitCode: 0, stdout: `${JSON.stringify(view, null, 2)}\n` }
+        : { exitCode: 0, stdout: `${formatThreadContext(view)}\n` };
+    }
+    const cwd = flagValue(argv, "cwd");
+    const view = takeSnapshot(resolved, {
+      ...(cwd === undefined ? {} : { cwd }),
+      refresh: true,
+    });
+    if (hasFlag(argv, "json")) {
+      return { exitCode: 0, stdout: `${JSON.stringify(view, null, 2)}\n` };
+    }
+    return argv[0] === "surfaces"
+      ? { exitCode: 0, stdout: `${formatSurfaces(view)}\n` }
+      : { exitCode: 0, stdout: `${formatContext(view)}\n` };
+  } catch (error) {
+    return {
+      exitCode: 1,
+      stderr: `${error instanceof Error ? error.message : String(error)}\n`,
+    };
+  }
+}
+
+/** `bb observatory audit|failures|insights`. */
+export function runAuditCommand(
+  deps: () => AuditDeps,
+  command: (typeof AUDIT_COMMANDS)[number],
+  argv: readonly string[],
+): { exitCode: number; stdout?: string; stderr?: string } {
+  try {
+    const resolved = deps();
+    if (command === "failures") {
+      const rows = failureRows(resolved, {
+        range: parseRange(flagValue(argv, "range")),
+        includeMuted: hasFlag(argv, "include-muted"),
+      });
+      return hasFlag(argv, "json")
+        ? { exitCode: 0, stdout: `${JSON.stringify(rows, null, 2)}\n` }
+        : { exitCode: 0, stdout: `${formatFailures(rows)}\n` };
+    }
+    if (command === "insights") {
+      const facets = auditInsights(resolved, parseRange(flagValue(argv, "range")));
+      return hasFlag(argv, "json")
+        ? { exitCode: 0, stdout: `${JSON.stringify(facets, null, 2)}\n` }
+        : { exitCode: 0, stdout: `${formatInsights(facets)}\n` };
+    }
+    // The target is positional and first. Scanning for "the first argument
+    // without dashes" would swallow a flag's VALUE — `--range 7d` would audit
+    // a session called `7d`.
+    const first = argv[0];
+    const target = first?.startsWith("--") ? undefined : first;
+    if (!target) {
+      // No target is the "which session" question, so it is answered rather
+      // than refused: the list is what a person picks an id out of.
+      const rows = auditSessions(resolved, parseRange(flagValue(argv, "range")));
+      return hasFlag(argv, "json")
+        ? { exitCode: 0, stdout: `${JSON.stringify(rows, null, 2)}\n` }
+        : { exitCode: 0, stdout: `${formatSessions(rows)}\n` };
+    }
+    // A run folder is a path, a thread id is not: nothing else distinguishes
+    // the two, and asking the operator to say which would be a flag nobody
+    // remembers.
+    const isFolder = target.includes("/") || target.startsWith(".");
+    const session = auditSession(
+      resolved,
+      isFolder ? { runFolder: target } : { threadId: target },
+    );
+    const written = hasFlag(argv, "export")
+      ? session.runFolder
+        ? writeAuditPack(resolved, session.runFolder)
+        : []
+      : [];
+    const body = hasFlag(argv, "json")
+      ? `${JSON.stringify(session, null, 2)}\n`
+      : `${formatSession(session)}\n`;
+    const tail =
+      hasFlag(argv, "export") && written.length === 0
+        ? "no run folder resolved; nothing exported\n"
+        : written.map((path) => `wrote ${path}\n`).join("");
+    return { exitCode: 0, stdout: `${body}${tail}` };
+  } catch (error) {
+    return {
+      exitCode: 1,
+      stderr: `${error instanceof Error ? error.message : String(error)}\n`,
+    };
+  }
+}
+
 /**
  * Core writes the ledger, watch analyzes it, and the rest are still stubs
  * landing in later phases behind these seams. Registration order matters:
@@ -541,6 +807,8 @@ export function buildModules(
   spend: SpendHandle = { current: null },
   commitHooks: Array<(threadId: string) => void> = [],
   watch: WatchHandle = { current: null },
+  context: ContextHandle = { current: null },
+  audit: AuditHandle = { current: null },
 ): readonly ObservatoryModule[] {
   return MODULE_IDS.map((id) => {
     if (id === CORE_MODULE_ID) return createCoreModule(handle, settings, commitHooks);
@@ -552,6 +820,8 @@ export function buildModules(
         settings,
       });
     }
+    if (id === "context") return createContextModule(handle, context);
+    if (id === "audit") return createAuditModule(handle, audit);
     return defineModule({
       id,
       setup(ctx) {
@@ -581,6 +851,14 @@ const USAGE = [
   "  watch      Stall state per active thread: [--follow] [--json]",
   "             explain <threadId>   signals and actions for one thread",
   "             off|observe|steer    set the watch mode (stored in kv)",
+  "  context    Prompt-prefix composition: [surfaces] [--cwd path]",
+  "             [--thread <id>]  one thread's compaction estimate",
+  "             [--json]",
+  "  audit      One session against the 7d median: audit <threadId|runFolder>",
+  "             with no target, the sessions list: [--range 7d]",
+  "             [--json] [--export]",
+  "  failures   Failure signatures by count: [--range 7d] [--include-muted]",
+  "  insights   Cost drivers, models and failure signatures: [--range 7d]",
 ].join("\n");
 
 export interface StatusDeps {
@@ -1089,6 +1367,8 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
 
   const core: CoreHandle = { current: null };
   const spend: SpendHandle = { current: null };
+  const context: ContextHandle = { current: null };
+  const audit: AuditHandle = { current: null };
   const commitHooks: Array<(threadId: string) => void> = [];
   const watch: WatchHandle = { current: null };
   const registry = new ModuleRegistry({
@@ -1096,7 +1376,9 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
     db: () => db,
     settings: readSettings,
   });
-  await registry.register(buildModules(core, readSettings, spend, commitHooks, watch));
+  await registry.register(
+    buildModules(core, readSettings, spend, commitHooks, watch, context, audit),
+  );
 
   /** Every spend surface refuses rather than serving an empty page as a real one. */
   const spendDeps = () => {
@@ -1146,6 +1428,38 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
         compactLimit: values["usage_compactLimit"],
       });
     },
+  });
+
+  const contextRpcDeps = () => contextDeps(context);
+  const auditRpcDeps = () => auditDeps(audit);
+
+  bb.rpc.register(contextContract, {
+    // Always a fresh scan: the panel asks this question to find out what is
+    // mounted right now, and `refresh` decides whether the answer opens a new
+    // snapshot row or updates the current hour's.
+    "observatory_context_snapshot": (input) =>
+      takeSnapshot(contextRpcDeps(), input),
+    "observatory_context_thread": ({ threadId }) =>
+      contextThread(contextRpcDeps(), threadId),
+  });
+
+  bb.rpc.register(auditContract, {
+    "observatory_audit_sessions": ({ range }) => ({
+      rows: auditSessions(auditRpcDeps(), range),
+    }),
+    "observatory_audit_session": (input) => auditSession(auditRpcDeps(), input),
+    "observatory_audit_failures": ({ range, includeMuted }) => ({
+      rows: failureRows(auditRpcDeps(), { range, includeMuted }),
+    }),
+    "observatory_audit_failure_mute": ({ signature, untilIso }) => {
+      muteFailure(auditRpcDeps().store, signature, untilIso);
+      return { signature, untilIso };
+    },
+    "observatory_audit_insights": ({ range }) => ({
+      facets: auditInsights(auditRpcDeps(), range),
+    }),
+    "observatory_audit_export": ({ format, ...target }) =>
+      auditExport(auditRpcDeps(), target, format),
   });
 
   // The agent-facing view of the same rollups. Kept to one tool with one
@@ -1214,6 +1528,72 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
   });
   // ---- end watch module surface --------------------------------------------
 
+  // Context and audit for the agent. Each returns the compact object its
+  // caller acts on, clamped by the same rule as the cost tool: a tool result
+  // that fills the window is worse than one that says it was truncated.
+  bb.agents.registerTool({
+    name: CONTEXT_TOOL.name,
+    description: CONTEXT_TOOL.description,
+    parameters: z
+      .object({
+        threadId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Report this thread's compaction estimate as well."),
+        cwd: z.string().min(1).optional(),
+      })
+      .strict(),
+    execute({ threadId, cwd }) {
+      const deps = contextRpcDeps();
+      const view = takeSnapshot(deps, cwd === undefined ? {} : { cwd });
+      return clampToolResult({
+        cwd: view.snapshot.cwd,
+        totalEstTokens: view.snapshot.totalEstTokens,
+        calibrationError: view.snapshot.calibrationError,
+        composition: view.composition,
+        duplicates: view.duplicates.slice(0, 5),
+        deadSkills: view.dead.length,
+        deadSkillNames: view.dead.slice(0, 10).map((skill) => skill.name),
+        ...(threadId === undefined
+          ? {}
+          : { thread: contextThread(deps, threadId) }),
+      });
+    },
+  });
+
+  bb.agents.registerTool({
+    name: AUDIT_PACK_TOOL.name,
+    description: AUDIT_PACK_TOOL.description,
+    parameters: z
+      .object({
+        threadId: z.string().min(1).optional(),
+        runFolder: z.string().min(1).optional(),
+      })
+      .strict(),
+    execute(target) {
+      return clampToolResult(buildAuditPack(auditRpcDeps(), target));
+    },
+  });
+
+  bb.agents.registerTool({
+    name: FAILURES_TOOL.name,
+    description: FAILURES_TOOL.description,
+    parameters: z.object({ range: z.string().optional() }).strict(),
+    execute({ range }) {
+      const rows = failureRows(auditRpcDeps(), { range: parseRange(range) });
+      return clampToolResult({
+        range: parseRange(range),
+        rows: rows.slice(0, 10).map((row) => ({
+          signature: row.signature.slice(0, 80),
+          count: row.count,
+          lastSeen: row.lastSeen,
+          threads: row.threads.length,
+        })),
+      });
+    },
+  });
+
   bb.cli.register({
     name: "observatory",
     summary:
@@ -1270,6 +1650,31 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
         usage: "bb observatory cache-misses [--range 7d] [--thread <threadId>]",
       },
       ...WATCH_CLI_COMMANDS,
+      {
+        name: "context",
+        summary:
+          "What every request in a project pays for before the first word, with duplicates and dead skills.",
+        usage:
+          "bb observatory context [surfaces] [--cwd <path>] [--thread <threadId>] [--json]",
+      },
+      {
+        name: "audit",
+        summary:
+          "One session's metrics against the 7-day median, its verification coverage and its unverified edits.",
+        usage:
+          "bb observatory audit [<threadId|runFolder>] [--range 7d] [--json] [--export]",
+      },
+      {
+        name: "failures",
+        summary: "Failure signatures by count, with when each was last seen.",
+        usage: "bb observatory failures [--range 7d] [--include-muted]",
+      },
+      {
+        name: "insights",
+        summary:
+          "Cost drivers by seat, models by cost, and failure signatures by count.",
+        usage: "bb observatory insights [--range 7d]",
+      },
     ],
     async run(argv) {
       const [command] = argv;
@@ -1306,6 +1711,16 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
       }
       if (SPEND_COMMANDS.includes(command as SpendCommand)) {
         return runSpendCommand(spendDeps, command as SpendCommand, argv.slice(1));
+      }
+      if (command === "context") {
+        return runContextCommand(contextRpcDeps, argv.slice(1));
+      }
+      if (AUDIT_COMMANDS.includes(command as (typeof AUDIT_COMMANDS)[number])) {
+        return runAuditCommand(
+          auditRpcDeps,
+          command as (typeof AUDIT_COMMANDS)[number],
+          argv.slice(1),
+        );
       }
       if (command === "doctor") {
         const values = await readSettings();
