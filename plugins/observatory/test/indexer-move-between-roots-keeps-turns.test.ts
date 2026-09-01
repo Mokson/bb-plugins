@@ -20,34 +20,10 @@ import { LocalHostClient } from "../src/core/host-client.js";
 import { createLogIndexer } from "../src/core/indexer.js";
 import { LogStore } from "../src/core/store-logs.js";
 import { TempDatabase } from "./fakes.js";
+import { codexRollout } from "./synthetic-logs.js";
 
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
 const SESSION = "01a04c3e-bf33-7eb2-a447-a5efeef76eda";
-
-function rollout(): string {
-  return (
-    `${JSON.stringify({
-      timestamp: "2026-08-29T06:39:35.982Z",
-      type: "session_meta",
-      payload: { id: SESSION, cwd: "/redacted", model: "gpt-5.6-sol" },
-    })}\n` +
-    `${JSON.stringify({
-      timestamp: "2026-08-29T06:47:06.996Z",
-      type: "event_msg",
-      payload: {
-        type: "token_count",
-        info: {
-          last_token_usage: {
-            input_tokens: 141_707,
-            cached_input_tokens: 139_008,
-            output_tokens: 3_842,
-            reasoning_output_tokens: 3_636,
-          },
-        },
-      },
-    })}\n`
-  );
-}
 
 let temp: TempDatabase | null = null;
 let dir = "";
@@ -66,7 +42,7 @@ describe("a session archived into a second scanned root", () => {
     mkdirSync(archived, { recursive: true });
     const before = join(live, "rollout-2026-08-29T07-39-35-01a04c3e.jsonl");
     const after = join(archived, "rollout-2026-08-29T07-39-35-01a04c3e.jsonl");
-    writeFileSync(before, rollout());
+    writeFileSync(before, codexRollout(SESSION));
 
     temp = new TempDatabase();
     const store = new LogStore(temp.openDatabase());

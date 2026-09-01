@@ -15,49 +15,9 @@ import { createLogIndexer } from "../src/core/indexer.js";
 import { LogStore } from "../src/core/store-logs.js";
 import { TempDatabase } from "./fakes.js";
 
+import { claudeAssistantLine, codexRollout } from "./synthetic-logs.js";
+
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
-
-function claudeLine(session: string, requestId: string) {
-  return `${JSON.stringify({
-    type: "assistant",
-    timestamp: "2026-09-01T00:00:00.000Z",
-    sessionId: session,
-    requestId,
-    message: {
-      model: "claude-opus-5",
-      usage: {
-        input_tokens: 1,
-        cache_read_input_tokens: 2,
-        cache_creation_input_tokens: 3,
-        output_tokens: 4,
-      },
-    },
-  })}\n`;
-}
-
-function rollout(session: string) {
-  return (
-    `${JSON.stringify({
-      timestamp: "2026-08-29T06:39:35.982Z",
-      type: "session_meta",
-      payload: { id: session, cwd: "/redacted", model: "gpt-5.6-sol" },
-    })}\n` +
-    `${JSON.stringify({
-      timestamp: "2026-08-29T06:47:06.996Z",
-      type: "event_msg",
-      payload: {
-        type: "token_count",
-        info: {
-          last_token_usage: {
-            input_tokens: 100,
-            cached_input_tokens: 90,
-            output_tokens: 10,
-          },
-        },
-      },
-    })}\n`
-  );
-}
 
 let temp: TempDatabase | null = null;
 let dir = "";
@@ -81,11 +41,11 @@ describe("one pass over two roots", () => {
     for (let index = 0; index < 40; index += 1) {
       let body = "";
       for (let entry = 0; entry < 200; entry += 1) {
-        body += claudeLine(`s-${index}`, `req_${entry}`);
+        body += claudeAssistantLine(`s-${index}`, `req_${entry}`);
       }
       writeFileSync(join(greedy, "-p", `s-${index}.jsonl`), body);
     }
-    writeFileSync(join(later, "rollout-x.jsonl"), rollout("codex-session"));
+    writeFileSync(join(later, "rollout-x.jsonl"), codexRollout("codex-session"));
 
     temp = new TempDatabase();
     const store = new LogStore(temp.openDatabase());

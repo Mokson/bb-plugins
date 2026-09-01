@@ -251,23 +251,36 @@ export async function discoverFiles(root: string): Promise<string[]> {
   return found;
 }
 
+/** How many `stat` calls are in flight at once while ordering a root. */
+const STAT_CONCURRENCY = 256;
+
 /**
  * Discovered paths, most recently modified first.
  *
  * One `stat` per file, which is the same syscall `indexOne` makes anyway and
  * is measured in tens of milliseconds across thousands of files. It buys the
  * ordering that decides which files a budgeted pass reaches.
+ *
+ * Issued in bounded chunks rather than one `Promise.all` over the lot:
+ * `MAX_FILES_PER_ROOT` is 50,000, and 50,000 simultaneous `stat` calls swamp
+ * libuv's thread pool and stall every other await in the worker behind them.
  */
-export async function newestFirst(paths: string[]): Promise<string[]> {
-  const stamped = await Promise.all(
-    paths.map(async (path) => ({
-      path,
-      mtimeMs: await stat(path).then(
-        (entry) => entry.mtimeMs,
-        () => 0,
-      ),
-    })),
-  );
+async function newestFirst(paths: string[]): Promise<string[]> {
+  const stamped: Array<{ path: string; mtimeMs: number }> = [];
+  for (let start = 0; start < paths.length; start += STAT_CONCURRENCY) {
+    const chunk = paths.slice(start, start + STAT_CONCURRENCY);
+    stamped.push(
+      ...(await Promise.all(
+        chunk.map(async (path) => ({
+          path,
+          mtimeMs: await stat(path).then(
+            (entry) => entry.mtimeMs,
+            () => 0,
+          ),
+        })),
+      )),
+    );
+  }
   stamped.sort(
     (left, right) =>
       right.mtimeMs - left.mtimeMs || left.path.localeCompare(right.path),

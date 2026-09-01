@@ -13,26 +13,9 @@ import { LocalHostClient } from "../src/core/host-client.js";
 import { createLogIndexer } from "../src/core/indexer.js";
 import { LogStore } from "../src/core/store-logs.js";
 import { TempDatabase } from "./fakes.js";
+import { claudeAssistantLine as line } from "./synthetic-logs.js";
 
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
-
-function line(session: string, requestId: string, output: number) {
-  return `${JSON.stringify({
-    type: "assistant",
-    timestamp: "2026-09-01T00:00:00.000Z",
-    sessionId: session,
-    requestId,
-    message: {
-      model: "claude-opus-5",
-      usage: {
-        input_tokens: 1,
-        cache_read_input_tokens: 2,
-        cache_creation_input_tokens: 3,
-        output_tokens: output,
-      },
-    },
-  })}\n`;
-}
 
 let temp: TempDatabase | null = null;
 let dir = "";

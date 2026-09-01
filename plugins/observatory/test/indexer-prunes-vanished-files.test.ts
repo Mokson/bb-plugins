@@ -6,6 +6,7 @@ import { LocalHostClient } from "../src/core/host-client.js";
 import { createLogIndexer } from "../src/core/indexer.js";
 import { LogStore } from "../src/core/store-logs.js";
 import { TempDatabase } from "./fakes.js";
+import { claudeAssistantLine as line } from "./synthetic-logs.js";
 
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
 
@@ -16,19 +17,6 @@ afterEach(() => {
   temp = null;
   if (dir) rmSync(dir, { recursive: true, force: true });
 });
-
-function line(session: string, requestId: string) {
-  return `${JSON.stringify({
-    type: "assistant",
-    timestamp: "2026-09-01T00:00:00.000Z",
-    sessionId: session,
-    requestId,
-    message: {
-      model: "claude-opus-5",
-      usage: { input_tokens: 1, cache_read_input_tokens: 2, cache_creation_input_tokens: 3, output_tokens: 4 },
-    },
-  })}\n`;
-}
 
 const all = { tsFrom: 0, tsTo: Number.MAX_SAFE_INTEGER, provider: "claude-code" };
 

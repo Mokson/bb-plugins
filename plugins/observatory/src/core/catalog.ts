@@ -336,13 +336,47 @@ interface CachedCatalogData {
   providers?: unknown;
 }
 
-function isProviderTables(
-  value: unknown,
-): value is PricingCatalog["providers"] {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  return Object.values(value as Record<string, unknown>).every(
-    (table) => !!table && typeof table === "object" && !Array.isArray(table),
-  );
+/**
+ * Rebuild the provider tables from a cached row, dropping anything that is not
+ * four finite numbers.
+ *
+ * The row is a boundary, not internal state: it was written by whichever
+ * version of this plugin ran last, and a shape check that only proves "an
+ * object of objects" would let a partial price through to be multiplied by a
+ * token count. Every field is read here so nothing downstream has to wonder.
+ */
+function fromCachedTables(value: unknown): PricingCatalog["providers"] | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const providers: PricingCatalog["providers"] = {};
+  for (const [providerId, models] of Object.entries(
+    value as Record<string, unknown>,
+  )) {
+    if (!models || typeof models !== "object" || Array.isArray(models)) continue;
+    const table: Record<string, ModelPrice> = {};
+    for (const [modelId, price] of Object.entries(
+      models as Record<string, unknown>,
+    )) {
+      const fields = price as Partial<ModelPrice> | null;
+      if (
+        !fields ||
+        typeof fields !== "object" ||
+        !Number.isFinite(fields.input) ||
+        !Number.isFinite(fields.output) ||
+        !Number.isFinite(fields.cacheRead) ||
+        !Number.isFinite(fields.cacheWrite)
+      ) {
+        continue;
+      }
+      table[modelId] = {
+        input: fields.input!,
+        output: fields.output!,
+        cacheRead: fields.cacheRead!,
+        cacheWrite: fields.cacheWrite!,
+      };
+    }
+    if (Object.keys(table).length) providers[providerId] = table;
+  }
+  return Object.keys(providers).length ? providers : null;
 }
 
 function parseRow(row: CatalogRow | undefined): PricingCatalog | null {
@@ -351,12 +385,10 @@ function parseRow(row: CatalogRow | undefined): PricingCatalog | null {
     const parsed: unknown = JSON.parse(row.data);
     const tagged = parsed as CachedCatalogData;
     const providers =
-      tagged?.v === CACHE_FORMAT && isProviderTables(tagged.providers)
-        ? tagged.providers
+      tagged?.v === CACHE_FORMAT
+        ? fromCachedTables(tagged.providers)
         : fromModelsDev(parsed);
-    return providers && Object.keys(providers).length
-      ? { revision: row.revision, providers }
-      : null;
+    return providers ? { revision: row.revision, providers } : null;
   } catch {
     return null;
   }

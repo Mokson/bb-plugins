@@ -288,8 +288,8 @@ function parseHours(value: string | boolean | undefined, fallback: number) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-/** The pass budget in BYTES, from the setting, with the default as the floor. */
-function indexBudgetBytes(
+/** The pass budget, from the setting, falling back to the measured default. */
+function indexBudget(
   value: string | boolean | undefined,
 ): { maxBytes: number } {
   const parsed = Number.parseFloat(typeof value === "string" ? value : "");
@@ -352,7 +352,7 @@ export function createCoreModule(
           // would drop the ingest subscription with it.
           const current = await settings();
           await stack.indexer.runOnce(
-            indexBudgetBytes(current["index_budgetMb"]),
+            indexBudget(current["index_budgetMb"]),
           );
           ingest.rejoinPending();
         }),
@@ -657,7 +657,7 @@ async function indexNow(
     return { exitCode: 1, stderr: "log stack is not loaded\n" };
   }
   const budgetMb = flagValue(argv, "budget-mb");
-  const budget = indexBudgetBytes(budgetMb ?? budgetSetting);
+  const budget = indexBudget(budgetMb ?? budgetSetting);
   const passesRaw = Number.parseInt(flagValue(argv, "passes") ?? "1", 10);
   const passes =
     Number.isFinite(passesRaw) && passesRaw > 0 ? Math.min(passesRaw, 100) : 1;
