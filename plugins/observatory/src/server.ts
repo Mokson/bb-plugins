@@ -741,7 +741,11 @@ export function runAuditCommand(
         ? { exitCode: 0, stdout: `${JSON.stringify(facets, null, 2)}\n` }
         : { exitCode: 0, stdout: `${formatInsights(facets)}\n` };
     }
-    const target = argv.find((entry) => !entry.startsWith("--"));
+    // The target is positional and first. Scanning for "the first argument
+    // without dashes" would swallow a flag's VALUE — `--range 7d` would audit
+    // a session called `7d`.
+    const first = argv[0];
+    const target = first?.startsWith("--") ? undefined : first;
     if (!target) {
       // No target is the "which session" question, so it is answered rather
       // than refused: the list is what a person picks an id out of.
