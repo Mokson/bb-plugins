@@ -53,6 +53,10 @@ interface TurnRecord {
   started_at: string | null;
   completed_at: string | null;
   cache_read_tokens: number | null;
+  /** Uncached input. The ceiling on how much of a drop was actually re-billed. */
+  input_tokens: number | null;
+  /** The turn's own bill. The ceiling on what a miss inside it can have cost. */
+  cost_usd: number | null;
   model_reported: string | null;
   model_requested: string | null;
   compacted: number | null;
@@ -117,7 +121,8 @@ function loadTurns(
   return db
     .prepare<Record<string, string>, TurnRecord>(
       `SELECT t.thread_id, t.turn_id, th.provider_id, t.started_at,
-              t.completed_at, t.cache_read_tokens, t.model_reported,
+              t.completed_at, t.cache_read_tokens, t.input_tokens, t.cost_usd,
+              t.model_reported,
               t.model_requested, t.compacted,
               lt.skill_names AS skill_names, lt.mcp_names AS mcp_names,
               CASE
@@ -286,18 +291,44 @@ function classify(correlates: readonly Correlate[]): CacheMissCause {
   );
 }
 
-/** Drop tokens repriced from the cache-read rate up to the full input rate. */
+/**
+ * What the miss actually cost: the tokens this turn paid full input price for
+ * that a live cache would have served at the cache-read rate.
+ *
+ * The quantity is NOT the whole drop. A drop measures how much smaller the
+ * cache read got, and most of the reasons it shrinks - a compaction, a cleared
+ * context, a subagent taking the work elsewhere - mean the prefix was never
+ * re-sent at all, so nothing was re-billed. Charging the full drop at the
+ * uncached rate invented spend that never happened, which is how a 7d window
+ * reported more cache-miss cost than total spend.
+ *
+ * Two bounds make the estimate a genuine SUBSET of the bill:
+ *
+ *  - the tokens are capped at the turn's own uncached input, which is the most
+ *    that could have been served from cache instead, and
+ *  - the dollars are capped at the turn's own cost, so an estimate priced from
+ *    the catalog can never exceed a bill the provider actually reported.
+ *
+ * An unpriced turn contributes nothing to spend, so it estimates `null` rather
+ * than zero: not measured is not the same as free.
+ */
 function estimateUsd(
   catalog: PricingCatalog | null,
-  provider: string | null,
-  model: string | null,
+  turn: TurnRecord,
   drop: number,
 ): number | null {
   if (!catalog) return null;
-  const price = resolveModel(catalog, provider ?? "", model)?.price;
+  if (turn.cost_usd === null) return null;
+  const price = resolveModel(
+    catalog,
+    turn.provider_id ?? "",
+    turn.model_reported ?? turn.model_requested,
+  )?.price;
   if (!price) return null;
   const delta = price.input - price.cacheRead;
-  return delta > 0 ? (drop * delta) / PER_MILLION : 0;
+  if (delta <= 0) return 0;
+  const rebilled = Math.min(drop, turn.input_tokens ?? 0);
+  return Math.min((rebilled * delta) / PER_MILLION, turn.cost_usd);
 }
 
 /** The signal identity. Same turn, same episode, however often it is scanned. */
@@ -359,12 +390,7 @@ export function detectCacheMisses(
         priorCacheRead: prior,
         cacheRead: read,
         drop,
-        estimatedUsd: estimateUsd(
-          catalog,
-          current.provider_id,
-          current.model_reported ?? current.model_requested,
-          drop,
-        ),
+        estimatedUsd: estimateUsd(catalog, current, drop),
         cause: classify(correlates),
         correlates,
         recurrence7d: 0,

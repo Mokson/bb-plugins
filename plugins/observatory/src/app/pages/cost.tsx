@@ -114,8 +114,8 @@ function FilterBar({
           value={filters.host}
           placeholder="all"
           disabled
+          readOnly
           title="no host id in the ledger yet"
-          onChange={() => undefined}
         />
       </label>
       <label className="flex items-center gap-1">

@@ -18,10 +18,30 @@ export function Heading({ children }: { children: ReactNode }) {
   return <h2 className="text-[16px] font-semibold">{children}</h2>;
 }
 
-/** One 11px label above a 24px number. Never more than four in a row. */
+/**
+ * The hero row's columns.
+ *
+ * Four FIXED columns overlapped their neighbours in a narrow panel: at around
+ * 900px the numbers ran into each other and the fourth was clipped off the
+ * edge entirely. Auto-fit with a minimum column width wraps to two rows
+ * instead, and the minimum is wide enough for a six-figure dollar amount, so
+ * the numbers keep their alignment on whichever row they land.
+ *
+ * The skeleton uses it too, or the page would reflow the moment data arrives.
+ */
+const HERO_GRID =
+  "grid gap-x-6 gap-y-3 [grid-template-columns:repeat(auto-fit,minmax(9rem,1fr))]";
+
+/**
+ * One 11px label above a 24px number. Never more than four in a row.
+ *
+ * The label may wrap onto a second line; the number may not. Keeping the two
+ * in a column means a wrapped label pushes its own number down rather than
+ * shifting the one beside it, so the row stays readable at any width.
+ */
 function Hero({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex min-w-0 flex-col gap-0.5">
       <span className="text-[11px] text-muted-foreground">{label}</span>
       <span className="text-[24px] font-semibold tabular-nums leading-none">
         {value}
@@ -46,7 +66,7 @@ export function Heroes({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <div className="grid grid-cols-4 gap-6">
+      <div className={HERO_GRID}>
         <Hero label="spend usd" value={formatUsd(totals.spendUsd)} />
         <Hero label="cache saved usd" value={formatUsd(totals.cacheSavedUsd)} />
         <Hero label="cache write usd" value={formatUsd(totals.cacheWriteUsd)} />
@@ -105,7 +125,7 @@ export function QueryFrame<T>({
 export function PageSkeleton() {
   return (
     <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-4 gap-6">
+      <div className={HERO_GRID}>
         {[0, 1, 2, 3].map((slot) => (
           <Skeleton key={slot} className="h-8 w-full rounded-[4px]" />
         ))}
