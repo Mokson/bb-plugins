@@ -347,6 +347,21 @@ function price(
   );
 }
 
+function writeCost(
+  deps: JoinDeps,
+  turn: PendingSplitTurn,
+  cost: PriceTurnResult,
+): void {
+  deps.events.updateTurnCost({
+    thread_id: turn.thread_id,
+    turn_id: turn.turn_id,
+    cost_usd: cost.costUsd,
+    cost_source: cost.costSource,
+    pricing_status: cost.pricingStatus,
+    cache_savings_usd: cost.cacheSavingsUsd,
+  });
+}
+
 /** Per-turn provenance, kept out of the schema: obs_match has no detail column. */
 interface TurnDetail {
   rows: number;
@@ -504,15 +519,7 @@ export function joinSession(
       else summary.logWindow += 1;
     }
 
-    const cost = price(deps, turn, sums);
-    deps.events.updateTurnCost({
-      thread_id: turn.thread_id,
-      turn_id: turn.turn_id,
-      cost_usd: cost.costUsd,
-      cost_source: cost.costSource,
-      pricing_status: cost.pricingStatus,
-      cache_savings_usd: cost.cacheSavingsUsd,
-    });
+    writeCost(deps, turn, price(deps, turn, sums));
   });
 
   summary.sidechain = joinSidechains(
@@ -635,14 +642,7 @@ export function priceUnpricedTurns(
     // A status of null would mean the pricer said nothing at all; writing it
     // back would leave the turn indistinguishable from never-priced.
     if (cost.pricingStatus === null) continue;
-    deps.events.updateTurnCost({
-      thread_id: turn.thread_id,
-      turn_id: turn.turn_id,
-      cost_usd: cost.costUsd,
-      cost_source: cost.costSource,
-      pricing_status: cost.pricingStatus,
-      cache_savings_usd: cost.cacheSavingsUsd,
-    });
+    writeCost(deps, turn, cost);
     priced += 1;
   }
   return priced;

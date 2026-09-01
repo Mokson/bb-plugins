@@ -397,7 +397,13 @@ export function createIngest(options: IngestOptions): Ingest {
     return stale.length;
   }
 
-  /** The join's dependency bundle, or null while the log stack is absent. */
+  /**
+   * The join's dependency bundle, or null with no pricer to build it around.
+   *
+   * `logs` falls back to an empty source rather than blocking: the pricing
+   * path never reads a log row, and the join path checks for the real log
+   * stack itself before it asks for these.
+   */
   function joinDeps(): JoinDeps | null {
     if (!options.priceTurn) return null;
     return {
