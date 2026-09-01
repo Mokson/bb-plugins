@@ -566,6 +566,19 @@ export function formatOverview(overview: SpendOverview): string {
   return lines.join("\n");
 }
 
+/**
+ * One cell of a markdown table.
+ *
+ * A thread title is free text and a pipe in it splits the row: the eight-column
+ * contract every consumer parses by position becomes nine columns for that row
+ * alone. A newline is worse still, because it ends the row mid-table. Both are
+ * neutralised here rather than at each call site, so every markdown surface in
+ * the module escapes identically.
+ */
+export function markdownCell(value: string): string {
+  return value.replace(/\|/gu, "\\|").replace(/[\r\n]+/gu, " ");
+}
+
 /** The markdown half of `observatory_spend_export`. */
 export function overviewMarkdown(
   overview: SpendOverview,
@@ -574,6 +587,11 @@ export function overviewMarkdown(
   const header = [
     `# Spend ${query.range} by ${query.group}`,
     "",
+    // The active filters are echoed so an exported file states the slice it
+    // covers. A file that says "all" when a provider filter was on is a file
+    // whose totals cannot be trusted a week later.
+    `host: ${markdownCell((query.host ?? "") || "all")}`,
+    `provider: ${markdownCell((query.provider ?? "") || "all")}`,
     `spend_usd: ${money(overview.totals.spendUsd)}`,
     `cache_saved_usd: ${money(overview.totals.cacheSavedUsd)}`,
     `cache_write_usd: ${money(overview.totals.cacheWriteUsd)}`,
@@ -585,7 +603,9 @@ export function overviewMarkdown(
   ];
   const rows = overview.rows.map(
     (row) =>
-      `| ${"  ".repeat(row.depth)}${row.label} | ${row.kind} | ${row.turns} | ${
+      `| ${"  ".repeat(row.depth)}${markdownCell(row.label)} | ${
+        row.kind
+      } | ${row.turns} | ${
         row.inputTokens
       } | ${tokens(row.cacheReadTokens)} | ${row.outputTokens} | ${money(
         row.costUsd,

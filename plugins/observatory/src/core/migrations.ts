@@ -233,4 +233,14 @@ export const MIGRATIONS: string[] = [
   `CREATE INDEX IF NOT EXISTS obs_log_turn_session
      ON obs_log_turn (provider, provider_thread_id, ts)`,
   `CREATE INDEX IF NOT EXISTS obs_log_turn_path ON obs_log_turn (path)`,
+  // Two read paths that ran as full scans on every commit hook.
+  //
+  //  - `obs_signal (thread_id, turn_id)`: the cache-miss detector opens one
+  //    signal per miss and the drilldown reads them back per turn.
+  //  - `obs_thread (parent_thread_id)`: lineage rollups and the tool's tree
+  //    scope walk children by parent, once per level of the subtree.
+  `CREATE INDEX IF NOT EXISTS obs_signal_turn
+     ON obs_signal (thread_id, turn_id)`,
+  `CREATE INDEX IF NOT EXISTS obs_thread_parent
+     ON obs_thread (parent_thread_id)`,
 ];

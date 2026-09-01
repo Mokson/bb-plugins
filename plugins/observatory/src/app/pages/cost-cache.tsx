@@ -65,7 +65,10 @@ function MissBlock({ row }: { row: CacheMissRow }) {
         <ol className="flex flex-col">
           {row.correlates.map((correlate, index) => (
             <li
-              key={`${correlate.kind}-${correlate.at}`}
+              // Two correlates of the same kind can share a timestamp - two
+              // skills injected in one turn is the common case - and the pair
+              // is not unique. The list is ordered evidence, so its index is.
+              key={`${index}-${correlate.kind}-${correlate.at}`}
               className="flex h-6 items-center gap-2"
             >
               <span className="w-4 text-[11px] tabular-nums text-muted-foreground">

@@ -258,6 +258,11 @@ export const spendContract = defineRpcContract({
         range: spendRangeSchema,
         group: spendGroupSchema,
         format: z.enum(["md", "json"]),
+        // The export must cover the same slice the table on screen shows.
+        // Without these the file silently widens to every host and provider,
+        // and nothing in it says so.
+        host: z.string().optional(),
+        provider: z.string().optional(),
       })
       .strict(),
     output: spendExportSchema,

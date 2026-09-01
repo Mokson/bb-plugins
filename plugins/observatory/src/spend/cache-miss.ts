@@ -58,6 +58,14 @@ interface TurnRecord {
   compacted: number | null;
   skill_names: string | null;
   mcp_names: string | null;
+  /**
+   * 1 when this turn is the earliest in its thread, decided over the WHOLE
+   * thread rather than the loaded slice. Position within the slice cannot
+   * answer it: a 7d query on an older thread starts mid-conversation, and
+   * calling that turn the first one freezes `first-turn` into the signal's
+   * dedupe key, where no later scan can correct it.
+   */
+  is_thread_first: number;
 }
 
 function added(before: readonly string[], after: readonly string[]): string[] {
@@ -111,7 +119,13 @@ function loadTurns(
       `SELECT t.thread_id, t.turn_id, th.provider_id, t.started_at,
               t.completed_at, t.cache_read_tokens, t.model_reported,
               t.model_requested, t.compacted,
-              lt.skill_names AS skill_names, lt.mcp_names AS mcp_names
+              lt.skill_names AS skill_names, lt.mcp_names AS mcp_names,
+              CASE
+                WHEN COALESCE(t.started_at, '') = (
+                  SELECT MIN(COALESCE(x.started_at, ''))
+                    FROM obs_turn x WHERE x.thread_id = t.thread_id
+                ) THEN 1 ELSE 0
+              END AS is_thread_first
          FROM obs_turn t
          JOIN obs_thread th ON th.thread_id = t.thread_id
          LEFT JOIN obs_match m
@@ -333,7 +347,7 @@ export function detectCacheMisses(
 
       const correlates = correlatesFor(deps.db, previous, current, {
         ttlMs,
-        isFirstPair: position === 1,
+        isFirstPair: previous.is_thread_first === 1,
       });
       const at = current.started_at ?? new Date(now).toISOString();
       rows.push({
@@ -366,13 +380,16 @@ export function detectCacheMisses(
   let windowStart = 0;
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index] as CacheMissRow;
+    // The boundary reset comes FIRST. Behind the null-timestamp `continue` it
+    // is skipped whenever a thread's first miss has no stamp, and the window
+    // then spans two threads, counting one thread's misses into another's.
+    if (index > 0 && (rows[index - 1] as CacheMissRow).threadId !== row.threadId) {
+      windowStart = index;
+    }
     const at = millis(row.at);
     if (at === null) {
       row.recurrence7d = 1;
       continue;
-    }
-    if (index > 0 && (rows[index - 1] as CacheMissRow).threadId !== row.threadId) {
-      windowStart = index;
     }
     while (windowStart < index) {
       const edge = millis((rows[windowStart] as CacheMissRow).at);

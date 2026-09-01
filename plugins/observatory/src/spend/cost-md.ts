@@ -12,6 +12,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Database } from "better-sqlite3";
+import { markdownCell } from "./rollup.js";
 
 /** Every flag `COST.md` may carry. Nothing outside this set is emitted. */
 export const COST_MD_FLAGS = [
@@ -140,10 +141,16 @@ export function tierPolicyViolated(
   return declared !== null && actual !== null && declared !== actual;
 }
 
+/**
+ * One table cell. The eight-column contract is parsed by position, so a pipe
+ * or a newline inside an agent name or a model id would hand the retro seat a
+ * row of the wrong width; both are neutralised rather than dropped, because
+ * the value still has to read back as what it was.
+ */
 function cell(value: string | number | null | undefined): string {
   if (value === null || value === undefined) return "n/a";
   const text = typeof value === "number" ? String(value) : value.trim();
-  return text === "" ? "n/a" : text;
+  return text === "" ? "n/a" : markdownCell(text);
 }
 
 /**

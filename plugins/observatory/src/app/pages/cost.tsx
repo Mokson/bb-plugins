@@ -98,15 +98,24 @@ function FilterBar({
           ))}
         </select>
       </label>
-      <label className="flex items-center gap-1">
+      {/*
+        Disabled on purpose. `obs_thread` carries no host id, so anything typed
+        here narrowed nothing while looking like it did - a filter that silently
+        ignores you is worse than one that says it is not ready. The field stays
+        on the wire, so enabling it is a one-line change once core writes a host.
+      */}
+      <label
+        className="flex items-center gap-1 opacity-50"
+        title="no host id in the ledger yet"
+      >
         host
         <input
           className={SELECT_CLASS}
           value={filters.host}
           placeholder="all"
-          onChange={(event) =>
-            onChange({ ...filters, host: event.target.value })
-          }
+          disabled
+          title="no host id in the ledger yet"
+          onChange={() => undefined}
         />
       </label>
       <label className="flex items-center gap-1">
@@ -144,11 +153,9 @@ function ExportActions({ filters }: { filters: Filters }) {
             method: "POST",
             headers: { "content-type": "application/json" },
             credentials: "same-origin",
-            body: JSON.stringify({
-              range: filters.range,
-              group: filters.group,
-              format,
-            }),
+            // The export covers the slice on screen, so it carries the same
+            // narrowing fields the overview query does.
+            body: JSON.stringify({ ...overviewInput(filters), format }),
           },
         );
         const payload = (await response.json()) as {
@@ -285,10 +292,16 @@ function OverviewTable({
               onOpen={() => onOpenThread(row.key)}
             />
             <Num>{formatCount(row.turns)}</Num>
-            <Num>{formatTokens(row.inputTokens, row.estimated)}</Num>
-            <Num>{formatTokens(row.cacheReadTokens, row.estimated)}</Num>
-            <Num>{formatTokens(row.cacheWriteTokens, row.estimated)}</Num>
-            <Num>{formatTokens(row.outputTokens, row.estimated)}</Num>
+            {/*
+              `estimated` says the COST was inferred from a price list, not
+              that the tokens were. Token counts come from the provider's own
+              usage numbers, so marking them estimated claimed a measurement
+              was a guess. Only the dollar column takes the mark.
+            */}
+            <Num>{formatTokens(row.inputTokens)}</Num>
+            <Num>{formatTokens(row.cacheReadTokens)}</Num>
+            <Num>{formatTokens(row.cacheWriteTokens)}</Num>
+            <Num>{formatTokens(row.outputTokens)}</Num>
             <Num>{formatUsd(row.costUsd, row.estimated)}</Num>
           </tr>
         ))}
