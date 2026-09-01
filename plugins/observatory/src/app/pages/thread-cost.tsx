@@ -86,21 +86,21 @@ function TurnTable({ turns }: { turns: readonly TurnRow[] }) {
       <tbody>
         {turns.map((turn) => (
           <tr key={turn.turnId} className="border-t border-border">
-            <td className="h-6 py-0 tabular-nums">
+            <td className="h-6 whitespace-nowrap px-2 py-0 tabular-nums">
               {formatTime(turn.startedAt)}
             </td>
-            <td className="h-6 max-w-40 truncate py-0">
+            <td className="h-6 max-w-40 truncate whitespace-nowrap px-2 py-0">
               {turn.modelReported ?? turn.modelRequested ?? UNKNOWN}
             </td>
-            <td className="h-6 py-0">{turn.effort ?? UNKNOWN}</td>
+            <td className="h-6 whitespace-nowrap px-2 py-0">{turn.effort ?? UNKNOWN}</td>
             <Num>{formatDuration(turn.durationMs)}</Num>
             <Num>{formatTokens(turn.inputTokens)}</Num>
             <Num>{formatTokens(turn.cacheReadTokens)}</Num>
             <Num>{formatTokens(turn.cacheWriteTokens)}</Num>
             <Num>{formatTokens(turn.outputTokens)}</Num>
             <Num>{formatUsd(turn.costUsd)}</Num>
-            <td className="h-6 py-0">{turn.splitSource}</td>
-            <td className="h-6 max-w-40 truncate py-0 text-muted-foreground">
+            <td className="h-6 whitespace-nowrap px-2 py-0">{turn.splitSource}</td>
+            <td className="h-6 max-w-40 truncate whitespace-nowrap px-2 py-0 text-muted-foreground">
               {turn.flags.length === 0 ? UNKNOWN : turn.flags.join(" ")}
             </td>
           </tr>

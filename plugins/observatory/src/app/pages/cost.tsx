@@ -8,6 +8,7 @@ import { useCallback, useState } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  EstimateFootnote,
   Heading,
   Heroes,
   Num,
@@ -211,7 +212,7 @@ function RowLabel({
   onOpen: () => void;
 }) {
   return (
-    <td className="h-6 py-0">
+    <td className="h-6 px-2 py-0">
       <span
         className="flex items-center gap-1"
         style={{ paddingLeft: `${row.depth * 12}px` }}
@@ -341,6 +342,9 @@ export function CostOverview() {
             <OverviewTable
               overview={overview}
               onOpenThread={(threadId) => goTo(`threads/${threadId}`)}
+            />
+            <EstimateFootnote
+              show={overview.rows.some((row) => row.estimated)}
             />
             <button
               type="button"

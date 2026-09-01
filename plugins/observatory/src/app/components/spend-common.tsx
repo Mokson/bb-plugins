@@ -9,7 +9,7 @@
 // same in either theme and in a screenshot.
 import type { ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatUsd } from "@/lib/format";
+import { ESTIMATE_MARK, formatUsd } from "@/lib/format";
 import { ABSENT_MESSAGE, type SpendQuery } from "@/lib/spend-rpc";
 import type { SpendTotals } from "../../spend/contract.js";
 
@@ -104,7 +104,7 @@ export function QueryFrame<T>({
 /** The shape a page holds before its numbers arrive. */
 export function PageSkeleton() {
   return (
-    <div className="flex flex-col gap-3" data-testid="spend-skeleton">
+    <div className="flex flex-col gap-3">
       <div className="grid grid-cols-4 gap-6">
         {[0, 1, 2, 3].map((slot) => (
           <Skeleton key={slot} className="h-8 w-full rounded-[4px]" />
@@ -115,19 +115,33 @@ export function PageSkeleton() {
   );
 }
 
+/**
+ * The footnote PRODUCT invariant 27 pairs with the superscript mark. Rendered
+ * only when a table actually holds an estimate, so it never explains a symbol
+ * the reader cannot see.
+ */
+export function EstimateFootnote({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <p className="text-[11px] text-muted-foreground">
+      {ESTIMATE_MARK} estimated, calibrated against the first turn's cache write
+    </p>
+  );
+}
+
 /** A right-aligned numeric header cell carrying the column's unit. */
 export function NumHead({ children }: { children: ReactNode }) {
   return (
-    <th className="py-1 text-right font-normal tabular-nums">{children}</th>
+    <th className="whitespace-nowrap px-2 py-1 text-right font-normal tabular-nums">{children}</th>
   );
 }
 
 /** A left-aligned label header cell. */
 export function TextHead({ children }: { children: ReactNode }) {
-  return <th className="py-1 text-left font-normal">{children}</th>;
+  return <th className="whitespace-nowrap px-2 py-1 text-left font-normal">{children}</th>;
 }
 
 /** A right-aligned numeric body cell on a 24px row. */
 export function Num({ children }: { children: ReactNode }) {
-  return <td className="h-6 py-0 text-right tabular-nums">{children}</td>;
+  return <td className="h-6 whitespace-nowrap px-2 py-0 text-right tabular-nums">{children}</td>;
 }
