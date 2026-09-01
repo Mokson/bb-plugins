@@ -89,7 +89,18 @@ function StallTable({
   caption: string;
 }) {
   return (
-    <table className="w-full text-[13px]">
+    // Fixed layout, so the diagnostic is the column that gets cut rather than
+    // pushing the ones a reader scans first off the edge of a narrow panel.
+    <table className="w-full table-fixed text-[13px]">
+      <colgroup>
+        <col className="w-[20%]" />
+        <col className="w-[9ch]" />
+        <col className="w-[8ch]" />
+        <col className="w-[110px]" />
+        <col className="w-[18%]" />
+        <col className="w-[10ch]" />
+        <col />
+      </colgroup>
       <caption className="pb-1 text-left text-[11px] text-muted-foreground">
         {caption}
       </caption>
@@ -118,7 +129,7 @@ function StallTable({
             }
             onMouseEnter={() => onSelect(index)}
           >
-            <td className="h-6 max-w-56 truncate px-2 py-0">
+            <td className="h-6 truncate px-2 py-0">
               <button
                 type="button"
                 className="underline underline-offset-2"
@@ -136,7 +147,7 @@ function StallTable({
             <td className="h-6 px-2 py-0">
               <SilenceBar silentMs={row.silentMs} thresholdMs={thresholdMs} />
             </td>
-            <td className="h-6 max-w-48 truncate px-2 py-0">
+            <td className="h-6 truncate px-2 py-0">
               {row.inflight === null
                 ? UNKNOWN
                 : `${row.inflight.kind} ${row.inflight.name}`}
@@ -144,7 +155,7 @@ function StallTable({
             <td className="h-6 whitespace-nowrap px-2 py-0">
               {row.stage ?? UNKNOWN}
             </td>
-            <td className="h-6 max-w-96 truncate px-2 py-0 text-muted-foreground">
+            <td className="h-6 truncate px-2 py-0 text-muted-foreground">
               {row.diagnostic ?? UNKNOWN}
             </td>
           </tr>

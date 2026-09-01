@@ -64,7 +64,17 @@ function InboxTable({
   onRun: (row: InboxRow, action: InboxAction) => void;
 }) {
   return (
-    <table className="w-full text-[13px]">
+    // Fixed layout, because the evidence line is the only column that may be
+    // cut: in auto layout it wins the width fight and pushes the actions off
+    // the right edge of a narrow panel, which hides the row's whole point.
+    <table className="w-full table-fixed text-[13px]">
+      <colgroup>
+        <col className="w-[22%]" />
+        <col className="w-[18%]" />
+        <col />
+        <col className="w-[13ch]" />
+        <col className="w-[20ch]" />
+      </colgroup>
       <thead>
         <tr className="text-[11px] text-muted-foreground">
           <th className="px-2 py-1 text-left font-normal">thread or source</th>
@@ -86,11 +96,9 @@ function InboxTable({
             }
             onMouseEnter={() => onSelect(index)}
           >
-            <td className="h-6 max-w-64 truncate px-2 py-0">{row.title}</td>
-            <td className="h-6 whitespace-nowrap px-2 py-0">
-              {statusPhrase(row)}
-            </td>
-            <td className="h-6 max-w-96 truncate px-2 py-0 text-muted-foreground">
+            <td className="h-6 truncate px-2 py-0">{row.title}</td>
+            <td className="h-6 truncate px-2 py-0">{statusPhrase(row)}</td>
+            <td className="h-6 truncate px-2 py-0 text-muted-foreground">
               {row.subtitle}
             </td>
             <td className="h-6 whitespace-nowrap px-2 py-0 tabular-nums">

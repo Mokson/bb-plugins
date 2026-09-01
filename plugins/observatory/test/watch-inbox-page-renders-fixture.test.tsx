@@ -187,6 +187,7 @@ describe("the trajectory tab", () => {
     );
     expect(markers.join(" ")).toContain("LOOP");
     expect(markers.join(" ")).toContain("OSCILLATION");
+    expect(markers.join(" ")).toContain("CONTEXT RESET");
   });
 
   it("attributes waste per rule and says the column does not sum", async () => {

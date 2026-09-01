@@ -170,8 +170,9 @@ export function fixtureWatchExplain(): WatchExplain {
         id: "sig_fixture_4",
         kind: "prefix-changed",
         severity: "info",
+        // Spans the 09:11 turn, so the fixture exercises all three markers.
         openedAt: "2026-09-01T09:07:00.000Z",
-        closedAt: "2026-09-01T09:07:30.000Z",
+        closedAt: "2026-09-01T09:12:00.000Z",
         evidence: "request fingerprint changed: claude-opus-5 to claude-sonnet-5",
         payload: { from: "claude-opus-5", to: "claude-sonnet-5" },
       },
