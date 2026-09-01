@@ -65,7 +65,7 @@ describe("the Observatory panel", () => {
     slot.unmount();
   });
 
-  it("renders a placeholder on each of the seven non-inbox routes", async () => {
+  it("renders a heading on each non-inbox route", async () => {
     for (const route of ROUTES.filter((entry) => entry.id !== "")) {
       const { slot } = await mount(route.id);
       // A route with no heading is a blank page a later phase would inherit.
@@ -73,11 +73,16 @@ describe("the Observatory panel", () => {
     }
   });
 
-  it("lists every module on the inbox", async () => {
+  // The landing page is now the attention inbox, which belongs to the watch
+  // module. With only `observatory_status` registered it has no data, and it
+  // must say so rather than render zeros a reader would mistake for a
+  // measurement. The `unknown_method` half of that rule is covered in
+  // `watch-inbox-page-renders-fixture.test.tsx`.
+  it("shows no counts on the inbox when the watch rpc does not answer", async () => {
     const { slot } = await mount("");
-    for (const module of STATUS.modules) {
-      await slot.findByText(module.id);
-    }
+    await slot.findByRole("heading", { name: "Inbox" });
+    expect(slot.queryByText("watched")).toBeNull();
+    expect(slot.queryByText("stalled")).toBeNull();
     slot.unmount();
   });
 });

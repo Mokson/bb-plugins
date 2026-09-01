@@ -79,6 +79,43 @@ export function formatTime(value: string | null | undefined): string {
   }).format(date);
 }
 
+/**
+ * How long a thread has been silent, at the coarsest unit that still tells the
+ * reader something: seconds under a minute, whole minutes under an hour, hours
+ * and minutes above. A stall is judged in minutes, so `842s` would be precision
+ * nobody reads.
+ */
+export function formatSilence(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || !Number.isFinite(ms) || ms < 0) {
+    return UNKNOWN;
+  }
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
+}
+
+/**
+ * How full the silence timer bar is: silent time over the rule's threshold,
+ * clamped to 1. A thread three times over threshold still draws a full bar -
+ * the bar answers "is this past the line", and the exact number sits beside it.
+ */
+export function silenceRatio(
+  silentMs: number,
+  thresholdMs: number | null | undefined,
+): number {
+  if (
+    thresholdMs === null ||
+    thresholdMs === undefined ||
+    !Number.isFinite(thresholdMs) ||
+    thresholdMs <= 0
+  ) {
+    return 0;
+  }
+  return Math.max(0, Math.min(1, silentMs / thresholdMs));
+}
+
 /** A percentage for the cache-miss drop line. */
 export function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) {
