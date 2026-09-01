@@ -1,0 +1,180 @@
+// The ledger schema, as an ordered statement list.
+//
+// Append-only. `bb.storage.migrate` keys applied migrations by INDEX and
+// records each statement's hash, so a shipped statement is never reordered or
+// edited; a schema change is a new entry at the end.
+//
+// Only `ObservatoryStore` writes these tables. Every module other than core
+// reads them.
+
+export const MIGRATIONS: string[] = [
+  `CREATE TABLE IF NOT EXISTS obs_thread (
+     thread_id          TEXT PRIMARY KEY,
+     project_id         TEXT,
+     provider_id        TEXT,
+     provider_thread_id TEXT,
+     parent_thread_id   TEXT,
+     root_thread_id     TEXT,
+     depth              INTEGER NOT NULL DEFAULT 0,
+     title              TEXT,
+     seat               TEXT,
+     tier_tag           TEXT,
+     visibility         TEXT,
+     origin             TEXT,
+     run_folder         TEXT,
+     cwd                TEXT,
+     created_at         TEXT,
+     last_event_seq     INTEGER,
+     last_seen_at       TEXT,
+     status             TEXT
+   )`,
+  `CREATE INDEX IF NOT EXISTS obs_thread_root ON obs_thread (root_thread_id)`,
+  `CREATE INDEX IF NOT EXISTS obs_thread_provider
+     ON obs_thread (provider_id, provider_thread_id)`,
+  // `split_source` is CHECKed rather than trusted: a fabricated cache split is
+  // the one number this plugin must never invent, so "unavailable" has to be a
+  // value the schema itself admits.
+  `CREATE TABLE IF NOT EXISTS obs_turn (
+     thread_id           TEXT NOT NULL,
+     turn_id             TEXT NOT NULL,
+     root_thread_id      TEXT,
+     seq_started         INTEGER,
+     seq_completed       INTEGER,
+     started_at          TEXT,
+     completed_at        TEXT,
+     duration_ms         INTEGER,
+     model_requested     TEXT,
+     model_reported      TEXT,
+     effort              TEXT,
+     input_tokens        INTEGER,
+     cached_input_tokens INTEGER,
+     cache_read_tokens   INTEGER,
+     cache_write_tokens  INTEGER,
+     output_tokens       INTEGER,
+     reasoning_tokens    INTEGER,
+     context_used        INTEGER,
+     context_window      INTEGER,
+     cost_usd            REAL,
+     cost_source         TEXT,
+     pricing_status      TEXT,
+     cache_savings_usd   REAL,
+     tool_calls          INTEGER,
+     file_changes        INTEGER,
+     file_reads          INTEGER,
+     compacted           INTEGER,
+     error_category      TEXT,
+     will_retry          INTEGER,
+     split_source        TEXT CHECK (
+       split_source IN ('log-exact','log-window','sidechain','unavailable')
+     ),
+     PRIMARY KEY (thread_id, turn_id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS obs_turn_root ON obs_turn (root_thread_id)`,
+  `CREATE INDEX IF NOT EXISTS obs_turn_started ON obs_turn (started_at)`,
+  `CREATE TABLE IF NOT EXISTS obs_item (
+     item_id      TEXT PRIMARY KEY,
+     thread_id    TEXT NOT NULL,
+     turn_id      TEXT,
+     seq          INTEGER,
+     kind         TEXT,
+     name         TEXT,
+     status       TEXT,
+     started_at   TEXT,
+     completed_at TEXT,
+     duration_ms  INTEGER,
+     path         TEXT,
+     input_fingerprint TEXT,
+     error        TEXT
+   )`,
+  `CREATE INDEX IF NOT EXISTS obs_item_turn ON obs_item (thread_id, turn_id)`,
+  `CREATE TABLE IF NOT EXISTS obs_log_file (
+     path               TEXT PRIMARY KEY,
+     root_id            TEXT,
+     provider           TEXT,
+     size_bytes         INTEGER,
+     mtime_ms           INTEGER,
+     indexed_bytes      INTEGER,
+     indexed_lines      INTEGER,
+     parser_version     INTEGER,
+     content_hash       TEXT,
+     provider_thread_id TEXT,
+     indexed_at         TEXT,
+     parse_error        TEXT
+   )`,
+  `CREATE TABLE IF NOT EXISTS obs_log_turn (
+     log_key            TEXT PRIMARY KEY,
+     provider           TEXT,
+     provider_thread_id TEXT,
+     ts                 TEXT,
+     model              TEXT,
+     input              INTEGER,
+     cache_read         INTEGER,
+     cache_write        INTEGER,
+     output             INTEGER,
+     reasoning          INTEGER,
+     logged_cost_usd    REAL,
+     is_sidechain       INTEGER,
+     agent_id           TEXT,
+     cwd                TEXT,
+     skill_names        TEXT,
+     mcp_names          TEXT
+   )`,
+  `CREATE INDEX IF NOT EXISTS obs_log_turn_session
+     ON obs_log_turn (provider, provider_thread_id, ts)`,
+  `CREATE TABLE IF NOT EXISTS obs_match (
+     thread_id  TEXT NOT NULL,
+     turn_id    TEXT NOT NULL,
+     log_key    TEXT NOT NULL,
+     method     TEXT,
+     confidence REAL,
+     PRIMARY KEY (thread_id, turn_id)
+   )`,
+  // `dedupe_key` is the episode identity: opening the same signal twice is the
+  // normal case (every scan re-derives it), so the UNIQUE index is what makes
+  // `openSignal` idempotent rather than a caller-side existence check.
+  `CREATE TABLE IF NOT EXISTS obs_signal (
+     id         INTEGER PRIMARY KEY AUTOINCREMENT,
+     module     TEXT NOT NULL,
+     kind       TEXT NOT NULL,
+     thread_id  TEXT,
+     turn_id    TEXT,
+     severity   TEXT,
+     opened_at  TEXT NOT NULL,
+     closed_at  TEXT,
+     payload    TEXT,
+     dedupe_key TEXT NOT NULL
+   )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS obs_signal_dedupe
+     ON obs_signal (dedupe_key)`,
+  `CREATE INDEX IF NOT EXISTS obs_signal_open
+     ON obs_signal (module, closed_at)`,
+  `CREATE TABLE IF NOT EXISTS obs_action (
+     id        INTEGER PRIMARY KEY AUTOINCREMENT,
+     signal_id INTEGER,
+     thread_id TEXT,
+     action    TEXT NOT NULL,
+     at        TEXT NOT NULL,
+     detail    TEXT,
+     result    TEXT
+   )`,
+  `CREATE INDEX IF NOT EXISTS obs_action_signal ON obs_action (signal_id)`,
+  `CREATE TABLE IF NOT EXISTS pricing_catalog (
+     id         TEXT PRIMARY KEY,
+     revision   TEXT,
+     fetched_at TEXT,
+     data       TEXT
+   )`,
+  `CREATE TABLE IF NOT EXISTS obs_root (
+     id           TEXT PRIMARY KEY,
+     provider     TEXT,
+     path         TEXT,
+     kind         TEXT,
+     exists_flag  INTEGER,
+     last_scan_at TEXT,
+     error        TEXT
+   )`,
+  `CREATE TABLE IF NOT EXISTS obs_meta (
+     key   TEXT PRIMARY KEY,
+     value TEXT
+   )`,
+];
