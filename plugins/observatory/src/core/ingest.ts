@@ -77,6 +77,14 @@ export interface IngestOptions {
   catalog?: unknown;
   registry?: ThreadRegistry;
   now?: () => number;
+  /**
+   * Called after a thread's turns are committed, so a read-only analyzer runs
+   * on fresh rows instead of polling. Core stays the only writer of the
+   * ledger: a hook writes its own module's signals and nothing else. A throw
+   * is logged and swallowed, because an analyzer must never be able to stall
+   * the drain loop every other module is fed by.
+   */
+  onThreadCommitted?: (threadId: string) => void;
 }
 
 export interface Ingest {
@@ -256,6 +264,17 @@ export function createIngest(options: IngestOptions): Ingest {
     else rememberCarry(threadId, carry);
     counters.drains += 1;
     counters.lastDrainAt = new Date(now()).toISOString();
+    if (ingested > 0 && options.onThreadCommitted) {
+      try {
+        options.onThreadCommitted(threadId);
+      } catch (error) {
+        bb.log.warn(
+          `[core] commit hook for ${threadId} failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
     return ingested;
   }
 
