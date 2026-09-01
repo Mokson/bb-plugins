@@ -233,4 +233,46 @@ export const MIGRATIONS: string[] = [
   `CREATE INDEX IF NOT EXISTS obs_log_turn_session
      ON obs_log_turn (provider, provider_thread_id, ts)`,
   `CREATE INDEX IF NOT EXISTS obs_log_turn_path ON obs_log_turn (path)`,
+  // ---------------------------------------------------------------------
+  // Eval (phase 5). Three tables, all owned by `src/eval/`.
+  //
+  // `eval_run.cases_json` freezes the SELECTED case names at run time. A case
+  // file edited or deleted afterwards must not silently change what a past
+  // run claims it covered, and the case files live outside this repo.
+  //
+  // `eval_baseline` is keyed by case, not by (case, run): a baseline is the
+  // single number a gate compares against, and PRODUCT.md invariant 5 says it
+  // moves only through an explicit promote.
+  `CREATE TABLE IF NOT EXISTS eval_run (
+     id         TEXT PRIMARY KEY,
+     started_at TEXT,
+     finished_at TEXT,
+     tag        TEXT,
+     stack_sha  TEXT,
+     cases_json TEXT,
+     status     TEXT,
+     gate       TEXT
+   )`,
+  `CREATE INDEX IF NOT EXISTS eval_run_started ON eval_run (started_at)`,
+  // Trial is part of the key: a case with `trials: 3` stores three rows, and
+  // a variance number needs each one, not the last writer.
+  `CREATE TABLE IF NOT EXISTS eval_case_result (
+     run_id         TEXT NOT NULL,
+     "case"         TEXT NOT NULL,
+     trial          INTEGER NOT NULL,
+     status         TEXT,
+     assertions_json TEXT,
+     metrics_json   TEXT,
+     thread_id      TEXT,
+     artifacts_dir  TEXT,
+     PRIMARY KEY (run_id, "case", trial)
+   )`,
+  `CREATE INDEX IF NOT EXISTS eval_case_result_case
+     ON eval_case_result ("case")`,
+  `CREATE TABLE IF NOT EXISTS eval_baseline (
+     "case"       TEXT PRIMARY KEY,
+     run_id       TEXT,
+     metrics_json TEXT,
+     promoted_at  TEXT
+   )`,
 ];

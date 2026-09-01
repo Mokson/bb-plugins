@@ -55,6 +55,19 @@ import {
   loadUsageSnapshot,
   usagePreferences,
 } from "./spend/usage.js";
+// --- eval (part 1: cases, dry run, reads) ---
+import type { Database } from "better-sqlite3";
+import { evalContract } from "./eval/contract.js";
+import { EvalStore } from "./eval/store.js";
+import { EVAL_CLI_COMMANDS, EVAL_COMMAND, runEvalCommand } from "./eval/cli.js";
+import {
+  casesView,
+  loadCases,
+  runView,
+  runsView,
+  type EvalDeps,
+} from "./eval/views.js";
+// --- end eval ---
 import {
   CORE_MODULE_ID,
   ModuleRegistry,
@@ -517,6 +530,54 @@ export function createSpendModule(
   });
 }
 
+// ---------------------------------------------------------------------------
+// eval (part 1: cases, dry run, reads)
+//
+// Unlike spend, eval does NOT read the ledger: its inputs are case files under
+// `eval_casesDir` and its own three tables. So it needs no `CoreHandle`, and
+// it stays useful when core is disabled — `eval validate` is the check an
+// operator wants precisely when the rest of the plugin is unhappy.
+//
+// The runner, harvest, gate and baseline land in part 2 behind the seams in
+// `src/eval/{runner,gate,baseline}.ts`.
+// ---------------------------------------------------------------------------
+
+export interface EvalRuntime {
+  deps: EvalDeps;
+}
+
+export interface EvalHandle {
+  current: EvalRuntime | null;
+}
+
+export const DEFAULT_EVAL_CASES_DIR = "~/.agents/eval/cases";
+
+export function createEvalModule(
+  db: () => Database,
+  handle: EvalHandle,
+  settings: () => Promise<Record<string, string | boolean | undefined>>,
+): ObservatoryModule {
+  return defineModule({
+    id: "eval",
+    async setup(ctx) {
+      const values = await settings();
+      const configured = values["eval_casesDir"];
+      handle.current = {
+        deps: {
+          store: new EvalStore(db()),
+          casesDir:
+            typeof configured === "string" && configured.trim() !== ""
+              ? configured.trim()
+              : DEFAULT_EVAL_CASES_DIR,
+        },
+      };
+      ctx.bb.log.info("[eval] cases and dry run registered");
+    },
+  });
+}
+
+// --- end eval ---
+
 /**
  * The remaining modules are still stubs: they are read-only analyzers over the
  * ledger core writes, and they land in later phases behind these seams.
@@ -526,13 +587,16 @@ export function buildModules(
   settings: () => Promise<Record<string, string | boolean | undefined>>,
   spend: SpendHandle = { current: null },
   commitHooks: Array<(threadId: string) => void> = [],
+  evalModule?: { db: () => Database; handle: EvalHandle },
 ): readonly ObservatoryModule[] {
   return MODULE_IDS.map((id) =>
     id === CORE_MODULE_ID
       ? createCoreModule(handle, settings, commitHooks)
       : id === "spend"
         ? createSpendModule(handle, spend, settings, commitHooks)
-        : defineModule({
+        : id === "eval" && evalModule !== undefined
+          ? createEvalModule(evalModule.db, evalModule.handle, settings)
+          : defineModule({
             id,
             setup(ctx) {
               ctx.bb.log.info(`[${id}] registered`);
@@ -558,6 +622,11 @@ const USAGE = [
   "  cost-md    Write COST.md for a run folder: cost-md <runFolder>",
   "             [--snapshot final|mid-run] [--stdout]",
   "  cache-misses  Prefix drops and their cause: [--range 7d] [--thread <id>]",
+  // --- eval ---
+  "  eval       Deliver-stack regression cases: eval <list|validate|show|run>",
+  "             run --dry-run [--tag t] [--case n] [--keep]  provisions and",
+  "                      prints the plan; spawns nothing",
+  // --- end eval ---
 ].join("\n");
 
 export interface StatusDeps {
@@ -1066,13 +1135,19 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
 
   const core: CoreHandle = { current: null };
   const spend: SpendHandle = { current: null };
+  const evalHandle: EvalHandle = { current: null };
   const commitHooks: Array<(threadId: string) => void> = [];
   const registry = new ModuleRegistry({
     bb,
     db: () => db,
     settings: readSettings,
   });
-  await registry.register(buildModules(core, readSettings, spend, commitHooks));
+  await registry.register(
+    buildModules(core, readSettings, spend, commitHooks, {
+      db: () => db,
+      handle: evalHandle,
+    }),
+  );
 
   /** Every spend surface refuses rather than serving an empty page as a real one. */
   const spendDeps = () => {
@@ -1098,6 +1173,24 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
   bb.rpc.register(observatoryContract, {
     "observatory_status": () => status(),
   });
+
+  // --- eval (part 1: cases, dry run, reads) ---
+  /** Same refusal as spend: a disabled module serves nothing, not an empty page. */
+  const evalDeps = (): EvalDeps => {
+    const runtime = evalHandle.current;
+    if (!runtime) throw new Error("eval module is not running");
+    return runtime.deps;
+  };
+
+  bb.rpc.register(evalContract, {
+    "observatory_eval_cases": () => {
+      const deps = evalDeps();
+      return casesView(deps, loadCases(deps));
+    },
+    "observatory_eval_runs": ({ limit }) => runsView(evalDeps(), limit),
+    "observatory_eval_run": ({ runId }) => runView(evalDeps(), runId),
+  });
+  // --- end eval ---
 
   bb.rpc.register(spendContract, {
     "observatory_spend_overview": (input) => spendOverview(spendDeps(), input),
@@ -1225,6 +1318,9 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
           "Turns whose cached prefix stopped being reused, with the correlate that explains it.",
         usage: "bb observatory cache-misses [--range 7d] [--thread <threadId>]",
       },
+      // --- eval ---
+      ...EVAL_CLI_COMMANDS,
+      // --- end eval ---
     ],
     async run(argv) {
       const [command] = argv;
@@ -1258,6 +1354,15 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
         }
         return backfill(bb, runtime, argv.slice(1));
       }
+      // --- eval ---
+      if (command === EVAL_COMMAND) {
+        const runtime = evalHandle.current;
+        if (!runtime) {
+          return { exitCode: 1, stderr: "eval module is not running\n" };
+        }
+        return runEvalCommand(runtime.deps, argv.slice(1), db.name);
+      }
+      // --- end eval ---
       if (SPEND_COMMANDS.includes(command as SpendCommand)) {
         return runSpendCommand(spendDeps, command as SpendCommand, argv.slice(1));
       }
