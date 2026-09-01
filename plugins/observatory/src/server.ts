@@ -743,9 +743,12 @@ export function runAuditCommand(
     }
     const target = argv.find((entry) => !entry.startsWith("--"));
     if (!target) {
-      // Without a target this would silently report the sessions list, which
-      // is a different command; refusing is the honest answer.
-      return { exitCode: 1, stderr: "audit needs a thread id or run folder\n" };
+      // No target is the "which session" question, so it is answered rather
+      // than refused: the list is what a person picks an id out of.
+      const rows = auditSessions(resolved, parseRange(flagValue(argv, "range")));
+      return hasFlag(argv, "json")
+        ? { exitCode: 0, stdout: `${JSON.stringify(rows, null, 2)}\n` }
+        : { exitCode: 0, stdout: `${formatSessions(rows)}\n` };
     }
     // A run folder is a path, a thread id is not: nothing else distinguishes
     // the two, and asking the operator to say which would be a flag nobody
@@ -827,6 +830,7 @@ const USAGE = [
   "             [--thread <id>]  one thread's compaction estimate",
   "             [--json]",
   "  audit      One session against the 7d median: audit <threadId|runFolder>",
+  "             with no target, the sessions list: [--range 7d]",
   "             [--json] [--export]",
   "  failures   Failure signatures by count: [--range 7d] [--include-muted]",
   "  insights   Cost drivers, models and failure signatures: [--range 7d]",
@@ -1611,7 +1615,7 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
         summary:
           "One session's metrics against the 7-day median, its verification coverage and its unverified edits.",
         usage:
-          "bb observatory audit <threadId|runFolder> [--json] [--export]",
+          "bb observatory audit [<threadId|runFolder>] [--range 7d] [--json] [--export]",
       },
       {
         name: "failures",

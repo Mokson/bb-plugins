@@ -381,16 +381,13 @@ export function formatSurfaces(view: ContextView): string {
   for (const block of [...view.blocks].sort(
     (a, b) => b.estTokens - a.estTokens,
   )) {
-    const flags = [
-      block.duplicateOf ? "dup" : "",
-      block.dead ? "dead" : "",
-    ]
+    const flags = [block.duplicateOf ? "dup" : "", block.dead ? "dead" : ""]
       .filter(Boolean)
       .join(",");
     lines.push(
       `${block.surface.padEnd(12)} ${String(block.estTokens).padStart(
         8,
-      )} ${String(block.bytes).padStart(8)}  ${flags.padEnd(6)} ${block.name}`,
+      )} ${String(block.bytes).padStart(8)}  ${flags.padEnd(9)} ${block.name}`,
     );
   }
   return lines.join("\n");
