@@ -2,6 +2,12 @@
 // tab strip) can name routes without evaluating `@get-bb/plugin-sdk/app`
 // before the harness installs its runtime.
 
+/**
+ * The nav panel's path. It lives here rather than in `panel.tsx` so a page can
+ * navigate without importing the shell that renders it.
+ */
+export const PANEL_PATH = "observatory";
+
 /** The routes the tab strip offers. `""` is the inbox and is always first. */
 export const ROUTES = [
   { id: "", title: "Inbox" },
@@ -14,9 +20,11 @@ export const ROUTES = [
   { id: "settings", title: "Settings" },
 ] as const;
 
-/** What each not-yet-built route will hold, one line each. */
+/**
+ * What each not-yet-built route will hold, one line each. `cost` is absent:
+ * it is built, so a placeholder for it would be a second, wrong answer.
+ */
 export const PLACEHOLDERS: Record<string, string> = {
-  cost: "Cost, cache accounting and COST.md. Phase 1.",
   stalls: "Stall rules, the steer ladder and tree budget. Phases 2 and 3.",
   context: "Instruction, skill and MCP composition audit. Phase 4.",
   audit: "Session metrics, failure ledger and the audit pack. Phase 4.",
