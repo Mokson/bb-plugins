@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useLayoutEffect, useRef, type ReactNode } from "react";
 import type { PluginSidebarPullRequest } from "@get-bb/plugin-sdk/app";
 import { cn } from "../lib/utils";
 import { Glyph } from "../ui/Glyph";
@@ -109,8 +109,11 @@ export function SecondRow({
     });
   }
 
+  const lineRef = useEqualTruncation();
+
   return (
     <div
+      ref={lineRef}
       className={cn(
         // Whitespace alone divides the labels. Each one already carries its
         // own mark, and a dot between two marked labels stacks a second
@@ -144,6 +147,88 @@ export function SecondRow({
 const MARK_CLASS = cn(ROW2_ICON, "shrink-0");
 
 /**
+ * Equal truncation, not proportional.
+ *
+ * Flexbox splits a line's deficit in proportion to `flex-shrink ×
+ * flex-basis`, and with `flex-basis: auto` the basis is natural width, so
+ * the default contract loses the most from the longest label: a long branch
+ * starved while a short project kept every character. CSS alone cannot
+ * invert that weighting, because the basis is only known once the text is
+ * laid out. So it is measured: each pass unshrinks every label, reads its
+ * natural width, and gives back a shrink of `BASE / natural`, which makes
+ * every label's `shrink × basis` product the same — the same number of
+ * pixels comes off each one, however long it is.
+ *
+ * `MIN_LABEL_PX` is the floor where equal stops: the mark, one character and
+ * the ellipsis. Past that a short label would be erased outright, so flexbox
+ * freezes it at its min size and redistributes what it spared among the
+ * labels that still have room — still equally among themselves.
+ */
+const SHRINK_BASE = 1000;
+
+/** The mark (`size-2.5`), the mark-to-text gap, one character and the ellipsis. */
+const MIN_LABEL_PX = 28;
+
+/** The shrink weight that makes a label of `natural` px lose px equally. */
+export function equalShrinkWeight(natural: number): number {
+  return natural > 0 ? SHRINK_BASE / natural : 1;
+}
+
+/**
+ * Measures the line's labels and pins each one's equal-truncation weight.
+ *
+ * Runs after every render, with no dependency array: the labels and their
+ * text change between renders (settings, execution lookups) and each change
+ * needs a re-measure. A sidebar resize re-lays-out nothing in React, so a
+ * `ResizeObserver` on the line re-runs the same pass. Both paths run before
+ * paint, so the unconstrained pass-1 layout is never on screen.
+ */
+function useEqualTruncation() {
+  const lineRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const line = lineRef.current;
+    if (line === null) return;
+
+    const equalize = () => {
+      const labels = Array.from(
+        line.querySelectorAll<HTMLElement>("[data-better-sidebar-row2]"),
+      );
+
+      // Pass 1: unshrink everything, so each label is laid out at its own
+      // natural width and `offsetWidth` reports it. The reads in pass 2
+      // force the synchronous reflow that resolves it.
+      for (const el of labels) el.style.flexShrink = "0";
+
+      for (const el of labels) {
+        const natural = el.offsetWidth;
+        if (natural <= 0) {
+          // Nothing was laid out: a hidden row, or a test DOM with no
+          // layout engine. Fall back to the class default rather than pin
+          // a weight onto a guess.
+          el.style.flexShrink = "";
+          el.style.minWidth = "";
+          continue;
+        }
+        el.style.flexShrink = String(equalShrinkWeight(natural));
+        // `min()` keeps the floor from padding a label wider than its own
+        // content when the label is shorter than the floor already.
+        el.style.minWidth = `${Math.min(MIN_LABEL_PX, natural)}px`;
+      }
+    };
+
+    equalize();
+
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(equalize);
+    observer.observe(line);
+    return () => observer.disconnect();
+  });
+
+  return lineRef;
+}
+
+/**
  * One label on row 2: a mark, then text that truncates.
  *
  * Superseding B56.1 and B56.2, which between them made the branch the ONE
@@ -152,9 +237,11 @@ const MARK_CLASS = cn(ROW2_ICON, "shrink-0");
  * and the model — pinned `shrink-0` behind it — simply overflowed the panel
  * with nothing left to take the deficit.
  *
- * Every label is shrinkable now, and none of them caps its own width. With
- * `flex-basis: auto` the shrink factor is weighted by each label's natural
- * width, so the longest gives up the most and all three keep a readable head.
+ * Every label is shrinkable now, and none of them caps its own width. The
+ * split between them is `useEqualTruncation`'s: each label gives up the SAME
+ * number of pixels, however long it is, rather than the flex default of
+ * losing in proportion to natural width, so a long branch never starves a
+ * short project to a stub while it still has characters to spare.
  *
  * `min-w-0` on the label is what allows it below its content at all, and the
  * mark stays `shrink-0` so the text loses characters rather than the mark
