@@ -10,12 +10,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ObservatorySettings } from "./settings.js";
-import { PLACEHOLDERS, ROUTES } from "./routes.js";
+import { PANEL_PATH, PLACEHOLDERS, ROUTES } from "./routes.js";
 import { useStatus } from "./status.js";
+import { CostOverview } from "./cost.js";
+import { CostCache } from "./cost-cache.js";
+import { ThreadCost } from "./thread-cost.js";
 
-export const PANEL_PATH = "observatory";
-
-export { PLACEHOLDERS, ROUTES };
+export { PANEL_PATH, PLACEHOLDERS, ROUTES };
 
 function Heading({ title }: { title: string }) {
   return <h2 className="text-[16px] font-semibold">{title}</h2>;
@@ -89,9 +90,32 @@ function Inbox() {
   );
 }
 
+/**
+ * The route body for one `subPath`.
+ *
+ * Segments, not a matcher: the panel owns a handful of addresses and a table
+ * of string comparisons is easier to audit than a pattern language. The tab
+ * strip highlights the first segment, so `cost/cache` keeps Cost selected.
+ */
+function Route({ segments }: { segments: readonly string[] }) {
+  const [head, second, third] = segments;
+
+  if (head === undefined || head === "") return <Inbox />;
+  if (head === "settings") return <ObservatorySettings />;
+  if (head === "threads" && second !== undefined) {
+    return <ThreadCost threadId={second} />;
+  }
+  if (head === "cost") {
+    if (second === "cache") return <CostCache threadId={third} />;
+    return <CostOverview />;
+  }
+  return <Placeholder route={head} />;
+}
+
 export function ObservatoryPanel({ subPath }: PluginNavPanelProps) {
   const navigate = useBbNavigate();
-  const route = subPath.split("/")[0] ?? "";
+  const segments = subPath.split("/").filter((segment) => segment !== "");
+  const route = segments[0] ?? "";
   return (
     <div className="flex flex-col px-4 text-[13px]">
       <Tabs
@@ -108,13 +132,7 @@ export function ObservatoryPanel({ subPath }: PluginNavPanelProps) {
           ))}
         </TabsList>
       </Tabs>
-      {route === "" ? (
-        <Inbox />
-      ) : route === "settings" ? (
-        <ObservatorySettings />
-      ) : (
-        <Placeholder route={route} />
-      )}
+      <Route segments={segments} />
     </div>
   );
 }

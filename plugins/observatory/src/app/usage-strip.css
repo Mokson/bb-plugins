@@ -1,0 +1,470 @@
+.usage-tracker-sidebar {
+  --usage-sidebar-width: 11.25rem;
+  --usage-sidebar-surface: var(--sidebar, var(--background));
+  --usage-sidebar-raised: var(--popover, var(--card));
+  --usage-sidebar-text: var(--sidebar-foreground, var(--foreground));
+  --usage-sidebar-muted: var(--muted-foreground);
+  --usage-sidebar-line: var(--sidebar-border, var(--border));
+  --usage-sidebar-hover: var(--sidebar-accent, var(--muted));
+  --usage-sidebar-focus: var(--sidebar-ring, var(--ring));
+  --usage-sidebar-claude: #d97757;
+
+  /* Static on purpose: the details card is positioned against the footer. */
+  position: static;
+  width: var(--usage-sidebar-width);
+  min-width: 0;
+  max-width: var(--usage-sidebar-width);
+  flex: 0 1 var(--usage-sidebar-width);
+  align-self: center;
+  margin-left: auto;
+  /* inline-size containment zeroes an element's own content-based width, so
+   * the width above must stay definite for this to work. */
+  container: usage-strip / inline-size;
+  /* rem-based content against a px-based sidebar: at a large root font the
+   * strip can outgrow its box, and clipping beats shoving bb's own icons. */
+  overflow: hidden;
+  color: var(--usage-sidebar-text);
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-tracker-sidebar[data-provider-count="1"] {
+  --usage-sidebar-width: 6.5rem;
+}
+
+[data-collapsible="icon"] .usage-tracker-sidebar {
+  display: none;
+}
+
+/* bb's footer menu is `flex-row flex-wrap-reverse`, so a strip that no longer
+ * fits wraps onto a line above the footer icons. Keep the row intact and let
+ * the strip alone absorb the shortfall. */
+[data-sidebar="footer"] [data-sidebar="menu"]:has(> .usage-tracker-sidebar) {
+  flex-wrap: nowrap;
+}
+
+[data-sidebar="footer"]
+  [data-sidebar="menu"]:has(> .usage-tracker-sidebar)
+  > *:not(.usage-tracker-sidebar) {
+  flex: none;
+}
+
+/* Containing block for the details card; bb already sets this, asserted so the
+ * card cannot escape to the viewport if that ever changes. */
+[data-sidebar="footer"]:has(.usage-tracker-sidebar) {
+  position: relative;
+}
+
+.usage-tracker-sidebar button {
+  margin: 0;
+  border: 0;
+  appearance: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.usage-tracker-sidebar__strip {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: 2rem;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.1875rem;
+}
+
+.usage-tracker-sidebar__provider {
+  display: flex;
+  min-width: 0;
+  height: 2rem;
+  cursor: pointer;
+  align-items: center;
+  flex: 0 1 auto;
+  gap: 0.1875rem;
+  padding: 0 0.125rem;
+  border-radius: calc(var(--radius, 0.625rem) - 0.25rem);
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    opacity 140ms ease;
+}
+
+.usage-tracker-sidebar__provider:hover,
+.usage-tracker-sidebar__provider[aria-expanded="true"] {
+  background: var(--usage-sidebar-hover);
+}
+
+.usage-tracker-sidebar__provider[data-status]:not([data-status="ok"]) {
+  opacity: 0.78;
+}
+
+.usage-tracker-sidebar__provider:focus-visible,
+.usage-tracker-sidebar__refresh:focus-visible,
+.usage-tracker-sidebar__close:focus-visible,
+.usage-tracker-sidebar__windows:focus-visible {
+  outline: 2px solid var(--usage-sidebar-focus);
+  outline-offset: 1px;
+}
+
+.usage-tracker-sidebar__mark,
+.usage-tracker-sidebar__details-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Matches the weight of bb's own footer glyphs (16px at 0.8 opacity). */
+.usage-tracker-sidebar__mark {
+  width: 0.875rem;
+  height: 0.875rem;
+  opacity: 0.8;
+  color: color-mix(in srgb, var(--usage-sidebar-text) 82%, transparent);
+}
+
+.usage-tracker-sidebar__provider[data-provider="claudeCode"]
+  .usage-tracker-sidebar__mark,
+.usage-tracker-sidebar__details-mark[data-provider="claudeCode"] {
+  color: var(--usage-sidebar-claude);
+}
+
+.usage-tracker-sidebar__mark svg,
+.usage-tracker-sidebar__details-mark svg {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+
+.usage-tracker-sidebar__rail {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 0.3125rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--usage-sidebar-muted) 20%, transparent);
+}
+
+/* Lopsided shrink factor: the rail gives up space so the mark and the reading
+ * never have to. */
+.usage-tracker-sidebar__provider > .usage-tracker-sidebar__rail {
+  width: 1.25rem;
+  height: 0.25rem;
+  flex: 0 100 auto;
+}
+
+/* Past the point where the rail has anything useful left to show, drop it. The
+ * thresholds differ because a single-provider strip is itself narrower. */
+@container usage-strip (max-width: 10.75rem) {
+  .usage-tracker-sidebar__strip[data-provider-count="2"]
+    .usage-tracker-sidebar__provider
+    > .usage-tracker-sidebar__rail {
+    display: none;
+  }
+}
+
+@container usage-strip (max-width: 6rem) {
+  .usage-tracker-sidebar__strip[data-provider-count="1"]
+    .usage-tracker-sidebar__provider
+    > .usage-tracker-sidebar__rail {
+    display: none;
+  }
+}
+
+.usage-tracker-sidebar__rail[data-empty="true"] {
+  opacity: 0.5;
+}
+
+.usage-tracker-sidebar__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 0;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--usage-sidebar-text) 38%, transparent);
+  transition: width 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Hugs its text rather than filling a "100%"-wide box, which would leave a
+ * short reading padded away from its mark. */
+.usage-tracker-sidebar__reading {
+  width: max-content;
+  flex: none;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--usage-sidebar-text) 76%, transparent);
+  font-size: 0.6875rem;
+  font-weight: 550;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+/* Narrowest tier: spacing and type size stay put, and the refresh button pays
+ * the shortfall instead. The details card carries one of its own. */
+@container usage-strip (max-width: 8.5rem) {
+  .usage-tracker-sidebar__strip[data-provider-count="2"]
+    .usage-tracker-sidebar__refresh {
+    display: none;
+  }
+}
+
+@container usage-strip (max-width: 5rem) {
+  .usage-tracker-sidebar__strip[data-provider-count="1"]
+    .usage-tracker-sidebar__refresh {
+    display: none;
+  }
+}
+
+.usage-tracker-sidebar__refresh,
+.usage-tracker-sidebar__close {
+  display: inline-flex;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  border-radius: calc(var(--radius, 0.625rem) - 0.25rem);
+  color: var(--usage-sidebar-muted);
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    opacity 140ms ease;
+}
+
+.usage-tracker-sidebar__refresh {
+  width: 1.75rem;
+  height: 2rem;
+}
+
+.usage-tracker-sidebar__refresh:hover[aria-disabled="false"],
+.usage-tracker-sidebar__close:hover {
+  background: var(--usage-sidebar-hover);
+  color: var(--usage-sidebar-text);
+}
+
+.usage-tracker-sidebar__refresh[aria-disabled="true"] {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.usage-tracker-sidebar__refresh[data-error="true"] {
+  color: var(--destructive);
+}
+
+.usage-tracker-sidebar__refresh svg,
+.usage-tracker-sidebar__close svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+.usage-tracker-sidebar__refresh[data-loading="true"] svg {
+  animation: usage-tracker-sidebar-spin 800ms linear infinite;
+}
+
+/* Inset from the footer rather than sized by --sidebar-width: bb's resize
+ * handle changes the real panel width without updating that variable (it reads
+ * 256px on a 319px sidebar), which clipped the card's left edge. */
+.usage-tracker-sidebar__details {
+  position: absolute;
+  z-index: 60;
+  right: 0.5rem;
+  bottom: calc(100% + 0.375rem);
+  left: 0.5rem;
+  display: flex;
+  width: auto;
+  max-width: 18.9375rem;
+  max-height: min(30rem, calc(100vh - 6rem));
+  margin-left: auto;
+  container: usage-details / inline-size;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--usage-sidebar-line);
+  border-radius: var(--radius, 0.625rem);
+  background: var(--usage-sidebar-raised);
+  box-shadow: 0 1rem 2.5rem
+    color-mix(in srgb, var(--background) 68%, transparent);
+  animation: usage-tracker-sidebar-enter 120ms ease-out;
+}
+
+.usage-tracker-sidebar__details-header {
+  display: flex;
+  flex: none;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.625rem 0.625rem 0.5rem;
+  border-bottom: 1px solid var(--usage-sidebar-line);
+}
+
+.usage-tracker-sidebar__details-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.125rem;
+}
+
+.usage-tracker-sidebar__details-actions .usage-tracker-sidebar__refresh,
+.usage-tracker-sidebar__details-actions .usage-tracker-sidebar__close {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.usage-tracker-sidebar__details-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.usage-tracker-sidebar__details-mark {
+  width: 1rem;
+  height: 1rem;
+}
+
+.usage-tracker-sidebar__details-identity > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.0625rem;
+}
+
+.usage-tracker-sidebar__details-identity strong {
+  overflow: hidden;
+  font-size: 0.75rem;
+  font-weight: 650;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-tracker-sidebar__details-identity span {
+  color: var(--usage-sidebar-muted);
+  font-size: 0.625rem;
+  line-height: 1.2;
+}
+
+.usage-tracker-sidebar__close {
+  width: 1.5rem;
+  height: 1.5rem;
+  flex: none;
+}
+
+.usage-tracker-sidebar__windows {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.usage-tracker-sidebar__window {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.375rem;
+  padding: 0.625rem;
+}
+
+.usage-tracker-sidebar__window:nth-child(2) {
+  border-left: 1px solid var(--usage-sidebar-line);
+}
+
+/* Stack the side-by-side windows once the card follows a narrow sidebar down. */
+@container usage-details (max-width: 15rem) {
+  .usage-tracker-sidebar__windows {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .usage-tracker-sidebar__window:nth-child(2) {
+    border-top: 1px solid var(--usage-sidebar-line);
+    border-left: 0;
+  }
+}
+
+.usage-tracker-sidebar__window:nth-child(n + 3) {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--usage-sidebar-line);
+}
+
+.usage-tracker-sidebar__window-heading {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.375rem;
+  color: var(--usage-sidebar-muted);
+  font-size: 0.625rem;
+  line-height: 1.2;
+}
+
+.usage-tracker-sidebar__window-heading > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.usage-tracker-sidebar__window-heading strong {
+  flex: none;
+  color: var(--usage-sidebar-text);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.usage-tracker-sidebar__window > .usage-tracker-sidebar__rail {
+  height: 0.25rem;
+}
+
+.usage-tracker-sidebar__reset {
+  color: var(--usage-sidebar-muted);
+  font-size: 0.5625rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.usage-tracker-sidebar__message {
+  margin: 0;
+  padding: 0.5rem 0.625rem;
+  border-top: 1px solid var(--usage-sidebar-line);
+  color: var(--usage-sidebar-muted);
+  font-size: 0.625rem;
+  line-height: 1.4;
+}
+
+@keyframes usage-tracker-sidebar-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes usage-tracker-sidebar-enter {
+  from {
+    transform: translateY(0.1875rem);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .usage-tracker-sidebar__fill,
+  .usage-tracker-sidebar__provider,
+  .usage-tracker-sidebar__refresh,
+  .usage-tracker-sidebar__close {
+    transition: none;
+  }
+
+  .usage-tracker-sidebar__refresh[data-loading="true"] svg,
+  .usage-tracker-sidebar__details {
+    animation: none;
+  }
+}
+
+/*
+ * Today's spend, appended by Observatory. It reuses the strip's own reading
+ * type so the dollar figure sits on the same baseline as the percentages
+ * rather than reading as a second widget bolted on the end.
+ */
+.usage-tracker-sidebar__spend {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0 0.25rem;
+}

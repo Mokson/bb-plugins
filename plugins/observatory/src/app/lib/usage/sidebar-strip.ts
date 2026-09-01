@@ -1,0 +1,824 @@
+import {
+  formatResetTime,
+  formatUsedPercent,
+  providerStatusLabel,
+  type ProviderUsage,
+  type UsageSnapshot,
+  type UsageWindow,
+} from "./usage.js";
+import {
+  normalizeCompactLimitOption,
+  SIDEBAR_PROVIDER_IDS,
+  type CompactLimitOption,
+  type SidebarProviderId,
+} from "./preferences.js";
+import { providerMark } from "./provider-marks.js";
+import {
+  mergeLastKnownWindows,
+  selectSidebarUsagePrimary,
+  sidebarUsageDetailRows,
+  sidebarUsagePrimaryAccessibleText,
+  sidebarUsagePrimarySelectionSummary,
+} from "./sidebar-usage.js";
+
+// Absorbed from `bb-plugins/plugins/usage-tracker/lib/sidebar-strip.ts` (MIT).
+//
+// Three changes and no more, so a user switching plugins loses nothing:
+//   1. the rpc endpoints address this plugin,
+//   2. the root attribute is this plugin's, so both strips can coexist during
+//      a migration without fighting over one node,
+//   3. today's spend is appended to the strip from `observatory_spend_today`.
+// The localStorage keys are deliberately unchanged: they carry the user's
+// enabled providers and compact-limit choice, and renaming them would silently
+// reset both.
+const ROOT_ATTRIBUTE = "data-observatory-sidebar";
+const RPC_BASE = "/api/v1/plugins/observatory/rpc";
+const SPEND_CACHE_KEY = "bb:observatory:sidebar:today";
+const CACHE_KEY = "bb:usage-tracker:sidebar:last-known";
+const PREFERENCES_CACHE_KEY = "bb:usage-tracker:sidebar:enabled-providers";
+const COMPACT_LIMIT_CACHE_KEY = "bb:usage-tracker:sidebar:compact-limit";
+const AUTO_REFRESH_MS = 5 * 60_000;
+const PREFERENCES_REFRESH_MS = 5_000;
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+const DETAILS_ID_PREFIX = "usage-tracker-sidebar-details";
+
+interface RpcEnvelope<T> {
+  ok: boolean;
+  result?: T;
+  error?: { message?: string };
+}
+
+interface PreferencesResult {
+  enabledProviderIds: SidebarProviderId[];
+  compactLimit: CompactLimitOption;
+}
+
+type SidebarFocusTarget =
+  | { kind: "provider"; providerId: SidebarProviderId }
+  | { kind: "close" }
+  | { kind: "windows" }
+  | { kind: "refresh" }
+  | null;
+
+function element<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  className?: string,
+  text?: string,
+): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag);
+  if (className !== undefined) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function providerGlyph(providerId: SidebarProviderId): SVGSVGElement {
+  const mark = providerMark(providerId);
+  const svg = document.createElementNS(SVG_NAMESPACE, "svg");
+  svg.setAttribute("viewBox", mark.viewBox);
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  if (mark.fillRule !== undefined) svg.setAttribute("fill-rule", mark.fillRule);
+  const path = document.createElementNS(SVG_NAMESPACE, "path");
+  path.setAttribute("d", mark.path);
+  svg.append(path);
+  return svg;
+}
+
+function refreshGlyph(): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NAMESPACE, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.8");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  const path = document.createElementNS(SVG_NAMESPACE, "path");
+  path.setAttribute("d", "M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.7-2.5L20 11M4 13l2.2 4.5A7 7 0 0 0 18 15");
+  svg.append(path);
+  return svg;
+}
+
+function closeGlyph(): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NAMESPACE, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.8");
+  svg.setAttribute("stroke-linecap", "round");
+  const first = document.createElementNS(SVG_NAMESPACE, "path");
+  first.setAttribute("d", "M7 7l10 10");
+  const second = document.createElementNS(SVG_NAMESPACE, "path");
+  second.setAttribute("d", "M17 7L7 17");
+  svg.append(first, second);
+  return svg;
+}
+
+/** What `observatory_spend_today` returns, as the strip needs it. */
+interface SpendTodayResult {
+  spendUsd: number;
+  turns: number;
+  threads: number;
+  updatedAt: string;
+}
+
+function isSpendToday(value: unknown): value is SpendTodayResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as SpendTodayResult).spendUsd === "number" &&
+    Number.isFinite((value as SpendTodayResult).spendUsd)
+  );
+}
+
+function readCachedSpend(): SpendTodayResult | null {
+  try {
+    const value: unknown = JSON.parse(
+      localStorage.getItem(SPEND_CACHE_KEY) ?? "null",
+    );
+    return isSpendToday(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function cacheSpend(spend: SpendTodayResult): void {
+  try {
+    localStorage.setItem(SPEND_CACHE_KEY, JSON.stringify(spend));
+  } catch {
+    // Storage is an optimization. The live number still loads without it.
+  }
+}
+
+function formatSpendUsd(value: number): string {
+  return `$${value.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function emptyProvider(providerId: SidebarProviderId): ProviderUsage {
+  return {
+    id: providerId,
+    name: providerId === "codex" ? "Codex" : "Claude Code",
+    status: "error",
+    accountEmail: null,
+    planLabel: null,
+    message: "Usage is loading.",
+    windows: [],
+  };
+}
+
+function readCachedSnapshot(): UsageSnapshot | null {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(CACHE_KEY) ?? "null");
+    if (
+      value === null ||
+      typeof value !== "object" ||
+      !Array.isArray((value as Partial<UsageSnapshot>).providers)
+    ) {
+      return null;
+    }
+    return value as UsageSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+function cacheSnapshot(snapshot: UsageSnapshot): void {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(snapshot));
+  } catch {
+    // Storage is an optimization. The live strip still works without it.
+  }
+}
+
+function isSidebarProviderId(value: unknown): value is SidebarProviderId {
+  return SIDEBAR_PROVIDER_IDS.some((providerId) => providerId === value);
+}
+
+function detailsId(providerId: string): string {
+  return `${DETAILS_ID_PREFIX}-${providerId}`;
+}
+
+function activeSidebarFocusTarget(root: HTMLElement): SidebarFocusTarget {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement) || !root.contains(active)) return null;
+  if (active.classList.contains("usage-tracker-sidebar__close")) {
+    return { kind: "close" };
+  }
+  if (active.classList.contains("usage-tracker-sidebar__windows")) {
+    return { kind: "windows" };
+  }
+  if (active.classList.contains("usage-tracker-sidebar__refresh")) {
+    return { kind: "refresh" };
+  }
+  if (isSidebarProviderId(active.dataset.provider)) {
+    return { kind: "provider", providerId: active.dataset.provider };
+  }
+  return null;
+}
+
+function focusSidebarTarget(
+  root: HTMLElement,
+  target: Exclude<SidebarFocusTarget, null>,
+): boolean {
+  let element: HTMLElement | null;
+  switch (target.kind) {
+    case "provider":
+      element =
+        Array.from(
+          root.querySelectorAll<HTMLElement>(
+            ".usage-tracker-sidebar__provider",
+          ),
+        ).find((candidate) => candidate.dataset.provider === target.providerId) ??
+        null;
+      break;
+    case "close":
+      element = root.querySelector<HTMLElement>(
+        ".usage-tracker-sidebar__close",
+      );
+      break;
+    case "windows":
+      element = root.querySelector<HTMLElement>(
+        ".usage-tracker-sidebar__windows",
+      );
+      break;
+    case "refresh":
+      element = root.querySelector<HTMLElement>(
+        ".usage-tracker-sidebar__refresh",
+      );
+      break;
+  }
+  element?.focus({ preventScroll: true });
+  return element !== null && document.activeElement === element;
+}
+
+function readCachedProviderIds(): SidebarProviderId[] {
+  try {
+    const value: unknown = JSON.parse(
+      localStorage.getItem(PREFERENCES_CACHE_KEY) ?? "null",
+    );
+    if (
+      !Array.isArray(value) ||
+      value.some((providerId) => !isSidebarProviderId(providerId)) ||
+      new Set(value).size !== value.length
+    ) {
+      return [...SIDEBAR_PROVIDER_IDS];
+    }
+    return SIDEBAR_PROVIDER_IDS.filter((providerId) =>
+      value.includes(providerId),
+    );
+  } catch {
+    return [...SIDEBAR_PROVIDER_IDS];
+  }
+}
+
+function cacheProviderIds(providerIds: readonly SidebarProviderId[]): void {
+  try {
+    localStorage.setItem(PREFERENCES_CACHE_KEY, JSON.stringify(providerIds));
+  } catch {
+    // Storage is an optimization. Preferences are still refreshed live.
+  }
+}
+
+function readCachedCompactLimit(): CompactLimitOption {
+  try {
+    const value: unknown = JSON.parse(
+      localStorage.getItem(COMPACT_LIMIT_CACHE_KEY) ?? "null",
+    );
+    return normalizeCompactLimitOption(value);
+  } catch {
+    return "Weekly";
+  }
+}
+
+function cacheCompactLimit(compactLimit: CompactLimitOption): void {
+  try {
+    localStorage.setItem(COMPACT_LIMIT_CACHE_KEY, JSON.stringify(compactLimit));
+  } catch {
+    // Storage is an optimization. Preferences are still refreshed live.
+  }
+}
+
+function mergeSnapshot(
+  current: UsageSnapshot,
+  previous: UsageSnapshot | null,
+): UsageSnapshot {
+  return {
+    ...current,
+    providers: current.providers.map((provider) =>
+      mergeLastKnownWindows(
+        provider,
+        previous?.providers.find((candidate) => candidate.id === provider.id),
+      ),
+    ),
+  };
+}
+
+function progressRail(window: UsageWindow | null): HTMLSpanElement {
+  const rail = element("span", "usage-tracker-sidebar__rail");
+  const fill = element("span", "usage-tracker-sidebar__fill");
+  fill.style.width = `${window?.barPercent ?? 0}%`;
+  if (window === null) rail.dataset.empty = "true";
+  rail.append(fill);
+  return rail;
+}
+
+function detailWindowRow(
+  label: string,
+  window: UsageWindow | null,
+): HTMLDivElement {
+  const row = element("div", "usage-tracker-sidebar__window");
+  const heading = element("div", "usage-tracker-sidebar__window-heading");
+  heading.append(
+    element("span", undefined, label),
+    element(
+      "strong",
+      undefined,
+      window === null ? "—" : `${formatUsedPercent(window.usedPercent)}%`,
+    ),
+  );
+  row.append(heading, progressRail(window));
+  row.append(
+    element(
+      "span",
+      "usage-tracker-sidebar__reset",
+      window === null ? "No limit reported" : formatResetTime(window.resetsAt),
+    ),
+  );
+  return row;
+}
+
+function detailsCard(
+  provider: ProviderUsage,
+  onClose: () => void,
+  refresh: HTMLButtonElement,
+): HTMLDivElement {
+  const card = element("div", "usage-tracker-sidebar__details");
+  card.id = detailsId(provider.id);
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-label", `${provider.name} usage limits`);
+
+  const header = element("div", "usage-tracker-sidebar__details-header");
+  const identity = element("div", "usage-tracker-sidebar__details-identity");
+  const mark = element("span", "usage-tracker-sidebar__details-mark");
+  mark.dataset.provider = provider.id;
+  mark.append(providerGlyph(provider.id as SidebarProviderId));
+  const title = element("div");
+  title.append(
+    element("strong", undefined, provider.name),
+    element(
+      "span",
+      undefined,
+      provider.status === "ok"
+        ? "Subscription usage"
+        : providerStatusLabel(provider.status),
+    ),
+  );
+  identity.append(mark, title);
+
+  const close = element("button", "usage-tracker-sidebar__close");
+  close.type = "button";
+  close.setAttribute("aria-label", "Close usage details");
+  close.append(closeGlyph());
+  close.addEventListener("click", onClose);
+  // The strip drops its own refresh button on a narrow sidebar, so the card
+  // carries one and keeps the action reachable at any width.
+  const actions = element("div", "usage-tracker-sidebar__details-actions");
+  actions.append(refresh, close);
+  header.append(identity, actions);
+
+  const windows = element("div", "usage-tracker-sidebar__windows");
+  windows.tabIndex = 0;
+  windows.setAttribute("role", "region");
+  windows.setAttribute("aria-label", `${provider.name} usage windows`);
+  windows.append(
+    ...sidebarUsageDetailRows(provider).map(({ label, window }) =>
+      detailWindowRow(label, window),
+    ),
+  );
+  card.append(header, windows);
+
+  if (provider.status !== "ok" && provider.message !== null) {
+    const message = element(
+      "p",
+      "usage-tracker-sidebar__message",
+      provider.message,
+    );
+    if (provider.windows.length > 0) message.prepend("Last known values · ");
+    card.append(message);
+  }
+
+  return card;
+}
+
+function visibleSidebarFooterMenu(): HTMLElement | null {
+  const footers = Array.from(
+    document.querySelectorAll<HTMLElement>('[data-sidebar="footer"]'),
+  );
+  const footer =
+    footers.find((footer) => footer.getClientRects().length > 0) ??
+    footers[0] ??
+    null;
+  return footer?.querySelector<HTMLElement>('[data-sidebar="menu"]') ?? null;
+}
+
+export function mountSidebarUsageStrip(signal: AbortSignal): () => void {
+  let root: HTMLLIElement | null = null;
+  let lastKnownSnapshot = readCachedSnapshot();
+  let currentSnapshot: UsageSnapshot | null = null;
+  let enabledProviderIds = readCachedProviderIds();
+  let compactLimit = readCachedCompactLimit();
+  let selectedProviderId: SidebarProviderId | null = null;
+  let isLoading = false;
+  let isLoadingPreferences = false;
+  let lastError: string | null = null;
+  let lastLoadedAt = 0;
+  let spendToday = readCachedSpend();
+  let requestController: AbortController | null = null;
+  let preferencesRequestController: AbortController | null = null;
+  let spendRequestController: AbortController | null = null;
+  let ensureFrame: number | null = null;
+  let requestedFocus: SidebarFocusTarget = null;
+  let disposed = false;
+
+  const providerFor = (providerId: SidebarProviderId): ProviderUsage =>
+    lastKnownSnapshot?.providers.find(
+      (provider) => provider.id === providerId,
+    ) ??
+    emptyProvider(providerId);
+
+  const refreshButton = (): HTMLButtonElement => {
+    const refresh = element("button", "usage-tracker-sidebar__refresh");
+    refresh.type = "button";
+    refresh.setAttribute("aria-disabled", String(isLoading));
+    refresh.dataset.loading = String(isLoading);
+    if (lastError !== null) refresh.dataset.error = "true";
+    refresh.setAttribute(
+      "aria-label",
+      isLoading ? "Refreshing agent usage" : "Refresh agent usage",
+    );
+    refresh.title = lastError ?? "Refresh agent usage";
+    refresh.append(refreshGlyph());
+    refresh.addEventListener("click", () => void load());
+    return refresh;
+  };
+
+  const render = (): void => {
+    if (root === null) return;
+    const focusTarget = requestedFocus ?? activeSidebarFocusTarget(root);
+    requestedFocus = null;
+    const previousDialog = root.querySelector<HTMLElement>(
+      ".usage-tracker-sidebar__details",
+    );
+    const previousWindows = root.querySelector<HTMLElement>(
+      ".usage-tracker-sidebar__windows",
+    );
+    const previousScrollTop =
+      selectedProviderId !== null &&
+      previousDialog?.id === detailsId(selectedProviderId)
+        ? (previousWindows?.scrollTop ?? 0)
+        : 0;
+    root.dataset.providerCount = String(enabledProviderIds.length);
+    // Today's spend is this plugin's own reading, so it survives a user who
+    // turned every provider limit off.
+    root.hidden = enabledProviderIds.length === 0 && spendToday === null;
+    if (root.hidden) {
+      root.replaceChildren();
+      return;
+    }
+    const content: Node[] = [];
+
+    if (selectedProviderId !== null) {
+      const providerId = selectedProviderId;
+      content.push(
+        detailsCard(
+          providerFor(providerId),
+          () => {
+            selectedProviderId = null;
+            requestedFocus = { kind: "provider", providerId };
+            render();
+          },
+          refreshButton(),
+        ),
+      );
+    }
+
+    const strip = element("div", "usage-tracker-sidebar__strip");
+    strip.dataset.providerCount = String(enabledProviderIds.length);
+    strip.setAttribute("role", "group");
+    strip.setAttribute("aria-label", "Agent usage limits");
+
+    for (const providerId of enabledProviderIds) {
+      const provider = providerFor(providerId);
+      const currentProvider = currentSnapshot?.providers.find(
+        (candidate) => candidate.id === providerId,
+      );
+      const primary = selectSidebarUsagePrimary(
+        currentProvider,
+        provider,
+        compactLimit,
+      );
+      const primaryAccessibleText = sidebarUsagePrimaryAccessibleText(
+        provider.name,
+        compactLimit,
+        primary,
+        selectedProviderId === providerId,
+      );
+      const button = element("button", "usage-tracker-sidebar__provider");
+      button.type = "button";
+      button.dataset.provider = providerId;
+      button.dataset.status = provider.status;
+      button.setAttribute("aria-haspopup", "dialog");
+      button.setAttribute("aria-controls", detailsId(providerId));
+      button.setAttribute(
+        "aria-expanded",
+        String(selectedProviderId === providerId),
+      );
+      button.setAttribute("aria-label", primaryAccessibleText);
+      button.title = primaryAccessibleText;
+
+      const mark = element("span", "usage-tracker-sidebar__mark");
+      mark.append(providerGlyph(providerId));
+      const reading = element(
+        "span",
+        "usage-tracker-sidebar__reading",
+        isLoading && lastKnownSnapshot === null
+          ? "…"
+          : sidebarUsagePrimarySelectionSummary(primary),
+      );
+      button.append(mark, progressRail(primary.window), reading);
+      button.addEventListener("click", () => {
+        const isClosing = selectedProviderId === providerId;
+        selectedProviderId = isClosing ? null : providerId;
+        requestedFocus = isClosing
+          ? { kind: "provider", providerId }
+          : { kind: "close" };
+        render();
+      });
+      strip.append(button);
+    }
+
+    if (spendToday !== null) {
+      const spend = element("span", "usage-tracker-sidebar__spend");
+      spend.dataset.observatorySpend = "";
+      spend.title = `Observatory: ${spendToday.turns} turns across ${spendToday.threads} threads today`;
+      spend.append(
+        element("span", "usage-tracker-sidebar__reading", formatSpendUsd(spendToday.spendUsd)),
+      );
+      strip.append(spend);
+    }
+
+    strip.append(refreshButton());
+    content.push(strip);
+    root.replaceChildren(...content);
+    const nextWindows = root.querySelector<HTMLElement>(
+      ".usage-tracker-sidebar__windows",
+    );
+    if (nextWindows !== null) nextWindows.scrollTop = previousScrollTop;
+    if (focusTarget !== null) focusSidebarTarget(root, focusTarget);
+  };
+
+  const ensureMounted = (): void => {
+    if (disposed) return;
+    const footerMenu = visibleSidebarFooterMenu();
+    if (footerMenu === null) {
+      root?.remove();
+      root = null;
+      return;
+    }
+    if (root !== null && root.parentElement === footerMenu) return;
+    root?.remove();
+    root = element("li", "usage-tracker-sidebar");
+    root.setAttribute(ROOT_ATTRIBUTE, "");
+    root.setAttribute("data-sidebar", "menu-item");
+    footerMenu.append(root);
+    render();
+  };
+
+  const scheduleEnsureMounted = (): void => {
+    if (ensureFrame !== null || disposed) return;
+    ensureFrame = requestAnimationFrame(() => {
+      ensureFrame = null;
+      ensureMounted();
+    });
+  };
+
+  const load = async (): Promise<void> => {
+    if (isLoading || disposed) return;
+    isLoading = true;
+    lastError = null;
+    render();
+    requestController = new AbortController();
+    const abortRequest = () => requestController?.abort();
+    signal.addEventListener("abort", abortRequest, { once: true });
+
+    try {
+      const response = await fetch(
+        `${RPC_BASE}/observatory_usage`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ threadId: null }),
+          credentials: "same-origin",
+          signal: requestController.signal,
+        },
+      );
+      const payload = (await response.json()) as RpcEnvelope<UsageSnapshot>;
+      if (!response.ok || !payload.ok || payload.result === undefined) {
+        throw new Error(payload.error?.message ?? "Usage is unavailable.");
+      }
+      currentSnapshot = payload.result;
+      lastKnownSnapshot = mergeSnapshot(currentSnapshot, lastKnownSnapshot);
+      cacheSnapshot(lastKnownSnapshot);
+      lastLoadedAt = Date.now();
+    } catch (error) {
+      if (!requestController.signal.aborted) {
+        lastError = error instanceof Error ? error.message : "Usage is unavailable.";
+      }
+    } finally {
+      signal.removeEventListener("abort", abortRequest);
+      requestController = null;
+      isLoading = false;
+      render();
+    }
+  };
+
+  /**
+   * Today's spend. Failure is silent by design: the strip's job is provider
+   * limits, and a spend module that is not running yet must not turn the
+   * sidebar into an error surface. The chip simply does not appear.
+   */
+  const loadSpend = async (): Promise<void> => {
+    if (disposed || spendRequestController !== null) return;
+    spendRequestController = new AbortController();
+    const abortRequest = () => spendRequestController?.abort();
+    signal.addEventListener("abort", abortRequest, { once: true });
+
+    try {
+      const response = await fetch(`${RPC_BASE}/observatory_spend_today`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+        credentials: "same-origin",
+        signal: spendRequestController.signal,
+      });
+      const payload = (await response.json()) as RpcEnvelope<unknown>;
+      if (!response.ok || !payload.ok || !isSpendToday(payload.result)) return;
+      spendToday = payload.result;
+      cacheSpend(spendToday);
+      render();
+    } catch {
+      // Keep the last-known number while the local server reconnects.
+    } finally {
+      signal.removeEventListener("abort", abortRequest);
+      spendRequestController = null;
+    }
+  };
+
+  const syncPreferences = async (): Promise<void> => {
+    if (isLoadingPreferences || disposed) return;
+    isLoadingPreferences = true;
+    preferencesRequestController = new AbortController();
+    const abortRequest = () => preferencesRequestController?.abort();
+    signal.addEventListener("abort", abortRequest, { once: true });
+
+    try {
+      const response = await fetch(
+        `${RPC_BASE}/observatory_usage_preferences`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "null",
+          credentials: "same-origin",
+          signal: preferencesRequestController.signal,
+        },
+      );
+      const payload = (await response.json()) as RpcEnvelope<PreferencesResult>;
+      if (!response.ok || !payload.ok || payload.result === undefined) return;
+
+      const nextProviderIds = SIDEBAR_PROVIDER_IDS.filter((providerId) =>
+        payload.result?.enabledProviderIds.includes(providerId),
+      );
+      const nextCompactLimit = normalizeCompactLimitOption(
+        payload.result.compactLimit,
+      );
+      const newlyEnabled = nextProviderIds.some(
+        (providerId) => !enabledProviderIds.includes(providerId),
+      );
+      const changed =
+        nextCompactLimit !== compactLimit ||
+        nextProviderIds.length !== enabledProviderIds.length ||
+        nextProviderIds.some(
+          (providerId, index) => providerId !== enabledProviderIds[index],
+        );
+      if (!changed) return;
+
+      enabledProviderIds = nextProviderIds;
+      compactLimit = nextCompactLimit;
+      if (
+        selectedProviderId !== null &&
+        !enabledProviderIds.includes(selectedProviderId)
+      ) {
+        selectedProviderId = null;
+        requestedFocus = { kind: "refresh" };
+      }
+      cacheProviderIds(enabledProviderIds);
+      cacheCompactLimit(compactLimit);
+      render();
+      if (newlyEnabled) void load();
+    } catch {
+      // Keep the last-known preference while the local server reconnects.
+    } finally {
+      signal.removeEventListener("abort", abortRequest);
+      preferencesRequestController = null;
+      isLoadingPreferences = false;
+    }
+  };
+
+  const observer = new MutationObserver(scheduleEnsureMounted);
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+  ensureMounted();
+  void load();
+  void syncPreferences();
+  void loadSpend();
+
+  const refreshInterval = window.setInterval(() => {
+    void load();
+    void loadSpend();
+  }, AUTO_REFRESH_MS);
+  const preferencesRefreshInterval = window.setInterval(
+    () => void syncPreferences(),
+    PREFERENCES_REFRESH_MS,
+  );
+  const refreshIfStale = (): void => {
+    void syncPreferences();
+    if (Date.now() - lastLoadedAt > 60_000) {
+      void load();
+      void loadSpend();
+    }
+  };
+  window.addEventListener("focus", refreshIfStale, { signal });
+  document.addEventListener(
+    "visibilitychange",
+    () => {
+      if (!document.hidden) refreshIfStale();
+    },
+    { signal },
+  );
+  document.addEventListener(
+    "pointerdown",
+    (event) => {
+      if (
+        selectedProviderId !== null &&
+        root !== null &&
+        event.target instanceof Node &&
+        !root.contains(event.target)
+      ) {
+        selectedProviderId = null;
+        render();
+      }
+    },
+    { signal },
+  );
+  window.addEventListener(
+    "keydown",
+    (event) => {
+      const active = document.activeElement;
+      const belongsToUsageTracker =
+        root !== null &&
+        ((event.target instanceof Node && root.contains(event.target)) ||
+          (active instanceof Node && root.contains(active)));
+      if (
+        event.key === "Escape" &&
+        selectedProviderId !== null &&
+        belongsToUsageTracker
+      ) {
+        const providerId = selectedProviderId;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        selectedProviderId = null;
+        requestedFocus = { kind: "provider", providerId };
+        render();
+      }
+    },
+    { capture: true, signal },
+  );
+
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    observer.disconnect();
+    if (ensureFrame !== null) cancelAnimationFrame(ensureFrame);
+    window.clearInterval(refreshInterval);
+    window.clearInterval(preferencesRefreshInterval);
+    requestController?.abort();
+    preferencesRequestController?.abort();
+    spendRequestController?.abort();
+    root?.remove();
+    root = null;
+  };
+}
