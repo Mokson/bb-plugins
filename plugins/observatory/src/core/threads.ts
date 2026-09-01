@@ -7,7 +7,7 @@
 // The root walk has a hard depth cap. A cycle in the parent chain should be
 // impossible, but a registry that hangs would take ingest down with it, so the
 // cap is the invariant and "unknown root" is an acceptable answer.
-import { existsSync, readdirSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { ThreadRow } from "./store.js";
@@ -43,27 +43,54 @@ export interface SeatAndTier {
   tier_tag: string | null;
 }
 
+/** A seat name counts only where it stands as a whole word in the title. */
+function mentionsSeat(title: string, seat: string): boolean {
+  const isWordChar = (char: string | undefined): boolean =>
+    char !== undefined && /[A-Za-z0-9-]/u.test(char);
+  for (
+    let index = title.indexOf(seat);
+    index >= 0;
+    index = title.indexOf(seat, index + 1)
+  ) {
+    if (
+      !isWordChar(title[index - 1]) &&
+      !isWordChar(title[index + seat.length])
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Split a thread title into the seat that ran it and the tier it ran at.
  *
  * A deliver seat name wins over the prefix remainder: `[son5:low]
  * deliver-qa row 3` is the QA seat at son5:low, not a seat called
  * "deliver-qa row 3".
+ *
+ * Two things this deliberately does NOT do. It does not substring-match, so
+ * `deliver-qa-notes` is not the QA seat. And it does not fall back to the
+ * title remainder: an ordinary chat is not a seat, and minting one from free
+ * text is what fills the seat column with one-offs that never aggregate.
  */
 export function parseSeatAndTier(title: string | null | undefined): SeatAndTier {
   if (!title) return { seat: null, tier_tag: null };
   const match = TIER_PREFIX.exec(title);
   const tier = match ? (match[1] as string) : null;
-  const rest = (match ? (match[2] as string) : title).trim();
-  const named = DELIVER_SEATS.find((seat) => title.includes(seat));
-  const seat = named ?? (rest.length > 0 ? rest : null);
+  const seat = DELIVER_SEATS.find((name) => mentionsSeat(title, name)) ?? null;
   return { seat, tier_tag: tier };
 }
 
 /**
- * The deliver run folder a thread is working in: the first
- * `docs/specs/<id>_<slug>/` under `cwd` that actually holds a LEDGER.md. The
- * ledger is the discriminator — an empty spec directory is not a run.
+ * The deliver run folder a thread is working in: the `docs/specs/<id>_<slug>/`
+ * under `cwd` whose LEDGER.md was written most recently. The ledger is the
+ * discriminator — an empty spec directory is not a run.
+ *
+ * Recency, not name order, is the tiebreak. A repo accumulates run folders,
+ * and the alphabetically first one is whichever run happened to be numbered
+ * lowest — so every thread in a repo with history got attributed to the same
+ * ancient run.
  */
 export function findRunFolder(cwd: string | null | undefined): string | null {
   if (!cwd) return null;
@@ -72,16 +99,22 @@ export function findRunFolder(cwd: string | null | undefined): string | null {
   try {
     entries = readdirSync(specs, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort();
+      .map((entry) => entry.name);
   } catch {
     return null;
   }
+  let newest: { folder: string; mtimeMs: number } | null = null;
   for (const name of entries) {
     const folder = join(specs, name);
-    if (existsSync(join(folder, "LEDGER.md"))) return folder;
+    let mtimeMs: number;
+    try {
+      mtimeMs = statSync(join(folder, "LEDGER.md")).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (!newest || mtimeMs > newest.mtimeMs) newest = { folder, mtimeMs };
   }
-  return null;
+  return newest?.folder ?? null;
 }
 
 type ThreadsApi = BbPluginApi["sdk"]["threads"];

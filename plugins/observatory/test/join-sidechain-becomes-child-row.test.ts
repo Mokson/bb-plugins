@@ -7,7 +7,7 @@ import { joinPendingTurns, sidechainTurnId } from "../src/core/join.js";
 import { TempDatabase } from "./fakes.js";
 
 describe("sidechain rows", () => {
-  it("becomes a synthetic child turn keyed by its agent", () => {
+  it("becomes a synthetic child turn keyed by its log row", () => {
     const temp = new TempDatabase();
     try {
       const store = temp.open();
@@ -76,7 +76,10 @@ describe("sidechain rows", () => {
       expect(summary.sidechain).toBe(1);
       const child = store.db
         .prepare("SELECT * FROM obs_turn WHERE turn_id = ?")
-        .get(sidechainTurnId("t1", "deliver-qa")) as Record<string, unknown>;
+        .get(sidechainTurnId("t1", "claude-code:sess-1:1:7")) as Record<
+        string,
+        unknown
+      >;
       expect(child).toMatchObject({
         thread_id: "thr-1",
         split_source: "sidechain",

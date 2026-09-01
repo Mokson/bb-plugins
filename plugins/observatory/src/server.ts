@@ -547,6 +547,11 @@ function parseRoots(value: string | boolean | undefined): string[] {
     .filter((entry) => entry.length > 0);
 }
 
+/** Threads per `threads.list` page during a backfill. */
+const BACKFILL_PAGE = 500;
+/** Upper bound on drain passes, so an unreadable thread cannot loop forever. */
+const BACKFILL_MAX_PASSES = 100;
+
 /**
  * Walk thread history backwards and drain each thread, then re-join. Unlike
  * the scheduled pass this has no byte budget: a backfill is explicitly asked
@@ -567,22 +572,34 @@ async function backfill(
     };
   }
   const provider = flagValue(argv, "provider");
-  const threads = await bb.sdk.threads.list({ includeHidden: true, limit: 500 });
-  const selected = threads.filter(
-    (thread) =>
-      thread.createdAt >= since &&
-      (provider === undefined || thread.providerId === provider),
-  );
+  // Page the thread list. A single 500-row request silently truncated the
+  // backfill on any bb install with more history than that, and the coverage
+  // number it printed looked complete.
   let drained = 0;
-  for (const thread of selected) {
-    runtime.ingest.markDirty(thread.id);
-    drained += 1;
+  for (let offset = 0; ; offset += BACKFILL_PAGE) {
+    const page = await bb.sdk.threads.list({
+      includeHidden: true,
+      limit: BACKFILL_PAGE,
+      offset,
+    });
+    if (page.length === 0) break;
+    for (const thread of page) {
+      if (thread.createdAt < since) continue;
+      if (provider !== undefined && thread.providerId !== provider) continue;
+      runtime.ingest.markDirty(thread.id);
+      drained += 1;
+    }
+    if (page.length < BACKFILL_PAGE) break;
   }
-  // Drain until the dirty set stops shrinking: a per-tick budget can requeue a
-  // long thread, and a backfill must actually finish it.
-  for (let pass = 0; pass < 100; pass += 1) {
+  // Drain until the dirty set stops SHRINKING. Testing for an empty set spins
+  // the full 100 passes whenever one thread is permanently unreadable, since a
+  // failed drain re-queues itself and the set never reaches zero.
+  let remaining = Number.POSITIVE_INFINITY;
+  for (let pass = 0; pass < BACKFILL_MAX_PASSES; pass += 1) {
     await runtime.ingest.drainOnce();
-    if (runtime.ingest.counters().dirty === 0) break;
+    const dirty = runtime.ingest.counters().dirty;
+    if (dirty === 0 || dirty >= remaining) break;
+    remaining = dirty;
   }
   runtime.ingest.rejoinPending();
   return {
