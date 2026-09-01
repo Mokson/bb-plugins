@@ -135,12 +135,18 @@ export function createWatchModule(
       await runtime.refresh();
       options.handle.current = runtime;
 
+      // `ctx.enabled()` is async and the drain listener is synchronous, so the
+      // toggle is cached here and refreshed by the sweep. Without it the
+      // listener would keep evaluating and publishing for a module the sweep
+      // has already stopped running.
+      let moduleEnabled = await ctx.enabled();
+
       const ingest = options.ingest();
       if (ingest) {
         // The listener is synchronous and wrapped by the module breaker, so a
         // rule that throws costs watch its breaker count and never the drain.
         const unsubscribe = ingest.onDrained((threadId, ingested) => {
-          if (ingested === 0) return;
+          if (ingested === 0 || !moduleEnabled) return;
           try {
             runtime.engine.evaluateThread(threadId);
           } catch (error) {
@@ -164,7 +170,8 @@ export function createWatchModule(
         "watch-sweep",
         "*/1 * * * *",
         ctx.job("watch-sweep", async () => {
-          if (!(await ctx.enabled())) return;
+          moduleEnabled = await ctx.enabled();
+          if (!moduleEnabled) return;
           // Refresh first: the sweep is the one place a KV threshold change
           // becomes effective without anyone calling the settings RPC.
           await runtime.refresh();

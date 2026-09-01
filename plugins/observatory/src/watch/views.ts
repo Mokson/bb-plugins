@@ -75,7 +75,12 @@ export function buildWatchList(
       threadId: thread.threadId,
       title: thread.title,
       seat: thread.seat,
-      state: open.length > 0 ? "stalled" : "healthy",
+      // Only a STALL rule makes a thread stalled. A tree-budget signal says
+      // the subtree is expensive, not that the agent is stuck, and calling
+      // that "stalled" would sort a working thread above a wedged one.
+      state: open.some((row) => STALL_RULES.has(row.kind as RuleId))
+        ? "stalled"
+        : "healthy",
       silentMs:
         liveness.lastEventAt === null
           ? 0
@@ -152,7 +157,7 @@ export function buildInbox(
   limit: number,
 ): { rows: InboxRow[]; counts: InboxCounts } {
   const open = queries
-    .openSignalsAllModules()
+    .openSignalsAllModules(limit)
     .filter((row) => SOURCES[row.module] !== undefined);
 
   const ranked = [...open].sort((left, right) => {
@@ -178,19 +183,17 @@ export function buildInbox(
     }),
   );
 
-  const stalledThreads = new Set(
-    open
-      .filter((row) => band(row) === 0 && row.thread_id !== null)
-      .map((row) => row.thread_id as string),
-  );
+  // Counted over EVERY open row, not over the page above: a header that says
+  // "200 in queue" because the page holds 200 is a number nobody can act on.
+  const counted = queries.openCounts(Object.keys(SOURCES), [...STALL_RULES]);
 
   return {
     rows,
     counts: {
       watched: queries.activeThreads().length,
-      stalled: stalledThreads.size,
-      overBudget: open.filter((row) => band(row) === 1).length,
-      queue: open.length,
+      stalled: counted.stalled,
+      overBudget: counted.overBudget,
+      queue: counted.queue,
     },
   };
 }

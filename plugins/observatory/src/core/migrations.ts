@@ -153,7 +153,11 @@ export const MIGRATIONS: string[] = [
    )`,
   // `dedupe_key` is the episode identity: opening the same signal twice is the
   // normal case (every scan re-derives it), so the UNIQUE index is what makes
-  // `openSignal` idempotent rather than a caller-side existence check.
+  // `openSignal` idempotent rather than a caller-side existence check. It is
+  // unique among OPEN rows only: globally unique, a closed episode whose anchor
+  // recurs could never reopen, because the insert hit the closed row's key, did
+  // nothing, and `openSignal` handed the caller back a closed id that the
+  // reconcile then re-opened and re-broadcast forever.
   `CREATE TABLE IF NOT EXISTS obs_signal (
      id         INTEGER PRIMARY KEY AUTOINCREMENT,
      module     TEXT NOT NULL,
@@ -166,8 +170,8 @@ export const MIGRATIONS: string[] = [
      payload    TEXT,
      dedupe_key TEXT NOT NULL
    )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS obs_signal_dedupe
-     ON obs_signal (dedupe_key)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS obs_signal_dedupe_open
+     ON obs_signal (dedupe_key) WHERE closed_at IS NULL`,
   `CREATE INDEX IF NOT EXISTS obs_signal_open
      ON obs_signal (module, closed_at)`,
   `CREATE TABLE IF NOT EXISTS obs_action (
@@ -239,4 +243,8 @@ export const MIGRATIONS: string[] = [
    )`,
   `CREATE INDEX IF NOT EXISTS obs_ctx_block_snapshot
      ON obs_ctx_block (snapshot_id)`,
+  // Databases created before the partial index still carry the globally unique
+  // one. Dropping it last (rather than recreating it above) keeps the self-heal
+  // replay stable: on a healthy boot this statement is a no-op.
+  `DROP INDEX IF EXISTS obs_signal_dedupe`,
 ];

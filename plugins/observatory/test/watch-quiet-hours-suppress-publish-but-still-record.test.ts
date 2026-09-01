@@ -4,8 +4,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { SIGNAL_CHANNEL } from "../src/watch/contract.js";
 import {
+  createLadder,
   OVERALL_HOURLY_CAP,
   PER_THREAD_HOURLY_CAP,
+  type Ladder,
+  type LadderOutcome,
 } from "../src/watch/ladder.js";
 import { inQuietHours, parseQuietHours } from "../src/watch/settings.js";
 import { makeWatchFixture, T0, type WatchFixture } from "./fakes.js";
@@ -158,5 +161,65 @@ describe("the notification caps", () => {
 
     expect(attempts).toBeGreaterThan(OVERALL_HOURLY_CAP);
     expect(fixture.published()).toHaveLength(OVERALL_HOURLY_CAP);
+  });
+
+  it("stays capped across a reload, because the budget is on the ledger", async () => {
+    // The cap used to live in a closure. A plugin reload, or a crash loop,
+    // handed every thread a fresh six, which is exactly the case the cap
+    // exists for. The count comes off the recorded actions instead.
+    const clock = { now: T0 };
+    fixture = makeWatchFixture({ "watch_quietHours": "" }, clock);
+    await fixture.runtime.refresh();
+    const threadId = "thr-reload";
+    fixture.seedThread({ threadId });
+
+    const publishedAfterReload: unknown[] = [];
+    function transitionsThrough(
+      ladder: Ladder,
+      count: number,
+      offset: number,
+    ): LadderOutcome[] {
+      const outcomes: LadderOutcome[] = [];
+      for (let n = 0; n < count; n += 1) {
+        const signalId = fixture.store.openSignal({
+          module: "watch",
+          kind: "silence-no-inflight",
+          dedupeKey: `${threadId}:silence-no-inflight:item:${offset + n}`,
+          threadId,
+          severity: "warn",
+          openedAt: new Date(T0).toISOString(),
+        });
+        outcomes.push(
+          ladder.applyLadder({
+            signalId,
+            threadId,
+            rule: "silence-no-inflight",
+            state: "open",
+            severity: "warn",
+            evidence: `episode ${offset + n}`,
+            at: new Date(T0).toISOString(),
+          }),
+        );
+      }
+      return outcomes;
+    }
+
+    // Four publishes before the "reload".
+    const before = transitionsThrough(fixture.runtime.ladder, 4, 0);
+    expect(before.filter((outcome) => outcome === "sent")).toHaveLength(4);
+
+    // A brand new ladder over the same database: the reload.
+    const reloaded = createLadder({
+      store: fixture.store,
+      publish: (_channel, payload) => publishedAfterReload.push(payload),
+      config: () => ({ mode: "observe", quietHours: null }),
+      now: () => clock.now,
+      log: fixture.host.bb.log,
+    });
+
+    const after = transitionsThrough(reloaded, 4, 100);
+    // Two left in the hour, then the cap binds again.
+    expect(after).toEqual(["sent", "sent", "capped-thread", "capped-thread"]);
+    expect(publishedAfterReload).toHaveLength(2);
   });
 });

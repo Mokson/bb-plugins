@@ -45,6 +45,8 @@ export interface WatchSnapshot {
   openItem: ItemFact | null;
   openTurn: boolean;
   lastTurnStartedAt: number | null;
+  /** When the last turn ENDED, or null while it is still running. */
+  lastTurnCompletedAt: number | null;
   lastTurnId: string | null;
   /** Item seq of the most recent fileChange, the burn rule's anchor. */
   lastFileChangeSeq: number | null;
@@ -134,6 +136,12 @@ export class WatchQueries {
   >;
   private readonly allOpenSignalsStatement: Statement<[number], SignalRowLite>;
   private readonly allSignalsStatement: Statement<[number], SignalRowLite>;
+  private readonly queueCountStatement: Statement<[string], { n: number }>;
+  private readonly stalledCountStatement: Statement<
+    [string, string],
+    { n: number }
+  >;
+  private readonly overBudgetCountStatement: Statement<[string], { n: number }>;
 
   constructor(private readonly db: Database) {
     // "active" is bb's own lifecycle status, written by core from the
@@ -196,6 +204,44 @@ export class WatchQueries {
          FROM obs_signal WHERE module = 'watch'
         ORDER BY opened_at DESC, id DESC LIMIT ?`,
     );
+    // The inbox counts are totals over every open row, not over the page the
+    // list renders, so they are COUNT(*)s rather than a length of the slice.
+    // The module and stall-kind lists arrive as JSON so the caller keeps
+    // owning which sources and which rules count, without a rebuilt statement.
+    const openAndKnown = `FROM obs_signal
+        WHERE closed_at IS NULL
+          AND module IN (SELECT value FROM json_each(?))`;
+    this.queueCountStatement = db.prepare(
+      `SELECT COUNT(*) AS n ${openAndKnown}`,
+    );
+    this.stalledCountStatement = db.prepare(
+      `SELECT COUNT(DISTINCT thread_id) AS n ${openAndKnown}
+          AND module = 'watch'
+          AND thread_id IS NOT NULL
+          AND kind IN (SELECT value FROM json_each(?))`,
+    );
+    this.overBudgetCountStatement = db.prepare(
+      `SELECT COUNT(*) AS n ${openAndKnown} AND kind LIKE '%budget%'`,
+    );
+  }
+
+  /**
+   * Open-signal totals for the inbox header: every open row from a known
+   * module, the distinct threads a stall rule holds open, and the rows naming
+   * a budget.
+   */
+  openCounts(
+    modules: readonly string[],
+    stallKinds: readonly string[],
+  ): { queue: number; stalled: number; overBudget: number } {
+    const sources = JSON.stringify(modules);
+    return {
+      queue: this.queueCountStatement.get(sources)?.n ?? 0,
+      stalled:
+        this.stalledCountStatement.get(sources, JSON.stringify(stallKinds))
+          ?.n ?? 0,
+      overBudget: this.overBudgetCountStatement.get(sources)?.n ?? 0,
+    };
   }
 
   activeThreads(): ThreadFact[] {
@@ -308,6 +354,12 @@ export class WatchQueries {
     // Turns are ordered newest first; count back to the turn that owned the
     // last file change. An absent anchor means the thread has changed nothing
     // yet, so every turn counts.
+    //
+    // Comparing `turn.seq_started` against an ITEM seq is sound because both
+    // are the same number: core writes `seq_started` and `obs_item.seq` from
+    // `row.seq` of one per-thread event page (`src/core/events.ts`, the
+    // `turn/started` and item branches), so one sequence space orders turns
+    // and items together.
     let tokensSinceFileChange = 0;
     for (const turn of turns) {
       if (
@@ -345,6 +397,7 @@ export class WatchQueries {
       openItem,
       openTurn,
       lastTurnStartedAt: toMs(lastTurn?.started_at ?? null),
+      lastTurnCompletedAt: toMs(lastTurn?.completed_at ?? null),
       lastTurnId: lastTurn?.turn_id ?? null,
       lastFileChangeSeq,
       tokensSinceFileChange,

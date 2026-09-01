@@ -343,6 +343,14 @@ export class ObservatoryStore {
   >;
   private readonly closeSignalStatement: Statement;
   private readonly insertActionStatement: Statement;
+  private readonly countPublishedStatement: Statement<
+    [string, string],
+    { n: number }
+  >;
+  private readonly countPublishedOverallStatement: Statement<
+    [string],
+    { n: number }
+  >;
   private readonly getMetaStatement: Statement<
     [string],
     { value: string } | undefined
@@ -366,15 +374,18 @@ export class ObservatoryStore {
       "item_id",
     ]);
     // DO NOTHING, then read: the conflict is the dedupe key doing its job, and
-    // the caller needs the EXISTING episode's id, not a new one.
+    // the caller needs the EXISTING episode's id, not a new one. Both the
+    // conflict target and the read are scoped to OPEN rows, matching the
+    // partial unique index, so a closed episode whose anchor recurs opens a
+    // second row instead of handing back the closed one forever.
     this.insertSignalStatement = db.prepare(
       `INSERT INTO obs_signal
          (module, kind, thread_id, turn_id, severity, opened_at, closed_at, payload, dedupe_key)
        VALUES (@module, @kind, @thread_id, @turn_id, @severity, @opened_at, NULL, @payload, @dedupe_key)
-       ON CONFLICT(dedupe_key) DO NOTHING`,
+       ON CONFLICT(dedupe_key) WHERE closed_at IS NULL DO NOTHING`,
     );
     this.selectSignalStatement = db.prepare(
-      "SELECT id FROM obs_signal WHERE dedupe_key = ?",
+      "SELECT id FROM obs_signal WHERE dedupe_key = ? AND closed_at IS NULL",
     );
     this.closeSignalStatement = db.prepare(
       "UPDATE obs_signal SET closed_at = ? WHERE id = ? AND closed_at IS NULL",
@@ -382,6 +393,15 @@ export class ObservatoryStore {
     this.insertActionStatement = db.prepare(
       `INSERT INTO obs_action (signal_id, thread_id, action, at, detail, result)
        VALUES (@signal_id, @thread_id, @action, @at, @detail, @result)`,
+    );
+    // The notification budget, read back off the ledger rather than held in
+    // memory: a plugin reload must not hand anyone a fresh allowance.
+    this.countPublishedStatement = db.prepare(
+      `SELECT COUNT(*) AS n FROM obs_action
+        WHERE result = 'sent' AND thread_id = ? AND at > ?`,
+    );
+    this.countPublishedOverallStatement = db.prepare(
+      "SELECT COUNT(*) AS n FROM obs_action WHERE result = 'sent' AND at > ?",
     );
     this.getMetaStatement = db.prepare(
       "SELECT value FROM obs_meta WHERE key = ?",
@@ -444,6 +464,20 @@ export class ObservatoryStore {
   /** No-op on an already-closed signal, so a repeated scan is harmless. */
   closeSignal(id: number, closedAt: string): void {
     this.closeSignalStatement.run(closedAt, id);
+  }
+
+  /**
+   * Actions recorded with `result = 'sent'` strictly after `since` (an ISO
+   * instant), for one thread and across all of them.
+   */
+  publishedActionsSince(
+    since: string,
+    threadId: string,
+  ): { thread: number; overall: number } {
+    return {
+      thread: this.countPublishedStatement.get(threadId, since)?.n ?? 0,
+      overall: this.countPublishedOverallStatement.get(since)?.n ?? 0,
+    };
   }
 
   recordAction(action: RecordAction): number {
