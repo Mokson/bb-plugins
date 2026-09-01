@@ -6,7 +6,7 @@
 // The comparator is deliberately generic. Audit, eval and distillery land
 // against this same list, and none of them should require editing the sort.
 import { afterEach, describe, expect, it } from "vitest";
-import { buildInbox } from "../src/watch/views.js";
+import { buildInbox, buildWatchList } from "../src/watch/views.js";
 import { makeWatchFixture, type WatchFixture } from "./fakes.js";
 
 let fixture: WatchFixture;
@@ -139,5 +139,67 @@ describe("the attention inbox", () => {
     const { rows, counts } = buildInbox(fixture.runtime.queries, 50);
     expect(rows).toEqual([]);
     expect(counts).toEqual({ watched: 0, stalled: 0, overBudget: 0, queue: 0 });
+  });
+
+  it("counts every open row, not the page it renders", () => {
+    // The header answers "how much is waiting", and a count taken over the
+    // page would answer "how much fits on screen": the same number no matter
+    // how bad it gets.
+    fixture = makeWatchFixture();
+    // Deliberately past the read's own page size: the bug was invisible while
+    // every open row happened to fit on one page.
+    const each = 120;
+    const start = Date.parse("2026-09-01T00:00:00.000Z");
+    for (let n = 0; n < each; n += 1) {
+      const openedAt = new Date(start + n * 60_000).toISOString();
+      open(fixture, {
+        module: "watch",
+        kind: "silence-no-inflight",
+        threadId: `thr-stall-${n}`,
+        openedAt,
+      });
+      open(fixture, {
+        module: "watch",
+        kind: "tree-budget",
+        threadId: `thr-cost-${n}`,
+        openedAt,
+      });
+    }
+
+    const { rows, counts } = buildInbox(fixture.runtime.queries, 2);
+    expect(rows).toHaveLength(2);
+    expect(counts.queue).toBe(each * 2);
+    expect(counts.stalled).toBe(each);
+    expect(counts.overBudget).toBe(each);
+  });
+});
+
+describe("the watch list", () => {
+  it("calls a thread stalled only for a stall rule, not for tree-budget", () => {
+    // Tree budget is a spend fact. A subtree that is expensive is still doing
+    // its job, and sorting it above a wedged thread buries the wedged one.
+    fixture = makeWatchFixture();
+    open(fixture, {
+      module: "watch",
+      kind: "tree-budget",
+      threadId: "thr-pricey",
+      openedAt: "2026-09-01T12:00:00.000Z",
+      severity: "critical",
+    });
+    open(fixture, {
+      module: "watch",
+      kind: "silence-no-inflight",
+      threadId: "thr-wedged",
+      openedAt: "2026-09-01T12:00:00.000Z",
+    });
+
+    const { rows } = buildWatchList(fixture.runtime.queries, Date.parse("2026-09-01T13:00:00.000Z"));
+    const byThread = new Map(rows.map((row) => [row.threadId, row]));
+    expect(byThread.get("thr-pricey")!.state).toBe("healthy");
+    expect(byThread.get("thr-wedged")!.state).toBe("stalled");
+    // Still surfaced: the worst open rule is reported either way.
+    expect(byThread.get("thr-pricey")!.rule).toBe("tree-budget");
+    // And the wedged thread sorts first.
+    expect(rows[0]!.threadId).toBe("thr-wedged");
   });
 });

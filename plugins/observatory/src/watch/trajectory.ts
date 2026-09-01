@@ -9,6 +9,15 @@ import type { Database, Statement } from "better-sqlite3";
 export const TRAJECTORY_MAX_CHARS = 4096;
 /** Identical fingerprints inside one turn that read as a loop. */
 const LOOP_REPEATS = 3;
+/**
+ * Rows read per render. The output is capped at 4096 characters and a turn
+ * line costs about thirty of them, so anything past a few hundred turns can
+ * only ever be elided - and this runs on a SYNCHRONOUS database handle, where
+ * an unbounded read of a long-lived thread blocks every other query.
+ */
+const TURN_CAP = 400;
+/** Items read per render. Only their markers survive into the output. */
+const ITEM_CAP = 4_000;
 
 interface TurnRow {
   turn_id: string;
@@ -43,24 +52,26 @@ export interface Trajectory {
 }
 
 export function createTrajectory(deps: TrajectoryDeps): Trajectory {
-  const turnsStatement: Statement<[string], TurnRow> = deps.db.prepare(
+  // Newest-first with a LIMIT, reversed in JS: the tail of a run is what a
+  // model needs, and DESC is the direction the seq indexes already serve.
+  const turnsStatement: Statement<[string, number], TurnRow> = deps.db.prepare(
     `SELECT turn_id, started_at, duration_ms, model_reported, model_requested,
             input_tokens, cached_input_tokens, output_tokens, reasoning_tokens,
             cost_usd, tool_calls, file_changes, compacted
-       FROM obs_turn WHERE thread_id = ? ORDER BY seq_started ASC`,
+       FROM obs_turn WHERE thread_id = ? ORDER BY seq_started DESC LIMIT ?`,
   );
-  const itemsStatement: Statement<[string], ItemRow> = deps.db.prepare(
+  const itemsStatement: Statement<[string, number], ItemRow> = deps.db.prepare(
     `SELECT turn_id, seq, kind, path, input_fingerprint
-       FROM obs_item WHERE thread_id = ? ORDER BY seq ASC`,
+       FROM obs_item WHERE thread_id = ? ORDER BY seq DESC LIMIT ?`,
   );
 
   return {
     render(threadId: string): string {
-      const turns = turnsStatement.all(threadId);
+      const turns = turnsStatement.all(threadId, TURN_CAP).reverse();
       if (turns.length === 0) {
         return `no turns recorded for ${threadId}`;
       }
-      const items = itemsStatement.all(threadId);
+      const items = itemsStatement.all(threadId, ITEM_CAP).reverse();
       const byTurn = new Map<string, ItemRow[]>();
       for (const item of items) {
         if (!item.turn_id) continue;
@@ -140,23 +151,44 @@ function markersFor(turn: TurnRow, items: readonly ItemRow[]): string[] {
   return markers;
 }
 
+function noticeFor(dropped: number): string {
+  return `... ${dropped} turns elided`;
+}
+
 /**
  * Drop whole rows from the MIDDLE until the text fits. The head names the
  * thread and the tail carries the waste attribution, so a long run loses its
  * least informative rows rather than its conclusion.
+ *
+ * The fit is tracked ARITHMETICALLY as rows leave, rather than re-joining
+ * every remaining row on each pass as the old loop did, and every cut lands
+ * on a row boundary, so the last line a model reads is never half a row of
+ * data.
  */
 function clamp(lines: string[]): string {
   const rows = [...lines];
+  // Rendered length: every row plus the newline between each pair.
+  let size = rows.reduce((total, row) => total + row.length, rows.length - 1);
   let dropped = 0;
-  while (rows.join("\n").length > TRAJECTORY_MAX_CHARS && rows.length > 4) {
-    rows.splice(Math.floor(rows.length / 2), 1);
+  // The notice occupies a row of its own, so its cost is part of the fit.
+  const budget = (): number =>
+    TRAJECTORY_MAX_CHARS -
+    (dropped > 0 ? noticeFor(dropped).length + 1 : 0);
+  while (size > budget() && rows.length > 4) {
+    const [cut] = rows.splice(Math.floor(rows.length / 2), 1);
+    size -= (cut?.length ?? 0) + 1;
     dropped += 1;
   }
   if (dropped > 0) {
-    rows.splice(Math.floor(rows.length / 2), 0, `... ${dropped} turns elided`);
-    while (rows.join("\n").length > TRAJECTORY_MAX_CHARS && rows.length > 4) {
-      rows.splice(Math.floor(rows.length / 2) + 1, 1);
-    }
+    rows.splice(Math.floor(rows.length / 2), 0, noticeFor(dropped));
   }
-  return rows.join("\n").slice(0, TRAJECTORY_MAX_CHARS);
+
+  const text = rows.join("\n");
+  if (text.length <= TRAJECTORY_MAX_CHARS) return text;
+  // Nothing left to elide (four rows or fewer, all of them long). Cut at the
+  // last newline inside the ceiling rather than mid-row.
+  const lastBreak = text.lastIndexOf("\n", TRAJECTORY_MAX_CHARS);
+  return lastBreak > 0
+    ? text.slice(0, lastBreak)
+    : text.slice(0, TRAJECTORY_MAX_CHARS);
 }

@@ -136,7 +136,25 @@ describe("each watch rule", () => {
     expect(await rulesFor(calm)).not.toContain("read-edit-read");
   });
 
-  it("active-no-turn fires when the last turn started over ten minutes ago", async () => {
+  it("active-no-turn measures from the last turn's END, not its start", async () => {
+    fixture = makeWatchFixture();
+    const thread = fixture.seedThread({ threadId: "thr-longturn" });
+    // Forty minutes of thinking that finished one second ago. Measured from
+    // the START that reads as a forty-minute idle thread; it is nothing of
+    // the kind, and steering it would interrupt work that just landed.
+    fixture.seedTurns(thread, [
+      {
+        turnId: "turn-1",
+        seqStarted: 1,
+        startedAt: -40 * 60_000,
+        completedAt: -1_000,
+      },
+    ]);
+
+    expect(await rulesFor(thread)).not.toContain("active-no-turn");
+  });
+
+  it("active-no-turn fires when the last turn ended over ten minutes ago", async () => {
     fixture = makeWatchFixture();
     const thread = fixture.seedThread({ threadId: "thr-noturn" });
     fixture.seedTurns(thread, [
@@ -232,6 +250,46 @@ describe("each watch rule", () => {
     expect(await rulesFor(cheap)).not.toContain("tree-budget");
   });
 
+  it("tree-budget re-arms on a doubling and not on every dollar after", async () => {
+    // Subtree spend only ever grows, so an anchor of "this root" would fire
+    // once and stay open forever. The anchor carries the doubling band: one
+    // signal at the ceiling, the next at twice it, nothing in between.
+    fixture = makeWatchFixture();
+    const thread = fixture.seedThread({ threadId: "thr-doubling" });
+
+    async function treeEpisode(): Promise<string | undefined> {
+      const queries = new WatchQueries(fixture.db);
+      const snapshot = queries.snapshot(thread, T0)!;
+      const config = await readWatchConfig(
+        fixture.host.bb,
+        fixture.settingValues,
+      );
+      return evaluate(snapshot, config).find(
+        (finding) =>
+          finding.rule === "tree-budget" && finding.episode.startsWith("tree:"),
+      )?.episode;
+    }
+
+    // $51 against the $50 ceiling.
+    fixture.seedTurns(thread, [
+      { turnId: "turn-1", seqStarted: 1, startedAt: -60_000, costUsd: 51 },
+    ]);
+    const first = await treeEpisode();
+    expect(first).toBe(`tree:${thread}:0`);
+
+    // Creeping up to $99 is the SAME crossing: no new episode.
+    fixture.seedTurns(thread, [
+      { turnId: "turn-2", seqStarted: 2, startedAt: -30_000, costUsd: 48 },
+    ]);
+    expect(await treeEpisode()).toBe(first);
+
+    // Past $100 the spend has doubled, and that is worth saying again.
+    fixture.seedTurns(thread, [
+      { turnId: "turn-3", seqStarted: 3, startedAt: -10_000, costUsd: 10 },
+    ]);
+    expect(await treeEpisode()).toBe(`tree:${thread}:1`);
+  });
+
   it("skips a rule whose enable flag is off", async () => {
     fixture = makeWatchFixture({ "watch_repeatedIdenticalTool_enabled": false });
     const thread = fixture.seedThread({ threadId: "thr-loop-off" });
@@ -250,6 +308,31 @@ describe("each watch rule", () => {
     );
 
     expect(await rulesFor(thread)).not.toContain("repeated-identical-tool");
+  });
+
+  it('keeps a rule on when its flag round-trips as the string "true"', async () => {
+    // Settings come back from the host as strings as often as booleans, and
+    // reading anything but `true` as off silently disabled a rule nobody had
+    // touched. Only an explicit false turns one off.
+    fixture = makeWatchFixture({
+      "watch_repeatedIdenticalTool_enabled": "true",
+    });
+    const thread = fixture.seedThread({ threadId: "thr-loop-on" });
+    fixture.seedTurns(thread, [
+      { turnId: "turn-1", seqStarted: 1, startedAt: -60_000 },
+    ]);
+    fixture.seedItems(
+      thread,
+      [2, 3, 4].map((seq) => ({
+        seq,
+        kind: "toolCall",
+        fingerprint: "fp-ls",
+        startedAt: -50_000 + seq * 1_000,
+        completedAt: -49_000 + seq * 1_000,
+      })),
+    );
+
+    expect(await rulesFor(thread)).toContain("repeated-identical-tool");
   });
 
   it("leaves an idle thread alone even when it has been quiet for hours", async () => {

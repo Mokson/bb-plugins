@@ -233,4 +233,11 @@ export const MIGRATIONS: string[] = [
   `CREATE INDEX IF NOT EXISTS obs_log_turn_session
      ON obs_log_turn (provider, provider_thread_id, ts)`,
   `CREATE INDEX IF NOT EXISTS obs_log_turn_path ON obs_log_turn (path)`,
+  // The episode identity is unique among OPEN rows only. Globally unique, a
+  // closed episode whose anchor recurs could never reopen: the insert hit the
+  // closed row's key, did nothing, and `openSignal` handed the caller back a
+  // closed id, which the reconcile then re-opened and re-broadcast forever.
+  `DROP INDEX IF EXISTS obs_signal_dedupe`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS obs_signal_dedupe_open
+     ON obs_signal (dedupe_key) WHERE closed_at IS NULL`,
 ];

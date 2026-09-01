@@ -229,12 +229,14 @@ function activeNoTurn(
 ): Finding | null {
   if (!isActive(snapshot) || snapshot.openTurn) return null;
   const limit = threshold(config, "active-no-turn") * 60_000;
-  const since =
-    snapshot.lastTurnStartedAt === null
-      ? null
-      : snapshot.now - snapshot.lastTurnStartedAt;
-  if (since !== null && since < limit) return null;
-  if (since === null) return null;
+  // Measured from when the last turn ENDED, not when it began. A forty-minute
+  // turn that completed a second ago proves the agent is being asked to think;
+  // measuring from its start would call that thread idle.
+  const idleSince =
+    snapshot.lastTurnCompletedAt ?? snapshot.lastTurnStartedAt;
+  if (idleSince === null) return null;
+  const since = snapshot.now - idleSince;
+  if (since < limit) return null;
   return {
     rule: "active-no-turn",
     episode: `turn:${snapshot.lastTurnId ?? "none"}`,
@@ -299,9 +301,13 @@ function treeBudget(
   const perDay = config.thresholds[PER_DAY_KEY] ?? 500;
 
   if (snapshot.treeCostUsd > perTree) {
+    // Subtree spend only ever grows, so anchoring on the root alone would fire
+    // once and never re-arm. The doubling band re-anchors the episode at every
+    // 2x of the ceiling: one signal per crossing, per the notification spec.
+    const band = Math.floor(Math.log2(snapshot.treeCostUsd / perTree));
     findings.push({
       rule: "tree-budget",
-      episode: `tree:${snapshot.thread.rootThreadId}`,
+      episode: `tree:${snapshot.thread.rootThreadId}:${band}`,
       severity: SEVERITY["tree-budget"],
       evidence: `subtree spend $${snapshot.treeCostUsd.toFixed(2)} over the $${perTree} ceiling`,
       payload: {

@@ -205,8 +205,11 @@ export async function readWatchConfig(
     RULE_IDS.map((rule) => {
       const value = settings[RULE_ENABLED_KEYS[rule]];
       // Absent means on: a rule ships enabled, and a fake host that declares
-      // no settings at all must still evaluate.
-      return [rule, value === undefined ? true : value === true];
+      // no settings at all must still evaluate. Only an explicit false turns a
+      // rule off, in either the boolean or the string the KV store round-trips
+      // it as; anything else would silently disable a rule on a stringified
+      // "true".
+      return [rule, value !== false && value !== "false"];
     }),
   ) as Record<RuleId, boolean>;
 

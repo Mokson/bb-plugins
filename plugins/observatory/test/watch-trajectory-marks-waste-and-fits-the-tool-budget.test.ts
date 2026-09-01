@@ -84,6 +84,38 @@ describe("the trajectory tool", () => {
     expect(text.trimEnd().split("\n").at(-1)).toMatch(/^waste:/);
   });
 
+  it("reads a bounded window of a huge run and cuts only whole rows", () => {
+    // The render runs on a SYNCHRONOUS database handle, so an unbounded read
+    // of a long-lived thread blocks every other query to build rows that the
+    // 4096-character ceiling was always going to throw away. Only the tail is
+    // read, and every line that survives is a complete row: a half-written
+    // last line is data a model would read as fact.
+    fixture = makeWatchFixture();
+    const thread = fixture.seedThread({ threadId: "thr-huge" });
+    fixture.seedTurns(
+      thread,
+      Array.from({ length: 2_000 }, (_, index) => ({
+        turnId: `turn-${index}`,
+        seqStarted: index,
+        startedAt: -index * 1_000,
+        inputTokens: 1_000,
+      })),
+    );
+
+    const text = createTrajectory({ db: fixture.db }).render(thread);
+    const lines = text.split("\n");
+
+    expect(text.length).toBeLessThanOrEqual(TRAJECTORY_MAX_CHARS);
+    // Four hundred read, not two thousand, and the totals say so.
+    expect(lines[0]).toContain("turns 400");
+    expect(text).toContain("of 400k tokens");
+    // Every turn row still carries all four columns.
+    for (const line of lines.filter((row) => /^\d/.test(row))) {
+      expect(line).toMatch(/^\d+\s+\d+k\s+\d+\s+\d+/);
+    }
+    expect(lines.at(-1)).toMatch(/^waste:/);
+  });
+
   it("says so plainly when a thread has no turns", () => {
     fixture = makeWatchFixture();
     const text = createTrajectory({ db: fixture.db }).render("thr-unknown");
