@@ -74,6 +74,17 @@ import {
   watchContract,
   type WatchHandle,
 } from "./watch/index.js";
+import {
+  DISTILLERY_SETTING_DESCRIPTORS,
+  DISTILL_CLI_COMMANDS,
+  STATUS_TOOL as DISTILL_STATUS_TOOL,
+  createDistilleryModule,
+  createDistilleryRpcHandlers,
+  distilleryContract,
+  renderStatusTool,
+  runDistillCli,
+  type DistilleryHandle,
+} from "./distillery/index.js";
 
 export const PHASE = "phase 0 scaffold";
 
@@ -135,6 +146,10 @@ export const SETTING_DESCRIPTORS = {
   // Watch owns its rule toggles, thresholds and quiet hours; `watch_mode` and
   // the two budget keys stay declared below because other modules read them.
   ...WATCH_SETTING_DESCRIPTORS,
+  // Distillery owns its provider pin, effort and findings-append flag;
+  // `distillery_improvementsDir` and `distillery_monthlyBudgetUsd` stay
+  // declared below because phase 0 shipped them.
+  ...DISTILLERY_SETTING_DESCRIPTORS,
   "watch_mode": {
     type: "select",
     label: "Watch mode",
@@ -541,6 +556,7 @@ export function buildModules(
   spend: SpendHandle = { current: null },
   commitHooks: Array<(threadId: string) => void> = [],
   watch: WatchHandle = { current: null },
+  distillery: DistilleryHandle = { current: null },
 ): readonly ObservatoryModule[] {
   return MODULE_IDS.map((id) => {
     if (id === CORE_MODULE_ID) return createCoreModule(handle, settings, commitHooks);
@@ -551,6 +567,9 @@ export function buildModules(
         ingest: () => handle.current?.ingest ?? null,
         settings,
       });
+    }
+    if (id === "distillery") {
+      return createDistilleryModule({ handle: distillery, settings });
     }
     return defineModule({
       id,
@@ -581,6 +600,13 @@ const USAGE = [
   "  watch      Stall state per active thread: [--follow] [--json]",
   "             explain <threadId>   signals and actions for one thread",
   "             off|observe|steer    set the watch mode (stored in kv)",
+  "  distill    Recurring delivery failures, mined into reviewable harness fixes:",
+  "             scan [--run <folder>]  mine every signal source",
+  "             list [--state <s>]     the review queue",
+  "             show <id>              one draft with its evidence",
+  "             accept|reject|apply <id>",
+  "             edit <id> --file <json>",
+  "             draft                  spawn one hidden drafting batch (spends)",
 ].join("\n");
 
 export interface StatusDeps {
@@ -1091,12 +1117,15 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
   const spend: SpendHandle = { current: null };
   const commitHooks: Array<(threadId: string) => void> = [];
   const watch: WatchHandle = { current: null };
+  const distillery: DistilleryHandle = { current: null };
   const registry = new ModuleRegistry({
     bb,
     db: () => db,
     settings: readSettings,
   });
-  await registry.register(buildModules(core, readSettings, spend, commitHooks, watch));
+  await registry.register(
+    buildModules(core, readSettings, spend, commitHooks, watch, distillery),
+  );
 
   /** Every spend surface refuses rather than serving an empty page as a real one. */
   const spendDeps = () => {
@@ -1214,6 +1243,37 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
   });
   // ---- end watch module surface --------------------------------------------
 
+  // ---- distillery module surface (phase 6) ---------------------------------
+  // Kept in one block so a concurrent edit elsewhere in this file merges
+  // cleanly. Everything below reaches distillery through
+  // `src/distillery/index.ts`.
+  bb.rpc.register(distilleryContract, createDistilleryRpcHandlers(bb, distillery));
+
+  bb.agents.registerTool({
+    name: DISTILL_STATUS_TOOL.name,
+    description: DISTILL_STATUS_TOOL.description,
+    parameters: z.object({}).strict(),
+    execute: () => {
+      const runtime = distillery.current;
+      if (!runtime) {
+        return {
+          content: [
+            { type: "text" as const, text: "distillery module is not running" },
+          ],
+        };
+      }
+      // Counts and signatures only. The previews are redacted, but they are
+      // still raw failure evidence and an agent asking for status wants the
+      // shape of the backlog rather than its contents.
+      return {
+        content: [
+          { type: "text" as const, text: renderStatusTool(runtime.status()) },
+        ],
+      };
+    },
+  });
+  // ---- end distillery module surface ---------------------------------------
+
   bb.cli.register({
     name: "observatory",
     summary:
@@ -1270,10 +1330,12 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
         usage: "bb observatory cache-misses [--range 7d] [--thread <threadId>]",
       },
       ...WATCH_CLI_COMMANDS,
+      ...DISTILL_CLI_COMMANDS,
     ],
     async run(argv) {
       const [command] = argv;
       if (command === "watch") return runWatchCli(bb, watch, argv.slice(1));
+      if (command === "distill") return runDistillCli(distillery, argv.slice(1));
       if (command === "status") {
         return {
           exitCode: 0,
