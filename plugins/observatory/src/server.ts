@@ -64,6 +64,16 @@ import {
   type ModuleId,
   type ObservatoryModule,
 } from "./module.js";
+import {
+  WATCH_CLI_COMMANDS,
+  WATCH_SETTING_DESCRIPTORS,
+  createTrajectory,
+  createWatchModule,
+  createWatchRpcHandlers,
+  runWatchCli,
+  watchContract,
+  type WatchHandle,
+} from "./watch/index.js";
 
 export const PHASE = "phase 0 scaffold";
 
@@ -122,6 +132,9 @@ export const SETTING_DESCRIPTORS = {
   ...Object.fromEntries(
     MODULE_IDS.map((id) => [moduleEnabledSettingKey(id), moduleToggle(id)]),
   ),
+  // Watch owns its rule toggles, thresholds and quiet hours; `watch_mode` and
+  // the two budget keys stay declared below because other modules read them.
+  ...WATCH_SETTING_DESCRIPTORS,
   "watch_mode": {
     type: "select",
     label: "Watch mode",
@@ -518,27 +531,34 @@ export function createSpendModule(
 }
 
 /**
- * The remaining modules are still stubs: they are read-only analyzers over the
- * ledger core writes, and they land in later phases behind these seams.
+ * Core writes the ledger, watch analyzes it, and the rest are still stubs
+ * landing in later phases behind these seams. Registration order matters:
+ * watch takes core's ingest handle, so core must have set it up first.
  */
 export function buildModules(
   handle: CoreHandle,
   settings: () => Promise<Record<string, string | boolean | undefined>>,
   spend: SpendHandle = { current: null },
   commitHooks: Array<(threadId: string) => void> = [],
+  watch: WatchHandle = { current: null },
 ): readonly ObservatoryModule[] {
-  return MODULE_IDS.map((id) =>
-    id === CORE_MODULE_ID
-      ? createCoreModule(handle, settings, commitHooks)
-      : id === "spend"
-        ? createSpendModule(handle, spend, settings, commitHooks)
-        : defineModule({
-            id,
-            setup(ctx) {
-              ctx.bb.log.info(`[${id}] registered`);
-            },
-          }),
-  );
+  return MODULE_IDS.map((id) => {
+    if (id === CORE_MODULE_ID) return createCoreModule(handle, settings, commitHooks);
+    if (id === "spend") return createSpendModule(handle, spend, settings, commitHooks);
+    if (id === "watch") {
+      return createWatchModule({
+        handle: watch,
+        ingest: () => handle.current?.ingest ?? null,
+        settings,
+      });
+    }
+    return defineModule({
+      id,
+      setup(ctx) {
+        ctx.bb.log.info(`[${id}] registered`);
+      },
+    });
+  });
 }
 
 const USAGE = [
@@ -558,6 +578,9 @@ const USAGE = [
   "  cost-md    Write COST.md for a run folder: cost-md <runFolder>",
   "             [--snapshot final|mid-run] [--stdout]",
   "  cache-misses  Prefix drops and their cause: [--range 7d] [--thread <id>]",
+  "  watch      Stall state per active thread: [--follow] [--json]",
+  "             explain <threadId>   signals and actions for one thread",
+  "             off|observe|steer    set the watch mode (stored in kv)",
 ].join("\n");
 
 export interface StatusDeps {
@@ -1067,12 +1090,13 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
   const core: CoreHandle = { current: null };
   const spend: SpendHandle = { current: null };
   const commitHooks: Array<(threadId: string) => void> = [];
+  const watch: WatchHandle = { current: null };
   const registry = new ModuleRegistry({
     bb,
     db: () => db,
     settings: readSettings,
   });
-  await registry.register(buildModules(core, readSettings, spend, commitHooks));
+  await registry.register(buildModules(core, readSettings, spend, commitHooks, watch));
 
   /** Every spend surface refuses rather than serving an empty page as a real one. */
   const spendDeps = () => {
@@ -1169,6 +1193,26 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
       });
     },
   });
+  // ---- watch module surface (phase 2) --------------------------------------
+  // Kept in one block so a concurrent edit elsewhere in this file merges
+  // cleanly. Everything below reaches watch through `src/watch/index.ts`.
+  bb.rpc.register(watchContract, createWatchRpcHandlers(bb, watch));
+
+  const trajectory = createTrajectory({ db });
+  bb.agents.registerTool({
+    name: "observatory_trajectory",
+    description:
+      "Per-turn trajectory of a bb thread with OSCILLATION, LOOP and " +
+      "CONTEXT RESET markers plus waste attribution. Read your own run " +
+      "before deciding you are stuck.",
+    parameters: z
+      .object({ threadId: z.string().describe("bb thread id") })
+      .strict(),
+    execute: ({ threadId }) => ({
+      content: [{ type: "text", text: trajectory.render(threadId) }],
+    }),
+  });
+  // ---- end watch module surface --------------------------------------------
 
   bb.cli.register({
     name: "observatory",
@@ -1225,9 +1269,11 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
           "Turns whose cached prefix stopped being reused, with the correlate that explains it.",
         usage: "bb observatory cache-misses [--range 7d] [--thread <threadId>]",
       },
+      ...WATCH_CLI_COMMANDS,
     ],
     async run(argv) {
       const [command] = argv;
+      if (command === "watch") return runWatchCli(bb, watch, argv.slice(1));
       if (command === "status") {
         return {
           exitCode: 0,

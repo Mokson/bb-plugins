@@ -259,3 +259,177 @@ export function makeIngestHost(): FakeIngestHost {
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Watch fixtures: a real database seeded with the ledger rows the rules read.
+//
+// The rules are pure over a snapshot, so a rule test could skip sqlite
+// entirely — but then nothing would prove the SQL that BUILDS the snapshot
+// selects the rows the rules assume. These fixtures write real rows and let
+// `WatchQueries` do the reading, so a column rename fails a rule test.
+// ---------------------------------------------------------------------------
+
+import { createWatchRuntime, type WatchRuntime } from "../src/watch/module.js";
+
+/** A fixed instant so every fixture's arithmetic is readable. */
+export const T0 = Date.parse("2026-09-01T12:00:00.000Z");
+
+export function iso(offsetMs: number): string {
+  return new Date(T0 + offsetMs).toISOString();
+}
+
+export interface SeedItem {
+  seq: number;
+  kind: string;
+  name?: string;
+  path?: string | null;
+  fingerprint?: string | null;
+  /** Offset from T0 in ms; negative is in the past. */
+  startedAt: number;
+  /** Omit to leave the item in flight. */
+  completedAt?: number;
+  turnId?: string;
+}
+
+export interface SeedTurn {
+  turnId: string;
+  seqStarted: number;
+  startedAt: number;
+  completedAt?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+  compacted?: boolean;
+  errorCategory?: string;
+  willRetry?: boolean;
+}
+
+export interface WatchFixture {
+  host: FakePluginHost;
+  runtime: WatchRuntime;
+  store: ObservatoryStore;
+  db: Database.Database;
+  /** Mutable; a test edits it then calls `runtime.refresh()`. */
+  settingValues: Record<string, string | boolean | undefined>;
+  /** Every `bb.realtime.publish` the ladder made. */
+  published(): Array<{ channel: string; payload: unknown }>;
+  seedThread(options?: {
+    threadId?: string;
+    title?: string;
+    seat?: string | null;
+    status?: string;
+    rootThreadId?: string;
+  }): string;
+  seedTurns(threadId: string, turns: readonly SeedTurn[]): void;
+  seedItems(threadId: string, items: readonly SeedItem[]): void;
+  dispose(): void;
+}
+
+/**
+ * A watch runtime over a fake host with a frozen clock. `clock.now` is read
+ * per call, so a test advances time by assigning to it.
+ */
+export function makeWatchFixture(
+  settingValues: Record<string, string | boolean | undefined> = {},
+  clock: { now: number } = { now: T0 },
+): WatchFixture {
+  const host = createFakePluginHost({ pluginId: "observatory" });
+  const db = host.bb.storage.database();
+  host.bb.storage.migrate(db, MIGRATIONS);
+  const store = new ObservatoryStore(db);
+  const runtime = createWatchRuntime({
+    bb: host.bb,
+    db,
+    settings: async () => settingValues,
+    now: () => clock.now,
+  });
+
+  return {
+    host,
+    runtime,
+    store,
+    db,
+    settingValues,
+    published: () => host.harness.inspection.realtimeSignals,
+    seedThread(options = {}) {
+      const threadId = options.threadId ?? "thr-watch";
+      store.upsertThread({
+        thread_id: threadId,
+        title: options.title ?? "[obs-test] loop",
+        seat: options.seat ?? null,
+        status: options.status ?? "active",
+        root_thread_id: options.rootThreadId ?? threadId,
+        depth: 0,
+      });
+      return threadId;
+    },
+    seedTurns(threadId, turns) {
+      for (const turn of turns) {
+        store.upsertTurn({
+          thread_id: threadId,
+          turn_id: turn.turnId,
+          root_thread_id: threadId,
+          seq_started: turn.seqStarted,
+          started_at: iso(turn.startedAt),
+          completed_at:
+            turn.completedAt === undefined ? null : iso(turn.completedAt),
+          input_tokens: turn.inputTokens ?? 0,
+          output_tokens: turn.outputTokens ?? 0,
+          cost_usd: turn.costUsd ?? 0,
+          compacted: turn.compacted ? 1 : 0,
+          error_category: turn.errorCategory ?? null,
+          will_retry: turn.willRetry ? 1 : 0,
+        });
+      }
+    },
+    seedItems(threadId, items) {
+      for (const item of items) {
+        store.upsertItem({
+          item_id: `item-${threadId}-${item.seq}`,
+          thread_id: threadId,
+          turn_id: item.turnId ?? "turn-1",
+          seq: item.seq,
+          kind: item.kind,
+          name: item.name ?? item.kind,
+          status: item.completedAt === undefined ? "pending" : "completed",
+          started_at: iso(item.startedAt),
+          completed_at:
+            item.completedAt === undefined ? null : iso(item.completedAt),
+          path: item.path ?? null,
+          input_fingerprint: item.fingerprint ?? null,
+        });
+      }
+    },
+    dispose() {
+      db.close();
+    },
+  };
+}
+
+/**
+ * The healthy control every rule test asserts against: an active thread with
+ * a turn in flight, a tool call running, and a file change moments ago.
+ */
+export function seedHealthyThread(fixture: WatchFixture): string {
+  const threadId = fixture.seedThread({ threadId: "thr-healthy" });
+  fixture.seedTurns(threadId, [
+    { turnId: "turn-1", seqStarted: 1, startedAt: -30_000 },
+  ]);
+  fixture.seedItems(threadId, [
+    {
+      seq: 2,
+      kind: "fileChange",
+      path: "src/a.ts",
+      startedAt: -20_000,
+      completedAt: -19_000,
+    },
+    {
+      seq: 3,
+      kind: "toolCall",
+      name: "Bash",
+      fingerprint: "fp-unique",
+      startedAt: -5_000,
+    },
+  ]);
+  return threadId;
+}

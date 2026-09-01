@@ -87,11 +87,26 @@ export interface IngestOptions {
   onThreadCommitted?: (threadId: string) => void;
 }
 
+/** Notified after a thread's drain lands, with the rows that batch wrote. */
+export type DrainListener = (threadId: string, ingested: number) => void;
+
 export interface Ingest {
   start(signal: AbortSignal): Promise<void>;
   markDirty(threadId: string): void;
   drainOnce(): Promise<number>;
   drainThread(threadId: string): Promise<number>;
+  /**
+   * Watch the drain instead of opening a second `thread:changed` subscription.
+   *
+   * The analyzer modules need to know a thread just moved, and the only reason
+   * this hook exists is that the alternative — one subscription per module —
+   * multiplies the push stream by the module count and still races the drain
+   * it is trying to observe. A listener runs after the batch is committed, so
+   * it reads a settled ledger, and a throwing listener is logged and
+   * swallowed: an analyzer must not be able to stall ingest. Returns the
+   * unsubscribe.
+   */
+  onDrained(listener: DrainListener): () => void;
   /** Forget how far these threads were drained; the next drain re-reads all. */
   reset(threadIds: readonly string[]): void;
   reconcileStale(): Promise<number>;
@@ -137,8 +152,31 @@ export function createIngest(options: IngestOptions): Ingest {
     lastJoin: null,
   };
 
+  const drainListeners = new Set<DrainListener>();
+
   function markDirty(threadId: string): void {
     if (threadId) dirty.add(threadId);
+  }
+
+  function onDrained(listener: DrainListener): () => void {
+    drainListeners.add(listener);
+    return () => {
+      drainListeners.delete(listener);
+    };
+  }
+
+  function notifyDrained(threadId: string, ingested: number): void {
+    for (const listener of drainListeners) {
+      try {
+        listener(threadId, ingested);
+      } catch (error) {
+        bb.log.warn(
+          `[core] drain listener failed for ${threadId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
   }
 
   /**
@@ -275,6 +313,7 @@ export function createIngest(options: IngestOptions): Ingest {
         );
       }
     }
+    notifyDrained(threadId, ingested);
     return ingested;
   }
 
@@ -424,6 +463,7 @@ export function createIngest(options: IngestOptions): Ingest {
   return {
     start,
     markDirty,
+    onDrained,
     drainOnce,
     drainThread,
     reset,
