@@ -5,7 +5,7 @@
 // turns in the order PRODUCT invariant 18 fixes. The classified cause is the
 // first of those correlates, so showing the whole list is what makes the
 // classification auditable rather than a verdict.
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Heading } from "@/components/spend-common";
 import { QueryFrame } from "@/components/spend-common";
 import {
@@ -22,6 +22,7 @@ import {
   readStoredFilters,
   resolveFilters,
   syncFilterSearch,
+  type Filters,
 } from "@/lib/filters";
 import type { CacheMissRow, SpendCacheMisses } from "../../spend/contract.js";
 
@@ -105,20 +106,24 @@ export function CostCache({ threadId }: { threadId?: string }) {
   // overview reconciles those two on mount, so arriving here through
   // `toPluginPanel` - which carries a subPath and drops the query - inherits
   // the range that was on screen rather than a stale sticky one.
-  const filters =
+  // Resolved once on mount, like the overview does it: reading storage on
+  // every render would re-parse the same JSON for a value that cannot change
+  // while this page is up.
+  const [filters] = useState<Filters>(() =>
     typeof window === "undefined"
       ? DEFAULT_FILTERS
       : resolveFilters(
           new URLSearchParams(window.location.search),
           readStoredFilters(),
-        );
+        ),
+  );
   const range = filters.range;
 
   // The drilldown's own address states its range, so it survives a reload and
   // can be copied.
   useEffect(() => {
     syncFilterSearch(filters);
-  }, [range, filters.group, filters.host, filters.provider]);
+  }, [filters]);
 
   const query = useSpendQuery<SpendCacheMisses>(
     "observatory_spend_cache_misses",
