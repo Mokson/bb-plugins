@@ -14,6 +14,7 @@ describe("parseSettings", () => {
       showProjectName: true,
       showBranch: true,
       showModel: true,
+      showEffort: false,
     });
   });
 
@@ -30,6 +31,7 @@ describe("parseSettings", () => {
         showProjectName: false,
         showBranch: false,
         showModel: false,
+        showEffort: false,
       }),
     ).toEqual({
       groupBy: "host",
@@ -42,6 +44,7 @@ describe("parseSettings", () => {
       showProjectName: false,
       showBranch: false,
       showModel: false,
+      showEffort: false,
     });
   });
 
@@ -63,6 +66,7 @@ describe("parseSettings", () => {
     "showProjectName",
     "showBranch",
     "showModel",
+    "showEffort",
   ] as const)("falls back to the default on an unknown %s value (B59.2)", (key) => {
     expect(parseSettings({ [key]: "bogus" })).toEqual(SETTINGS_DEFAULTS);
   });

@@ -296,6 +296,7 @@ function ThreadListBody({
               showPrChip={settings.showPrChip}
               showProjectName={settings.showProjectName}
               showBranch={settings.showBranch}
+              showEffort={settings.showEffort}
               showRelativeTime={settings.showRelativeTime}
               showSignals={settings.density === "detailed"}
               isCompactViewport={isCompactViewport}
@@ -351,10 +352,10 @@ function SectionHeader({
   // are buttons too — one interactive element inside another is invalid, and
   // a click on the display menu would toggle the section under it.
   const rowClass = cn(
-    // `px-2` is the row's own inset, so a header's label starts on the same x
-    // as the leading MARK of every row beneath it — which is where bb's own
-    // sidebar puts it.
-    "group/section flex w-full items-center gap-1.5 px-2 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide",
+    // `px-1` mirrors the row's own inset (`ROW_INSET_PX`, B74), so a
+    // header's label starts on the same x as the leading MARK of every row
+    // beneath it — which is where bb's own sidebar puts it.
+    "group/section flex w-full items-center gap-1.5 px-1 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide",
     "text-muted-foreground",
     dimClassFor(section),
   );

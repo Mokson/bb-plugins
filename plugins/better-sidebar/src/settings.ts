@@ -22,6 +22,8 @@ export const SETTINGS_DEFAULTS: BetterSidebarSettings = {
   showProjectName: true,
   showBranch: true,
   showModel: true,
+  /** B84: effort off by default - the model alone is the common need. */
+  showEffort: false,
 };
 
 /**
@@ -57,6 +59,7 @@ export function parseSettings(
     ),
     showBranch: flag(values?.showBranch, SETTINGS_DEFAULTS.showBranch),
     showModel: flag(values?.showModel, SETTINGS_DEFAULTS.showModel),
+    showEffort: flag(values?.showEffort, SETTINGS_DEFAULTS.showEffort),
   };
 }
 

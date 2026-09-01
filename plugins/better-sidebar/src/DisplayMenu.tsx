@@ -109,7 +109,7 @@ export function DisplayMenu({
       data-better-sidebar-display-options=""
       // Inline in the first section header now, not a row of its own: no
       // height and no vertical padding, or it would stretch the header it
-      // sits in. The header carries the row's 8px inset for both.
+      // sits in. The header carries the row's inset (`ROW_INSET_PX`) for both.
       className="relative flex items-center gap-1"
     >
       {scopedProject === null ? null : (

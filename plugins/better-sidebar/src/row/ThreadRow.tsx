@@ -34,11 +34,17 @@ const DEPTH_INDENT_PX = 12;
  * separates that background from the panel edge, so the row nests one inset
  * inside another, as bb's own list does.
  *
+ * B74, against bb's own 8px: Max asked for tighter side paddings on the nav
+ * item, and the inset halves to 4px. The container's 8px column is untouched
+ * — that is the panel's gutter, and the hover background keeps its distance
+ * from the panel edge — so a row's content sits 12px from each edge instead
+ * of 16px.
+ *
  * One constant drives both sides, because the whole point is that they match:
  * `paddingLeft` also carries the depth indent, so writing the right side as a
  * class would put the two halves of one decision in two places.
  */
-const ROW_INSET_PX = 8;
+const ROW_INSET_PX = 4;
 
 /**
  * B57.2, superseding B51.1: the chevron's box, drawn only on a parent row and
@@ -80,6 +86,8 @@ export interface ThreadRowProps {
   /** B59: row 2's project name and branch. */
   showProjectName?: boolean;
   showBranch?: boolean;
+  /** B84: row 2's effort, the half of the model label after the dot. */
+  showEffort?: boolean;
   /** B59: the row's own relative time, at the right edge. */
   showRelativeTime?: boolean;
   /** B61.2: `false` mounts no `IntersectionObserver` and sends no `rowSignals`. */
@@ -134,6 +142,7 @@ function RowBody({
   execution = null,
   showProjectName = true,
   showBranch = true,
+  showEffort = true,
   showRelativeTime = true,
   showSignals = true,
   isCompactViewport,
@@ -408,12 +417,14 @@ function RowBody({
                     providerId={thread.providerId}
                     showProjectName={showProjectName}
                     showBranch={showBranch}
+                    showEffort={showEffort}
                     execution={execution}
                   />
                 ) : (
                   <ChildSecondRow
                     row={row}
                     providerId={thread.providerId}
+                    showEffort={showEffort}
                     execution={execution}
                   />
                 )}

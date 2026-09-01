@@ -57,11 +57,12 @@ const baseProps = {
   providerId: null,
   showProjectName: true,
   showBranch: true,
+  showEffort: true,
   execution: { model: "claude-opus-5", reasoningLevel: "low" } as const,
 };
 
-function renderSecondRow() {
-  return render(<SecondRow {...baseProps} />);
+function renderSecondRow(overrides: Partial<typeof baseProps> = {}) {
+  return render(<SecondRow {...baseProps} {...overrides} />);
 }
 
 /**
@@ -72,6 +73,18 @@ function renderSecondRow() {
  * `offsetWidth` and re-rendering, which re-runs the pass.
  */
 describe("SecondRow equal truncation", () => {
+  it("renders the effort with the model, and the model alone when effort is off (B84)", () => {
+    const { container, rerender } = renderSecondRow();
+    const label = () =>
+      container
+        .querySelector<HTMLElement>("[data-better-sidebar-row2='model']")!
+        .textContent;
+    expect(label()).toBe("claude-opus-5 · low");
+
+    rerender(<SecondRow {...baseProps} showEffort={false} />);
+    expect(label()).toBe("claude-opus-5");
+  });
+
   it("weights each label so its shrink × natural product is equal", () => {
     const { container, rerender } = renderSecondRow();
     const labels = container.querySelectorAll<HTMLElement>(

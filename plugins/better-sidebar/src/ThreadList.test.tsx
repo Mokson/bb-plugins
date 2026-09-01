@@ -851,17 +851,17 @@ describe("ThreadList — the host's 8px column (B73)", () => {
 
     // Superseding B73.2. Two insets in series, on purpose: the container's
     // separates each row's rounded background from the panel edge, and the
-    // row's own separates its content from that background's edges. The
-    // header takes the same second inset so its label lands on the row's
-    // leading mark.
+    // row's own (B74: 4px) separates its content from that background's
+    // edges. The header takes the same second inset so its label lands on
+    // the row's leading mark.
     expect(hPadding(listBox())).toEqual(["px-2"]);
-    expect(hPadding(headerBox())).toEqual(["px-2"]);
+    expect(hPadding(headerBox())).toEqual(["px-1"]);
 
     // The row carries its inset as an inline style, symmetric and carrying
     // the depth indent, so it declares no padding class at all.
     expect(hPadding(rowBox())).toEqual([]);
-    expect((rowBox() as HTMLElement).style.paddingLeft).toBe("8px");
-    expect((rowBox() as HTMLElement).style.paddingRight).toBe("8px");
+    expect((rowBox() as HTMLElement).style.paddingLeft).toBe("4px");
+    expect((rowBox() as HTMLElement).style.paddingRight).toBe("4px");
   });
 
   /**
@@ -881,12 +881,12 @@ describe("ThreadList — the host's 8px column (B73)", () => {
     const boxes = Array.from(
       document.querySelectorAll("[data-better-sidebar-row]"),
     ).map((node) => node.firstElementChild as HTMLElement);
-    // 8px base inset, then one 12px nesting step for the child.
-    expect(boxes[0].style.paddingLeft).toBe("8px");
-    expect(boxes[1].style.paddingLeft).toBe("20px");
+    // 4px base inset, then one 12px nesting step for the child.
+    expect(boxes[0].style.paddingLeft).toBe("4px");
+    expect(boxes[1].style.paddingLeft).toBe("16px");
     // Both keep the same right inset, so their trailing edges line up.
-    expect(boxes[0].style.paddingRight).toBe("8px");
-    expect(boxes[1].style.paddingRight).toBe("8px");
+    expect(boxes[0].style.paddingRight).toBe("4px");
+    expect(boxes[1].style.paddingRight).toBe("4px");
   });
 });
 
@@ -990,7 +990,7 @@ describe("ThreadList — a child row's second line", () => {
 
   it("draws model and effort under an expanded child", async () => {
     threadsState = ready(child());
-    const slot = renderList({}, undefined, {
+    const slot = renderList({}, { showEffort: "true" }, {
       threadExecutions: ({ threadIds }: { threadIds: string[] }) => ({
         executions: threadIds.map((threadId) => ({
           threadId,
@@ -1074,9 +1074,31 @@ describe("ThreadList — a child row's second line", () => {
     ).toHaveLength(0);
   });
 
+  /**
+   * B84: effort ships off. With the default settings the row names the model
+   * alone, and the dot never reaches the DOM.
+   */
+  it("names the model alone unless showEffort is on", async () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    renderList({}, undefined, {
+      threadExecutions: ({ threadIds }: { threadIds: string[] }) => ({
+        executions: threadIds.map((threadId) => ({
+          threadId,
+          execution: { model: "claude-opus-5", reasoningLevel: "high" },
+        })),
+      }),
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText(/^claude-opus-5$/)).not.toBeNull();
+    expect(screen.queryByText(/· high/)).toBeNull();
+  });
+
   it("covers root rows too, in the one batch", async () => {
     threadsState = ready([thread({ id: "solo" })]);
-    const slot = renderList({}, undefined, {
+    const slot = renderList({}, { showEffort: "true" }, {
       threadExecutions: ({ threadIds }: { threadIds: string[] }) => ({
         executions: threadIds.map((threadId) => ({
           threadId,
@@ -1145,7 +1167,7 @@ describe("ThreadList — one leading column", () => {
     renderList();
 
     const row = screen.getByRole("button", { name: /today/i }).closest("h2")!;
-    expect(row.className).toContain("px-2");
+    expect(row.className).toContain("px-1");
     // No reserved column: the label is the first thing on the line.
     const toggle = row.firstElementChild!;
     expect(toggle.firstElementChild!.className).not.toContain("w-[22px]");
