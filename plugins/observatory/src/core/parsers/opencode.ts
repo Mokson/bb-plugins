@@ -12,8 +12,9 @@
 import { basename } from "node:path";
 import {
   type DatabaseLogParser,
+  type DatabaseScanRequest,
+  type DatabaseScanResult,
   type ParseContext,
-  type ParsedLogTurn,
 } from "./types.js";
 import { openReadOnly, type ReadOnlyDatabase } from "./sqlite.js";
 
@@ -44,11 +45,13 @@ const SCAN_SQL = `
          json_extract(data, '$.tokens.cache.read')     AS cacheRead,
          json_extract(data, '$.tokens.cache.write')    AS cacheWrite
     FROM message
-   WHERE json_extract(data, '$.role') = 'assistant'
+   WHERE time_created >= ?
+     AND json_extract(data, '$.role') = 'assistant'
      AND (json_extract(data, '$.tokens.total')      > 0
        OR json_extract(data, '$.tokens.cache.read') > 0
        OR json_extract(data, '$.tokens.cache.write')> 0)
    ORDER BY time_created ASC, id ASC
+   LIMIT ?
 `;
 
 interface ScanRow {
@@ -81,12 +84,31 @@ function tokensOrNull(value: number | null): number | null {
 
 export function scanOpencodeDatabase(
   path: string,
+  request: DatabaseScanRequest,
   open: (file: string) => ReadOnlyDatabase = openReadOnly,
-): ParsedLogTurn[] {
+): DatabaseScanResult {
   const db = open(path);
   try {
-    const rows = db.prepare<[], ScanRow>(SCAN_SQL).all();
-    return rows.map((row) => ({
+    // One row past the page, so "is there more" is answered by the query
+    // rather than by guessing from a full page.
+    const page = db
+      .prepare<[number, number], ScanRow>(SCAN_SQL)
+      .all(request.sinceCursor, request.limit + 1);
+    const done = page.length <= request.limit;
+    const taken = done ? page : page.slice(0, request.limit);
+
+    // The cursor is the last row's `time_created`, and the next scan includes
+    // it again: rows sharing one millisecond must not be split across pages.
+    // The one case that would stall is a full page whose rows ALL carry the
+    // resume timestamp, so that page advances by a millisecond instead.
+    const last = taken[taken.length - 1]?.timeCreated ?? null;
+    let cursor = request.sinceCursor;
+    if (last !== null && Number.isFinite(last)) {
+      cursor = Math.max(cursor, last);
+      if (!done && cursor === request.sinceCursor) cursor = request.sinceCursor + 1;
+    }
+
+    const rows = taken.map((row) => ({
       provider: OPENCODE_PROVIDER,
       providerThreadId: row.sessionId,
       // `$.time.completed` is when the call actually finished; the row is
@@ -121,6 +143,7 @@ export function scanOpencodeDatabase(
       skillNames: [],
       mcpNames: [],
     }));
+    return { rows, cursor, done };
   } finally {
     db.close();
   }
@@ -130,5 +153,5 @@ export const opencodeParser: DatabaseLogParser = {
   provider: OPENCODE_PROVIDER,
   matches: isOpencodeStore,
   parseLines: (_lines: string[], _ctx: ParseContext) => [],
-  scanDatabase: (path) => scanOpencodeDatabase(path),
+  scanDatabase: (path, request) => scanOpencodeDatabase(path, request),
 };

@@ -177,4 +177,60 @@ export const MIGRATIONS: string[] = [
      key   TEXT PRIMARY KEY,
      value TEXT
    )`,
+  // ---------------------------------------------------------------------
+  // `obs_log_turn` rebuild: a `path` column, and `ts` as a real INTEGER.
+  //
+  // Two defects share one rebuild because SQLite cannot change a column's
+  // type in place and a second rebuild would copy the table twice.
+  //
+  //  - `path`. Rows were pruned by (provider, provider_thread_id), which is
+  //    not the identity of a FILE. Codex moves finished rollouts from
+  //    `~/.codex/sessions` to `~/.codex/archived_sessions`; both roots are
+  //    scanned, so pruning the vanished old path deleted the rows the new
+  //    path had just written. The `IS NULL` form of that delete was worse
+  //    still: it took every null-thread row the provider had.
+  //  - `ts`. Declared TEXT, so SQLite's TEXT affinity stored the bound
+  //    integer as a string. Range comparisons only worked by the accident
+  //    that epoch milliseconds are 13 digits wide today; the first
+  //    narrower value (a second-resolution stamp, a 1970 default) sorts
+  //    ahead of everything and silently drops out of every window query.
+  //
+  // Copied rows carry a null `path`: it cannot be recovered from the row.
+  // `PARSER_VERSION` is bumped alongside this migration, so every file is
+  // reparsed once and re-upserts its rows with the path filled in.
+  `ALTER TABLE obs_log_turn RENAME TO obs_log_turn_v1`,
+  `CREATE TABLE obs_log_turn (
+     log_key            TEXT PRIMARY KEY,
+     provider           TEXT,
+     provider_thread_id TEXT,
+     path               TEXT,
+     ts                 INTEGER,
+     model              TEXT,
+     input              INTEGER,
+     cache_read         INTEGER,
+     cache_write        INTEGER,
+     output             INTEGER,
+     reasoning          INTEGER,
+     logged_cost_usd    REAL,
+     is_sidechain       INTEGER,
+     agent_id           TEXT,
+     cwd                TEXT,
+     skill_names        TEXT,
+     mcp_names          TEXT
+   )`,
+  `INSERT INTO obs_log_turn (
+     log_key, provider, provider_thread_id, path, ts, model, input,
+     cache_read, cache_write, output, reasoning, logged_cost_usd,
+     is_sidechain, agent_id, cwd, skill_names, mcp_names
+   )
+   SELECT log_key, provider, provider_thread_id, NULL, CAST(ts AS INTEGER),
+          model, input, cache_read, cache_write, output, reasoning,
+          logged_cost_usd, is_sidechain, agent_id, cwd, skill_names, mcp_names
+     FROM obs_log_turn_v1`,
+  // Takes the old `obs_log_turn_session` index with it: an index follows its
+  // table through a rename, so the name is free again below.
+  `DROP TABLE obs_log_turn_v1`,
+  `CREATE INDEX IF NOT EXISTS obs_log_turn_session
+     ON obs_log_turn (provider, provider_thread_id, ts)`,
+  `CREATE INDEX IF NOT EXISTS obs_log_turn_path ON obs_log_turn (path)`,
 ];

@@ -86,7 +86,7 @@ describe.skipIf(!built)("the SQLite-backed providers", () => {
     // The community scanner fills that hole with a chars/3.6 estimate; storing
     // an estimate in the same column as a measurement is how a made-up dollar
     // figure reaches the cost page.
-    const rows = scanCursorDatabase(cursorPath);
+    const { rows } = scanCursorDatabase(cursorPath);
 
     expect(rows).toHaveLength(1);
     expect(rows[0].providerThreadId).toBe("0cb8be45-1111-2222-3333-444455556666");
@@ -102,7 +102,10 @@ describe.skipIf(!built)("the SQLite-backed providers", () => {
   });
 
   it("read OpenCode's split, its model, its upstream provider and its own cost", () => {
-    const rows = scanOpencodeDatabase(opencodePath);
+    const { rows } = scanOpencodeDatabase(opencodePath, {
+      sinceCursor: 0,
+      limit: 100,
+    });
 
     expect(rows).toHaveLength(1);
     const [row] = rows;

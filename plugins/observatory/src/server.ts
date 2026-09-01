@@ -66,6 +66,21 @@ function expandHome(path: string): string {
   return path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
 }
 
+/**
+ * Log bytes one scheduled pass may parse, in megabytes.
+ *
+ * Measured rather than guessed. On a machine holding 2,685 session files and
+ * 2.5GB of logs, a COLD pass over all eight roots costs 305ms at this budget
+ * and 318ms at twice it: the pass stops on the row cap long before it stops on
+ * bytes, and a warm pass costs only the walk. The old 5MB meant a cold start
+ * needed hundreds of five-minute ticks, close to two days, to reach steady
+ * state, and in practice never got past the first root at all.
+ *
+ * The ceiling that actually bounds a pass is `MAX_ROWS_PER_PASS`. This one
+ * exists so a single enormous log cannot monopolise a pass.
+ */
+const DEFAULT_INDEX_BUDGET_MB = 256;
+
 function moduleToggle(id: ModuleId): PluginSettingDescriptor {
   return {
     type: "boolean",
@@ -97,6 +112,13 @@ export const SETTING_DESCRIPTORS = {
     type: "string",
     label: "Pricing refresh (hours)",
     default: "24",
+  },
+  "index_budgetMb": {
+    type: "string",
+    label: "Log indexer: bytes read per pass (MB)",
+    description:
+      "Upper bound on log bytes parsed in one five-minute pass. Unchanged files cost nothing, so this is only spent on new content.",
+    default: String(DEFAULT_INDEX_BUDGET_MB),
   },
   "retention_itemsDays": {
     type: "string",
@@ -161,6 +183,12 @@ export interface CoreRuntime {
   store: ObservatoryStore;
   events: EventStore;
   ingest: Ingest;
+  /**
+   * Null when the log stack could not load. Exposed so `bb observatory index`
+   * drives the SAME indexer as the scheduled pass rather than building a
+   * second one over the same database.
+   */
+  indexer: LogIndexer | null;
 }
 
 export interface CoreHandle {
@@ -260,6 +288,16 @@ function parseHours(value: string | boolean | undefined, fallback: number) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+/** The pass budget, from the setting, falling back to the measured default. */
+function indexBudget(
+  value: string | boolean | undefined,
+): { maxBytes: number } {
+  const parsed = Number.parseFloat(typeof value === "string" ? value : "");
+  const megabytes =
+    Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_INDEX_BUDGET_MB;
+  return { maxBytes: Math.round(megabytes * 1024 * 1024) };
+}
+
 /**
  * Core: the only writer of the ledger. It owns the ingest service, the stale
  * reconcile, the log pass and the pricing refresh, and hands the CLI a handle
@@ -292,7 +330,7 @@ export function createCoreModule(
         priceTurn: stack?.priceTurn ?? null,
         catalog: stack?.catalog,
       });
-      handle.current = { store, events, ingest };
+      handle.current = { store, events, ingest, indexer: stack?.indexer ?? null };
 
       bb.background.service("ingest", {
         start: (signal) => ingest.start(signal),
@@ -309,7 +347,13 @@ export function createCoreModule(
         "*/5 * * * *",
         ctx.job("logs", async () => {
           if (!stack) return;
-          await stack.indexer.runOnce({ maxBytes: 5_000_000 });
+          // Re-read every tick: the budget is the one setting a person reaches
+          // for when a cold start is taking too long, and a reload to apply it
+          // would drop the ingest subscription with it.
+          const current = await settings();
+          await stack.indexer.runOnce(
+            indexBudget(current["index_budgetMb"]),
+          );
           ingest.rejoinPending();
         }),
       );
@@ -354,6 +398,7 @@ const USAGE = [
   "  status     Module states, breaker counts, store counts, settings",
   "  doctor     Database, migrations, and provider log roots",
   "  coverage   Turn split coverage: log-exact, log-window, sidechain, n/a",
+  "  index      Run log index passes now: [--budget-mb N] [--passes N]",
   "  backfill   Drain history and re-join it: --since <ISO|Nd> [--provider p]",
   "             --reset  re-read every event; rebuilds derived rows, never",
   "                      touches provider logs",
@@ -624,6 +669,52 @@ async function backfill(
   };
 }
 
+/**
+ * Run index passes on demand.
+ *
+ * The scheduled pass runs every five minutes and stops at its budget, which
+ * makes "did the indexer reach OpenCode yet" a question nobody can answer
+ * without waiting. This answers it: it drives the same indexer, reports what
+ * each pass moved, and stops early once a pass reports `done`, because a pass
+ * with nothing left to read is the answer.
+ */
+async function indexNow(
+  runtime: CoreRuntime,
+  argv: readonly string[],
+  budgetSetting: string | boolean | undefined,
+): Promise<{ exitCode: number; stdout?: string; stderr?: string }> {
+  const indexer = runtime.indexer;
+  if (!indexer) {
+    return { exitCode: 1, stderr: "log stack is not loaded\n" };
+  }
+  const budgetMb = flagValue(argv, "budget-mb");
+  const budget = indexBudget(budgetMb ?? budgetSetting);
+  const passesRaw = Number.parseInt(flagValue(argv, "passes") ?? "1", 10);
+  const passes =
+    Number.isFinite(passesRaw) && passesRaw > 0 ? Math.min(passesRaw, 100) : 1;
+
+  const lines: string[] = [];
+  let files = 0;
+  let rows = 0;
+  for (let pass = 1; pass <= passes; pass += 1) {
+    const started = Date.now();
+    const result = await indexer.runOnce(budget);
+    files += result.files;
+    rows += result.rows;
+    lines.push(
+      `pass ${pass}  files ${result.files}  rows ${result.rows}  ` +
+        `${Date.now() - started}ms  ${result.done ? "done" : "more pending"}`,
+    );
+    if (result.done) break;
+  }
+  lines.push(
+    `total   files ${files}  rows ${rows}  budget ${Math.round(
+      budget.maxBytes / (1024 * 1024),
+    )}MB per pass`,
+  );
+  return { exitCode: 0, stdout: `${lines.join("\n")}\n` };
+}
+
 export default async function observatory(bb: BbPluginApi): Promise<void> {
   const settings = bb.settings.define(SETTING_DESCRIPTORS);
   const readSettings = async (): Promise<
@@ -686,6 +777,12 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
         usage: "bb observatory coverage",
       },
       {
+        name: "index",
+        summary:
+          "Run log index passes now instead of waiting for the five-minute schedule.",
+        usage: "bb observatory index [--budget-mb <N>] [--passes <N>]",
+      },
+      {
         name: "backfill",
         summary:
           "Drain thread history from --since, re-index the logs, and report coverage.",
@@ -704,7 +801,11 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
           )}\n`,
         };
       }
-      if (command === "coverage" || command === "backfill") {
+      if (
+        command === "coverage" ||
+        command === "backfill" ||
+        command === "index"
+      ) {
         const runtime = core.current;
         if (!runtime) {
           return { exitCode: 1, stderr: "core module is not running\n" };
@@ -714,6 +815,10 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
             exitCode: 0,
             stdout: `${formatCoverage(runtime.events.coverage())}\n`,
           };
+        }
+        if (command === "index") {
+          const values = await readSettings();
+          return indexNow(runtime, argv.slice(1), values["index_budgetMb"]);
         }
         return backfill(bb, runtime, argv.slice(1));
       }

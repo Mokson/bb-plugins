@@ -20,9 +20,17 @@ const REMOTE = {
   },
 };
 
-function fakeFetch(body: unknown) {
-  return vi.fn(async (url: string | URL | Request, _init?: RequestInit) =>
-    ({ ok: true, json: async () => body, url: String(url) }) as unknown as Response,
+// `text`, not `json`: the loader reads the body as text so it can refuse one
+// that is too large before parsing it.
+function fakeFetch(body: unknown, headers: Record<string, string> = {}) {
+  return vi.fn(
+    async (url: string | URL | Request, _init?: RequestInit) =>
+      ({
+        ok: true,
+        text: async () => JSON.stringify(body),
+        headers: new Headers(headers),
+        url: String(url),
+      }) as unknown as Response,
   );
 }
 
