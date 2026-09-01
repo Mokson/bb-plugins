@@ -355,6 +355,8 @@ const USAGE = [
   "  doctor     Database, migrations, and provider log roots",
   "  coverage   Turn split coverage: log-exact, log-window, sidechain, n/a",
   "  backfill   Drain history and re-join it: --since <ISO|Nd> [--provider p]",
+  "             --reset  re-read every event; rebuilds derived rows, never",
+  "                      touches provider logs",
 ].join("\n");
 
 export interface StatusDeps {
@@ -478,6 +480,11 @@ export function flagValue(argv: readonly string[], name: string): string | undef
   return index === -1 ? undefined : argv[index + 1];
 }
 
+/** `--reset` style switches, which carry no value. */
+export function hasFlag(argv: readonly string[], name: string): boolean {
+  return argv.includes(`--${name}`);
+}
+
 export interface DoctorCheck {
   name: string;
   ok: boolean;
@@ -572,10 +579,11 @@ async function backfill(
     };
   }
   const provider = flagValue(argv, "provider");
+  const reset = hasFlag(argv, "reset");
   // Page the thread list. A single 500-row request silently truncated the
   // backfill on any bb install with more history than that, and the coverage
   // number it printed looked complete.
-  let drained = 0;
+  const selected: string[] = [];
   for (let offset = 0; ; offset += BACKFILL_PAGE) {
     const page = await bb.sdk.threads.list({
       includeHidden: true,
@@ -586,11 +594,17 @@ async function backfill(
     for (const thread of page) {
       if (thread.createdAt < since) continue;
       if (provider !== undefined && thread.providerId !== provider) continue;
-      runtime.ingest.markDirty(thread.id);
-      drained += 1;
+      selected.push(thread.id);
     }
     if (page.length < BACKFILL_PAGE) break;
   }
+  const drained = selected.length;
+  // A plain backfill resumes from each thread's watermark, so an event already
+  // folded in is never re-read — which means a column the ledger learned to
+  // keep only AFTER that thread was drained stays empty forever. `--reset`
+  // rewinds the watermark so the whole history is re-derived.
+  if (reset) runtime.ingest.reset(selected);
+  else for (const threadId of selected) runtime.ingest.markDirty(threadId);
   // Drain until the dirty set stops SHRINKING. Testing for an empty set spins
   // the full 100 passes whenever one thread is permanently unreadable, since a
   // failed drain re-queues itself and the set never reaches zero.
@@ -675,7 +689,8 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
         name: "backfill",
         summary:
           "Drain thread history from --since, re-index the logs, and report coverage.",
-        usage: "bb observatory backfill --since <ISO|Nd> [--provider <id>]",
+        usage:
+          "bb observatory backfill --since <ISO|Nd> [--provider <id>] [--reset]",
       },
     ],
     async run(argv) {

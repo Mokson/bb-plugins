@@ -84,6 +84,8 @@ export interface Ingest {
   markDirty(threadId: string): void;
   drainOnce(): Promise<number>;
   drainThread(threadId: string): Promise<number>;
+  /** Forget how far these threads were drained; the next drain re-reads all. */
+  reset(threadIds: readonly string[]): void;
   reconcileStale(): Promise<number>;
   rejoinPending(): JoinSummary | null;
   counters(): IngestCounters;
@@ -257,6 +259,33 @@ export function createIngest(options: IngestOptions): Ingest {
     return ingested;
   }
 
+  /**
+   * Rewind these threads to the start of their event history.
+   *
+   * The watermark and the carry are one fact in two places — "folded up to
+   * seq N, with this much left open" — so they are cleared together, in one
+   * transaction, or a drain would resume with a carry that describes events it
+   * is about to read again. Nothing here reads or writes a provider log: the
+   * rows this drops are all re-derivable from bb's own event stream.
+   */
+  function reset(threadIds: readonly string[]): void {
+    // Prepared per call rather than at construction: this is the rare admin
+    // path, and the drain loop should not carry statements it never runs.
+    const clearWatermark = store.db.prepare(
+      "UPDATE obs_thread SET last_event_seq = NULL WHERE thread_id = ?",
+    );
+    const clearCarry = store.db.prepare("DELETE FROM obs_meta WHERE key = ?");
+    store.db.transaction(() => {
+      for (const threadId of threadIds) {
+        clearWatermark.run(threadId);
+        clearCarry.run(carryKey(threadId));
+        carries.delete(threadId);
+        dirty.add(threadId);
+      }
+    })();
+    counters.dirty = dirty.size;
+  }
+
   async function drainOnce(): Promise<number> {
     const batch = [...dirty];
     dirty.clear();
@@ -351,6 +380,7 @@ export function createIngest(options: IngestOptions): Ingest {
     markDirty,
     drainOnce,
     drainThread,
+    reset,
     reconcileStale,
     rejoinPending,
     counters: () => ({ ...counters, dirty: dirty.size }),
