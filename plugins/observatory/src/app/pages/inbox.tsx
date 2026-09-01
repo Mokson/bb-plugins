@@ -13,11 +13,11 @@ import {
   Hero,
   KeyHelp,
   RowActions,
-  WatchFrame,
+  QueryFrame,
 } from "@/components/watch-common";
 import { formatTime, formatUsd, UNKNOWN } from "@/lib/format";
 import { matchesFilter, rankInboxRows, statusPhrase } from "@/lib/inbox";
-import { useSpendQuery } from "@/lib/spend-rpc";
+import { useModuleQuery } from "@/lib/module-rpc";
 import { useWatchQuery } from "@/lib/watch-rpc";
 import { usePanelKeys } from "@/lib/use-panel-keys";
 import { fixtureInbox } from "@/fixtures/watch";
@@ -34,7 +34,7 @@ import type { SpendToday } from "../../spend/contract.js";
  * recomputed here, so the header and the footer strip cannot disagree.
  */
 function InboxHeader({ counts }: { counts: Inbox["counts"] }) {
-  const today = useSpendQuery<SpendToday>(
+  const today = useModuleQuery<SpendToday>(
     "observatory_spend_today",
     {},
     fixtureToday,
@@ -194,7 +194,7 @@ export function InboxPage() {
   return (
     <section className="flex flex-col gap-3 py-4">
       <Heading>Inbox</Heading>
-      <WatchFrame query={query}>
+      <QueryFrame query={query}>
         {(inbox) => (
           <>
             <InboxHeader counts={inbox.counts} />
@@ -221,7 +221,7 @@ export function InboxPage() {
             <KeyHelp open={helpOpen} />
           </>
         )}
-      </WatchFrame>
+      </QueryFrame>
     </section>
   );
 }

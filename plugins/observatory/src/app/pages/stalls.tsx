@@ -15,7 +15,7 @@ import {
   Heading,
   Hero,
   KeyHelp,
-  WatchFrame,
+  QueryFrame,
 } from "@/components/watch-common";
 import { formatSilence, silenceRatio, UNKNOWN } from "@/lib/format";
 import { useWatchQuery } from "@/lib/watch-rpc";
@@ -272,7 +272,7 @@ export function StallsPage() {
   return (
     <section className="flex flex-col gap-3 py-4">
       <Heading>Stalls</Heading>
-      <WatchFrame query={list}>
+      <QueryFrame query={list}>
         {(data) => (
           <>
             <div className="grid grid-cols-4 gap-6">
@@ -319,7 +319,7 @@ export function StallsPage() {
             <KeyHelp open={helpOpen} />
           </>
         )}
-      </WatchFrame>
+      </QueryFrame>
     </section>
   );
 }

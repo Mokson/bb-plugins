@@ -20,14 +20,19 @@ export const ROUTES = [
   { id: "settings", title: "Settings" },
 ] as const;
 
+/** The Audit tab's own three routes, addressed as `audit/<id>`. */
+export const AUDIT_ROUTES = [
+  { id: "sessions", title: "Sessions" },
+  { id: "failures", title: "Failures" },
+  { id: "insights", title: "Insights" },
+] as const;
+
 /**
- * What each not-yet-built route will hold, one line each. `cost` and `stalls`
- * are absent: they are built, so a placeholder for either would be a second,
- * wrong answer.
+ * What each not-yet-built route will hold, one line each. `cost`, `stalls`,
+ * `context` and `audit` are absent: they are built, so a placeholder for one
+ * of them would be a second, wrong answer.
  */
 export const PLACEHOLDERS: Record<string, string> = {
-  context: "Instruction, skill and MCP composition audit. Phase 4.",
-  audit: "Session metrics, failure ledger and the audit pack. Phase 4.",
   eval: "Deliver-stack regression cases and baselines. Phase 5.",
   distillery: "Correction mining and the draft review queue. Phase 6.",
 };

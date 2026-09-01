@@ -6,49 +6,18 @@
 // most four hero numbers; weights 400 and 600; 24px rows; hairlines, never
 // boxes; radii at most 4px; no emojis; no colour carries meaning, so an
 // uppercase word is the only emphasis a marker gets.
-import type { ReactNode } from "react";
-import { Heading, Hero, PageSkeleton } from "@/components/spend-common";
+import { Heading, Hero, QueryFrame } from "@/components/spend-common";
 import { KEY_HELP } from "@/lib/keys";
 import { LADDER_TOOLTIP, isActionEnabled } from "@/lib/inbox";
-import { WATCH_ABSENT_MESSAGE, type WatchQuery } from "@/lib/watch-rpc";
 import type { InboxAction } from "../../watch/contract.js";
 
-// The heading, the hero number and the pre-data skeleton are the density
-// contract itself, so they come from `spend-common` rather than being written
-// again here: two copies of "what a hero number looks like" is exactly how a
-// density contract stops being one.
-export { Heading, Hero };
-
-/**
- * What a watch surface renders before its data arrives.
- *
- * `absent` is the interesting one: the server half of the watch module may not
- * be installed yet, and the honest answer is the page's own skeleton plus one
- * line. Rendering zeros there would be a lie a reader cannot detect.
- */
-export function WatchFrame<T>({
-  query,
-  children,
-}: {
-  query: WatchQuery<T>;
-  children: (data: T) => ReactNode;
-}) {
-  if (query.kind === "loading") return <PageSkeleton />;
-  if (query.kind === "absent") {
-    return (
-      <div className="flex flex-col gap-3">
-        <PageSkeleton />
-        <p className="text-[11px] text-muted-foreground">
-          {WATCH_ABSENT_MESSAGE}
-        </p>
-      </div>
-    );
-  }
-  if (query.kind === "error") {
-    return <p className="text-[13px] text-muted-foreground">{query.message}</p>;
-  }
-  return <>{children(query.data)}</>;
-}
+// The heading, the hero number and the pre-data frame are the density contract
+// itself, so they come from `spend-common` rather than being written again
+// here: two copies of "what a hero number looks like", or of what a page shows
+// before its data arrives, is exactly how a contract stops being one. The
+// frame's absent line is derived from the method's module name, so a watch-only
+// copy of it would be a second answer free to drift from the first.
+export { Heading, Hero, QueryFrame };
 
 /**
  * One row's actions.

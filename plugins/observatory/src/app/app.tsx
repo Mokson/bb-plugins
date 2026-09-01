@@ -13,11 +13,13 @@ import { ThreadCost } from "./pages/thread-cost.js";
 import { Trajectory } from "./pages/trajectory.js";
 import { NavAccessory } from "./components/nav-accessory.js";
 import { StallBanner } from "./components/stall-banner.js";
+import { ThreadContext } from "./pages/context.js";
+import { ThreadAudit } from "./pages/audit-sessions.js";
 import { mountSidebarUsageStrip } from "./lib/usage/sidebar-strip.js";
 import { mountThreadRowStatus } from "./lib/watch/thread-row-status.js";
 import "./usage-strip.css";
 
-/** The thread panel's Cost tab, rendering the panel route's own component. */
+/** The thread panel's tabs, each rendering the panel route's own component. */
 function ThreadCostTab({ threadId }: PluginThreadPanelProps) {
   return <ThreadCost threadId={threadId} />;
 }
@@ -25,6 +27,14 @@ function ThreadCostTab({ threadId }: PluginThreadPanelProps) {
 /** The thread panel's Trajectory tab, over the same component as the route. */
 function TrajectoryTab({ threadId }: PluginThreadPanelProps) {
   return <Trajectory threadId={threadId} />;
+}
+
+function ThreadContextTab({ threadId }: PluginThreadPanelProps) {
+  return <ThreadContext threadId={threadId} />;
+}
+
+function ThreadAuditTab({ threadId }: PluginThreadPanelProps) {
+  return <ThreadAudit threadId={threadId} />;
 }
 
 export default definePluginApp((app) => {
@@ -75,6 +85,22 @@ export default definePluginApp((app) => {
     banners: [
       { id: "observatory-stalled", chrome: "bare", component: StallBanner },
     ],
+  });
+
+  // The same thread read two more ways: what its window is made of, and how
+  // this session compares with the last seven days of sessions.
+  app.slots.threadPanelAction({
+    id: "observatory-context",
+    title: "Context",
+    icon: "Eye",
+    component: ThreadContextTab,
+  });
+
+  app.slots.threadPanelAction({
+    id: "observatory-audit",
+    title: "Audit",
+    icon: "Eye",
+    component: ThreadAuditTab,
   });
 
   // The absorbed usage-tracker strip plus today's spend. It is a content

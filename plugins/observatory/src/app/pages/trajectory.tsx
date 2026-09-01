@@ -11,10 +11,10 @@
 // table already is.
 import { useCallback } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { Heading, WatchFrame } from "@/components/watch-common";
+import { Heading, QueryFrame } from "@/components/watch-common";
 import { formatTime, formatUsd, UNKNOWN } from "@/lib/format";
 import { trajectoryTurns, wasteByRule } from "@/lib/trajectory";
-import { useSpendQuery } from "@/lib/spend-rpc";
+import { useModuleQuery } from "@/lib/module-rpc";
 import { useWatchQuery } from "@/lib/watch-rpc";
 import { fixtureThread } from "@/fixtures/spend";
 import { fixtureWatchExplain } from "@/fixtures/watch";
@@ -163,7 +163,7 @@ function ActionList({ explain }: { explain: WatchExplain }) {
  */
 export function Trajectory({ threadId }: { threadId: string }) {
   const navigate = useBbNavigate();
-  const thread = useSpendQuery<SpendThread>(
+  const thread = useModuleQuery<SpendThread>(
     "observatory_spend_thread",
     { threadId },
     fixtureThread,
@@ -180,9 +180,9 @@ export function Trajectory({ threadId }: { threadId: string }) {
 
   return (
     <section className="flex flex-col gap-3 py-4">
-      <WatchFrame query={thread}>
+      <QueryFrame query={thread}>
         {(threadData) => (
-          <WatchFrame query={explain}>
+          <QueryFrame query={explain}>
             {(explainData) => (
               <>
                 <Heading>{threadData.thread.title}</Heading>
@@ -205,9 +205,9 @@ export function Trajectory({ threadId }: { threadId: string }) {
                 </button>
               </>
             )}
-          </WatchFrame>
+          </QueryFrame>
         )}
-      </WatchFrame>
+      </QueryFrame>
     </section>
   );
 }

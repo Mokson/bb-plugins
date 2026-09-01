@@ -93,13 +93,15 @@ describe("the thread cost tab", () => {
     await slot.findByText("log-window");
   });
 
-  it("registers the Cost tab beside Trajectory on the thread panel", async () => {
+  it("registers the Cost, Trajectory, Context and Audit thread tabs", async () => {
     const { app } = await mount("cost");
     expect(
       app.threadPanelActions.map((action) => [action.id, action.title]),
     ).toEqual([
       ["observatory-cost", "Cost"],
       ["observatory-trajectory", "Trajectory"],
+      ["observatory-context", "Context"],
+      ["observatory-audit", "Audit"],
     ]);
   });
 });

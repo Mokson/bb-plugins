@@ -7,7 +7,7 @@
 // the table redraws from the response rather than from what was typed, so a
 // value the server clamped or refused is visible immediately.
 import { useCallback, useEffect, useState } from "react";
-import { Heading, WatchFrame } from "@/components/watch-common";
+import { Heading, QueryFrame } from "@/components/watch-common";
 import {
   changedThresholds,
   discardDraft,
@@ -209,9 +209,9 @@ export function WatchSettingsPage() {
   return (
     <section className="flex flex-col gap-3 py-4 text-[13px]">
       <Heading>Watch</Heading>
-      <WatchFrame query={query}>
+      <QueryFrame query={query}>
         {(settings) => <SettingsForm initial={settings} />}
-      </WatchFrame>
+      </QueryFrame>
     </section>
   );
 }
