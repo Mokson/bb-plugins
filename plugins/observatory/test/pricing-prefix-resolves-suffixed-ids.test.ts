@@ -16,14 +16,60 @@ describe("model resolution", () => {
     expect(price!.cacheRead).toBeLessThan(price!.input);
   });
 
-  it("resolves a 1M-context suffix to its base model, flagged as a prefix match", () => {
+  it("refuses to price a 1M-context id at its base model's rate", () => {
+    // The long-context tier bills at a premium the base entry does not carry,
+    // and models.dev publishes no `[1m]` entry to read it from. Falling back
+    // to the base rate understates the bill on precisely the most expensive
+    // threads on the board, so the honest answer is that we do not know.
     const suffixed = resolveModel(catalog, "anthropic", "claude-opus-5[1m]");
-    const base = resolveModel(catalog, "anthropic", "claude-opus-5");
 
-    // models.dev publishes no `[1m]` entry today, so the honest answer is the
-    // base rate with a status that does not claim to be exact.
-    expect(suffixed.status).toBe("prefix");
-    expect(suffixed.price).toEqual(base.price);
+    expect(suffixed.status).toBe("unknown");
+    expect(suffixed.price).toBeNull();
+  });
+
+  it("prices a 1M-context id the moment a catalog carries it explicitly", () => {
+    // The guard is about a missing rate, not about the suffix: an exact entry
+    // outranks it and nothing is withheld.
+    const table = {
+      revision: "test",
+      providers: {
+        anthropic: {
+          "claude-opus-5": { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+          "claude-opus-5[1m]": { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+        },
+      },
+    };
+
+    const resolved = resolveModel(table, "anthropic", "claude-opus-5[1m]");
+
+    expect(resolved.status).toBe("exact");
+    expect(resolved.price!.input).toBe(10);
+  });
+
+  it("will not let a shorter id swallow an unrelated longer model", () => {
+    // `startsWith` alone matches `claude-sonnet-4` against `claude-sonnet-45`
+    // and prices a model nobody published at another model's rate. A prefix is
+    // only a prefix when what follows it is a SUFFIX: a delimiter, and after a
+    // hyphen a date or a named variant rather than a version fragment.
+    const table = {
+      revision: "test",
+      providers: {
+        anthropic: {
+          "claude-sonnet-4": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+        },
+      },
+    };
+
+    expect(resolveModel(table, "anthropic", "claude-sonnet-45").status).toBe(
+      "unknown",
+    );
+    expect(resolveModel(table, "anthropic", "claude-sonnet-45").price).toBeNull();
+    // A neighbouring version is not a variant of its predecessor either.
+    expect(resolveModel(table, "anthropic", "claude-sonnet-4-5").price).toBeNull();
+    // ...while a real dated variant still resolves.
+    expect(
+      resolveModel(table, "anthropic", "claude-sonnet-4-20250514").price,
+    ).not.toBeNull();
   });
 
   it("takes the LONGEST matching prefix, so a neighbour cannot swallow it", () => {

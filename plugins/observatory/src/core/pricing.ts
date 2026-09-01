@@ -107,13 +107,20 @@ export function priceTurn(
   const cacheRead = input.cacheReadTokens;
   const cacheWrite = input.cacheWriteTokens;
   const splitKnown = cacheRead !== null && cacheWrite !== null;
-  // Without a split, the whole cached total is treated as reads for the
-  // purpose of the bill. See the module comment: this is the cheap-side
-  // assumption, and it is why savings are withheld below.
-  const readTokens = splitKnown
-    ? nonNegative(cacheRead)
-    : nonNegative(input.cachedInputTokens);
-  const writeTokens = splitKnown ? nonNegative(cacheWrite) : 0;
+  // Read tokens are taken from whichever field ACTUALLY carries them, one
+  // field at a time. Codex is the case that forces this: it reports
+  // `cacheRead` and leaves `cacheWrite` null, so an all-or-nothing split test
+  // would throw its read count away and fall back to `cachedInputTokens`,
+  // which Codex never sets. Every Codex bill then collapsed to the uncached
+  // input alone. A missing WRITE count is still not evidence of a zero write,
+  // but it costs nothing here: `price.cacheWrite * 0` is the same figure the
+  // old branch produced, and the honesty is enforced on `cacheSavingsUsd`
+  // below, which stays null until the full split is known.
+  const readTokens =
+    cacheRead !== null
+      ? nonNegative(cacheRead)
+      : nonNegative(input.cachedInputTokens);
+  const writeTokens = nonNegative(cacheWrite);
 
   let cacheSavingsUsd: number | null = null;
   if (price && splitKnown) {

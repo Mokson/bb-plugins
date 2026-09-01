@@ -28,8 +28,35 @@ import {
  * Bumped when a parser's output changes meaning. A file indexed by an older
  * version is reparsed from byte zero rather than resumed, because resuming
  * would leave rows from two different interpretations in one session.
+ *
+ * Version 2: `obs_log_turn` gained a `path` column, which is now the row's
+ * delete key. Rows written by version 1 carry a null path and nothing can
+ * recover it, so every file is reparsed once and re-upserts its rows with the
+ * path filled in.
  */
-export const PARSER_VERSION = 1;
+export const PARSER_VERSION = 2;
+
+/**
+ * What one database row costs against the byte budget.
+ *
+ * A SQLite parser reads no file bytes, so it used to report `bytesRead: 0` and
+ * escape the budget entirely: a 50MB OpenCode store was scanned whole on every
+ * pass while the budget still read as untouched. The weight is the order of
+ * magnitude of a real OpenCode `message.data` blob, which is what the query
+ * walks even though `json_extract` hands back only scalars.
+ */
+const DB_ROW_BYTE_WEIGHT = 4 * 1024;
+
+/** Rows one database scan may return, however much budget is left. */
+const MAX_DB_ROWS_PER_SCAN = 2_000;
+
+/**
+ * The smallest byte slice a file gets when its root's turn comes round.
+ *
+ * Below this a large log makes no progress: it would read a fragment, stop at
+ * the last complete line, and re-read the same fragment on the next pass.
+ */
+const MIN_FILE_SLICE = 1024 * 1024;
 
 /**
  * How much of a file's head identifies it.
@@ -80,7 +107,14 @@ export const indexBatchInputSchema = z
      */
     cursors: z.record(z.string(), z.number()).default({}),
     state: z.record(z.string(), fileStateSchema).default({}),
-    /** Upper bound on rows returned in one call. */
+    /**
+     * Row count at which the pass stops taking new files.
+     *
+     * Checked between files, not between rows, so the returned batch can
+     * overshoot by the contents of the file that crossed the line. Bounding it
+     * exactly would mean returning half a file, which the resume cursor cannot
+     * describe.
+     */
     limit: z.number().int().positive().default(500),
     /** Upper bound on bytes read for parsing in one call. */
     maxBytes: z.number().int().positive().default(20_000_000),
@@ -201,6 +235,30 @@ export async function discoverFiles(root: string): Promise<string[]> {
   await walk(root, 0);
   found.sort();
   return found;
+}
+
+/**
+ * Discovered paths, most recently modified first.
+ *
+ * One `stat` per file, which is the same syscall `indexOne` makes anyway and
+ * is measured in tens of milliseconds across thousands of files. It buys the
+ * ordering that decides which files a budgeted pass reaches.
+ */
+export async function newestFirst(paths: string[]): Promise<string[]> {
+  const stamped = await Promise.all(
+    paths.map(async (path) => ({
+      path,
+      mtimeMs: await stat(path).then(
+        (entry) => entry.mtimeMs,
+        () => 0,
+      ),
+    })),
+  );
+  stamped.sort(
+    (left, right) =>
+      right.mtimeMs - left.mtimeMs || left.path.localeCompare(right.path),
+  );
+  return stamped.map((entry) => entry.path);
 }
 
 /**
@@ -348,43 +406,72 @@ export class LocalHostClient implements HostClient {
     const rows: LogRow[] = [];
     const files: FileResult[] = [];
     const seen = new Set<string>();
-    let bytesRead = 0;
     let done = true;
 
+    // Every root is walked before any of them is read, because `missing` is
+    // only correct once the whole tree has been seen. Walking is cheap;
+    // reading is what the budget is for.
+    const queues: Array<{ root: string; files: string[] }> = [];
     for (const root of input.roots) {
-      for (const path of await discoverFiles(root)) {
-        seen.add(path);
-        const parser = parserFor(path);
-        if (!parser) continue;
-        if (bytesRead >= input.maxBytes || rows.length >= input.limit) {
-          // Out of budget. The tree was still walked, so `missing` stays
-          // correct; the caller is told to come back with `done: false`.
-          done = false;
-          continue;
-        }
+      const found = await discoverFiles(root);
+      for (const path of found) seen.add(path);
+      // Newest first: the sessions a person is asking about are the ones they
+      // just ran, so a budget that runs out mid-pass leaves the OLD tail
+      // unindexed rather than the live one.
+      if (found.length) queues.push({ root, files: await newestFirst(found) });
+    }
 
-        const previous = resumeState(input, path);
-        let outcome: IndexOutcome | null;
-        try {
-          outcome = await indexOne(
-            root,
-            path,
-            parser,
-            previous,
-            input.maxBytes - bytesRead,
-          );
-        } catch {
-          // The file vanished or became unreadable mid-sweep. Next pass.
-          continue;
-        }
-        if (!outcome) continue;
+    // Round robin over the roots, one file per turn.
+    //
+    // The list order used to be the schedule, and with one shared budget that
+    // meant `~/.claude/projects` (2,000+ files, gigabytes) consumed every pass
+    // and no later root was ever reached: after days of running, the live
+    // database held claude-code rows and nothing else. Taking one file from
+    // each root in turn, with the remaining budget divided between the roots
+    // that still have work, gives every provider a share of every pass.
+    // Unspent budget is not lost: it stays in `remaining` for the next turn.
+    let remaining = input.maxBytes;
+    let turn = 0;
+    while (queues.length) {
+      if (remaining <= 0 || rows.length >= input.limit) {
+        // Out of budget. The trees were fully walked above, so `missing` is
+        // still correct; the caller is told to come back with `done: false`.
+        done = false;
+        break;
+      }
+      turn %= queues.length;
+      const queue = queues[turn]!;
+      const path = queue.files.shift()!;
+      if (queue.files.length === 0) queues.splice(turn, 1);
+      else turn += 1;
 
-        files.push(outcome.file);
-        bytesRead += outcome.bytesRead;
-        if (!outcome.complete) done = false;
-        for (const row of outcome.rows) {
-          rows.push(toWireRow(row, path, outcome.file.indexedBytes));
-        }
+      const parser = parserFor(path);
+      if (!parser) continue;
+
+      const slice = Math.min(
+        remaining,
+        Math.max(MIN_FILE_SLICE, Math.floor(remaining / (queues.length || 1))),
+      );
+      let outcome: IndexOutcome | null;
+      try {
+        outcome = await indexOne(
+          queue.root,
+          path,
+          parser,
+          resumeState(input, path),
+          slice,
+        );
+      } catch {
+        // The file vanished or became unreadable mid-sweep. Next pass.
+        continue;
+      }
+      if (!outcome) continue;
+
+      files.push(outcome.file);
+      remaining -= outcome.bytesRead;
+      if (!outcome.complete) done = false;
+      for (const row of outcome.rows) {
+        rows.push(toWireRow(row, path, outcome.file.indexedBytes));
       }
     }
 
@@ -419,6 +506,17 @@ function resumeState(
   };
 }
 
+/**
+ * A SQLite-backed provider, resumed from an ordering cursor.
+ *
+ * Two pieces of file state are reused with different meanings, which is why
+ * they are spelled out here: `indexedLines` holds the parser's scan CURSOR
+ * (OpenCode's `time_created`), and `indexedBytes` is the completion flag,
+ * equal to the file size once the store has been scanned to its end and zero
+ * while a scan is still paging. That is what lets the unchanged-file
+ * short-circuit below stay honest: a store whose size and mtime have not moved
+ * is skipped ONLY when the last scan actually finished it.
+ */
 async function indexDatabase(
   root: string,
   path: string,
@@ -426,22 +524,41 @@ async function indexDatabase(
   previous: FileState | undefined,
   size: number,
   mtimeMs: number,
+  byteBudget: number,
 ): Promise<IndexOutcome | null> {
-  // A SQLite store has no byte cursor, so it is re-queried whenever size or
-  // mtime moved. WAL sidecars mean the main file's mtime can lag a write; an
-  // over-eager re-query only costs a query, while a missed one loses rows.
+  const sinceCursor = previous?.indexedLines ?? 0;
+  // WAL sidecars mean the main file's mtime can lag a write, so an unchanged
+  // stat is not proof of an unchanged store; but re-querying a finished store
+  // whose stat has not moved costs a query on every pass for no rows, and the
+  // next write moves the stat. An over-eager re-query is the cheap error.
   if (
     previous &&
     previous.parserVersion === PARSER_VERSION &&
     previous.sizeBytes === size &&
-    previous.mtimeMs === mtimeMs
+    previous.mtimeMs === mtimeMs &&
+    previous.indexedBytes >= size
   ) {
     return null;
   }
+
+  const limit = Math.max(
+    1,
+    Math.min(
+      MAX_DB_ROWS_PER_SCAN,
+      Math.floor(Math.max(0, byteBudget) / DB_ROW_BYTE_WEIGHT),
+    ),
+  );
   let rows: ParsedLogTurn[] = [];
+  let cursor = sinceCursor;
+  let complete = true;
   let parseError: string | null = null;
   try {
-    rows = isDatabaseParser(parser) ? parser.scanDatabase(path) : [];
+    if (isDatabaseParser(parser)) {
+      const scan = parser.scanDatabase(path, { sinceCursor, limit });
+      rows = scan.rows;
+      cursor = scan.cursor;
+      complete = scan.done;
+    }
   } catch (error) {
     // A store held by a hot journal, or an encrypted one. Recorded on the
     // file row so the coverage report can explain the gap rather than hide it.
@@ -455,16 +572,18 @@ async function indexDatabase(
       providerThreadId: rows[0]?.providerThreadId ?? null,
       sizeBytes: size,
       mtimeMs,
-      indexedBytes: size,
-      indexedLines: 0,
+      indexedBytes: complete ? size : 0,
+      indexedLines: cursor,
       contentHash: null,
       parserVersion: PARSER_VERSION,
-      reset: true,
+      // Only the page that starts at zero replaces what is stored. A later
+      // page ADDS to it, and a reset there would delete every earlier page.
+      reset: sinceCursor === 0,
       parseError,
     },
     rows,
-    bytesRead: 0,
-    complete: true,
+    bytesRead: rows.length * DB_ROW_BYTE_WEIGHT,
+    complete,
   };
 }
 
@@ -480,7 +599,15 @@ async function indexOne(
   const mtimeMs = Math.round(fileStat.mtimeMs);
 
   if (isDatabaseParser(parser)) {
-    return indexDatabase(root, path, parser, previous, size, mtimeMs);
+    return indexDatabase(
+      root,
+      path,
+      parser,
+      previous,
+      size,
+      mtimeMs,
+      byteBudget,
+    );
   }
 
   const parserChanged =
@@ -519,13 +646,43 @@ async function indexOne(
   let rows: ParsedLogTurn[] = [];
   try {
     read = await readCompleteLines(path, startByte, limit, limit >= size);
-    rows = parser.parseLines(read.lines, { path, startLine });
   } catch (error) {
     parseError = error instanceof Error ? error.message : String(error);
   }
 
   const indexedBytes = read.endByte;
-  const contentHash = await headFingerprint(path, indexedBytes).catch(() => null);
+  // Fingerprint BEFORE parsing and re-stat immediately after, so the hash and
+  // the lines describe the same file.
+  //
+  // The window this closes: a provider that rotates or rewrites a log between
+  // the read and the fingerprint produced a hash of the NEW head over rows
+  // parsed from the OLD one. The next pass compared that hash, found it
+  // matching, and treated the rewrite as a clean append. Everything below is
+  // stated relative to the `fileStat` taken at the top of this function, so a
+  // size or mtime that has moved means the outcome describes two different
+  // files; the honest answer is to record nothing and let the next pass see
+  // the file settled.
+  const contentHash = await headFingerprint(path, indexedBytes).catch(
+    () => null,
+  );
+  const after = await stat(path).catch(() => null);
+  if (
+    !after ||
+    after.size !== size ||
+    Math.round(after.mtimeMs) !== mtimeMs
+  ) {
+    return null;
+  }
+
+  if (!parseError) {
+    try {
+      rows = parser.parseLines(read.lines, { path, startLine });
+    } catch (error) {
+      parseError = error instanceof Error ? error.message : String(error);
+      rows = [];
+    }
+  }
+
   const sessionId =
     rows.find((row) => row.providerThreadId)?.providerThreadId ?? null;
 

@@ -158,13 +158,52 @@ function candidateIds(providerId: string, model: string): string[] {
 }
 
 /**
- * The longest catalog id that `model` starts with.
+ * Characters a real model id uses to start a suffix.
+ *
+ * A prefix match is only a match when what follows it is a SUFFIX rather than
+ * the rest of a different name. `claude-sonnet-4` does not price
+ * `claude-sonnet-45` and never did anything but look like it might.
+ */
+const SUFFIX_DELIMITERS = new Set(["-", "[", "@", ":", "/"]);
+
+/**
+ * Suffixes a hyphen may introduce.
+ *
+ * The hyphen is the ambiguous delimiter: it separates a dated variant
+ * (`claude-sonnet-4-5-20250929`) from its base, and it also separates one
+ * model from its NEIGHBOUR (`claude-opus-5` from `claude-opus-5-1`). So a
+ * hyphen boundary is accepted only when the remainder looks like a release
+ * date or a named variant, and a bare version fragment is rejected.
+ */
+const HYPHEN_VARIANTS = new Set([
+  "latest",
+  "preview",
+  "beta",
+  "thinking",
+  "exp",
+]);
+
+function isDateSuffix(rest: string): boolean {
+  return /^\d{8}$/.test(rest) || /^\d{4}-\d{2}-\d{2}$/.test(rest);
+}
+
+function isSuffixBoundary(model: string, id: string): boolean {
+  if (model.length === id.length) return true;
+  const next = model[id.length]!;
+  if (!SUFFIX_DELIMITERS.has(next)) return false;
+  if (next !== "-") return true;
+  const rest = model.slice(id.length + 1);
+  return isDateSuffix(rest) || HYPHEN_VARIANTS.has(rest);
+}
+
+/**
+ * The longest catalog id that `model` starts with AT A SUFFIX BOUNDARY.
  *
  * This is what resolves the ids the real logs carry: `claude-opus-5[1m]`, and
  * dated variants like `claude-sonnet-4-5-20250929`. Longest wins so
- * `claude-sonnet-4-6` is never swallowed by a shorter neighbour. models.dev
- * publishes no `[1m]` entries today, so a 1M-context id prices at its base
- * model's rate and says so with `prefix` rather than claiming `exact`.
+ * `claude-sonnet-4-6` is never swallowed by a shorter neighbour, and the
+ * boundary test is what stops a bare `startsWith` from pricing an unrelated
+ * longer model at its shorter namesake's rate.
  */
 function longestPrefix(
   table: Record<string, ModelPrice>,
@@ -173,20 +212,38 @@ function longestPrefix(
   let best: string | null = null;
   for (const id of Object.keys(table)) {
     if (!model.startsWith(id)) continue;
+    if (!isSuffixBoundary(model, id)) continue;
     if (best === null || id.length > best.length) best = id;
   }
   return best === null ? null : table[best]!;
+}
+
+/**
+ * A long-context variant, which is billed at a PREMIUM the base entry does not
+ * carry.
+ *
+ * Anthropic's 1M-context tier costs roughly twice the base input rate. The
+ * catalog publishes no `[1m]` entry today, so there is no honest number to
+ * return: the base rate would understate the bill on exactly this plugin's
+ * most expensive threads. `unknown` is the answer until models.dev (or a
+ * future snapshot) carries the id explicitly, at which point the EXACT match
+ * below wins and this guard never fires.
+ */
+function isLongContextVariant(model: string): boolean {
+  return model.includes("[1m]");
 }
 
 /** An id whose provider prefix was stripped, matched inside one table. */
 function matchWithin(
   table: Record<string, ModelPrice>,
   ids: string[],
+  allowPrefix: boolean,
 ): { price: ModelPrice; status: PricingStatus } | null {
   for (const id of ids) {
     const exact = table[id];
     if (exact) return { price: exact, status: "exact" };
   }
+  if (!allowPrefix) return null;
   for (const id of ids) {
     const prefixed = longestPrefix(table, id);
     if (prefixed) return { price: prefixed, status: "prefix" };
@@ -202,10 +259,11 @@ export function resolveModel(
   if (!model || !model.trim()) return { price: null, status: "unknown" };
   const providerId = normalizeProviderId(provider);
   const ids = candidateIds(providerId, model);
+  const allowPrefix = !ids.some(isLongContextVariant);
 
   const table = catalog.providers[providerId];
   if (table) {
-    const match = matchWithin(table, ids);
+    const match = matchWithin(table, ids, allowPrefix);
     if (match) return match;
   }
 
@@ -217,7 +275,7 @@ export function resolveModel(
     catalog.providers,
   )) {
     if (candidateId === providerId) continue;
-    const match = matchWithin(candidateTable, ids);
+    const match = matchWithin(candidateTable, ids, allowPrefix);
     if (match) found.push(match.price);
     if (found.length > 1) break;
   }
@@ -262,14 +320,71 @@ function writeRow(
   ).run(ROW_ID, revision, fetchedAt, data);
 }
 
+/**
+ * The cached row's format tag.
+ *
+ * Version 1 was models.dev's response verbatim: several megabytes of prose,
+ * capability flags and modality lists in a column that only ever needed four
+ * numbers per model. Version 2 stores the RESOLVED provider tables, which are
+ * an order of magnitude smaller and cost nothing to parse. A version-1 row is
+ * still readable, so an upgrade does not force a refetch.
+ */
+const CACHE_FORMAT = 2;
+
+interface CachedCatalogData {
+  v?: number;
+  providers?: unknown;
+}
+
+function isProviderTables(
+  value: unknown,
+): value is PricingCatalog["providers"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return Object.values(value as Record<string, unknown>).every(
+    (table) => !!table && typeof table === "object" && !Array.isArray(table),
+  );
+}
+
 function parseRow(row: CatalogRow | undefined): PricingCatalog | null {
   if (!row?.data || !row.revision) return null;
   try {
-    const providers = fromModelsDev(JSON.parse(row.data));
-    return providers ? { revision: row.revision, providers } : null;
+    const parsed: unknown = JSON.parse(row.data);
+    const tagged = parsed as CachedCatalogData;
+    const providers =
+      tagged?.v === CACHE_FORMAT && isProviderTables(tagged.providers)
+        ? tagged.providers
+        : fromModelsDev(parsed);
+    return providers && Object.keys(providers).length
+      ? { revision: row.revision, providers }
+      : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Ceiling on the models.dev response.
+ *
+ * The published catalog is a couple of megabytes. Twenty is far above any
+ * plausible growth and far below what would hurt: without a ceiling a
+ * redirected, wrong or hostile URL streams unbounded into memory and then into
+ * a TEXT column in the plugin's own database.
+ */
+const MAX_CATALOG_BYTES = 20 * 1024 * 1024;
+
+/**
+ * The response body, parsed, or null when it is too large to accept.
+ *
+ * `content-length` is checked first so an oversized body is refused before it
+ * is buffered; a chunked response with no length still gets the same ceiling
+ * applied after the fact, which costs memory once but never persists.
+ */
+async function readBoundedJson(response: Response): Promise<unknown | null> {
+  const declared = Number(response.headers?.get?.("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > MAX_CATALOG_BYTES) return null;
+  const body = await response.text();
+  if (body.length > MAX_CATALOG_BYTES) return null;
+  return JSON.parse(body);
 }
 
 /**
@@ -301,13 +416,19 @@ export async function loadCatalog(
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       if (response.ok) {
-        const raw: unknown = await response.json();
-        const providers = fromModelsDev(raw);
+        const raw = await readBoundedJson(response);
+        const providers = raw === null ? null : fromModelsDev(raw);
         if (providers) {
           const fetchedAt = new Date(now()).toISOString();
           const revision = `models.dev@${fetchedAt.slice(0, 10)}`;
           try {
-            writeRow(db, revision, fetchedAt, JSON.stringify(raw));
+            // The RESOLVED tables, not the response. See `CACHE_FORMAT`.
+            writeRow(
+              db,
+              revision,
+              fetchedAt,
+              JSON.stringify({ v: CACHE_FORMAT, providers }),
+            );
           } catch {
             // Caching is best-effort; the resolved catalog is still returned.
           }

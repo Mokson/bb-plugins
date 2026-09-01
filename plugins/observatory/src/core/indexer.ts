@@ -30,6 +30,17 @@ export interface IndexBudget {
   maxBytes: number;
 }
 
+/**
+ * Turn rows one pass may carry home.
+ *
+ * The old ceiling was 100,000, which is not a ceiling: it is a promise to hold
+ * a six-figure array in memory, ship it over rpc and write it in one
+ * transaction if a big enough store ever showed up. A few thousand rows is a
+ * batch; the pass returns `done: false` and the next one continues, which is
+ * the protocol this indexer already runs on.
+ */
+export const MAX_ROWS_PER_PASS = 5_000;
+
 export interface IndexRunResult {
   /** Files whose state changed this pass. */
   files: number;
@@ -89,6 +100,8 @@ function toTurnRow(row: LogRow): LogTurnRow {
     log_key: row.logKey,
     provider: row.provider,
     provider_thread_id: row.providerThreadId,
+    // The row's delete key. See `LogTurnRow.path`.
+    path: row.path,
     ts: row.ts,
     model: row.model,
     input: row.input,
@@ -149,7 +162,7 @@ export function createLogIndexer(deps: LogIndexerDeps): LogIndexer {
           roots,
           cursors,
           state,
-          limit: 100_000,
+          limit: MAX_ROWS_PER_PASS,
           maxBytes: budget.maxBytes,
         });
       } catch (error) {
@@ -165,7 +178,19 @@ export function createLogIndexer(deps: LogIndexerDeps): LogIndexer {
 
       // One transaction for the whole batch. A half-written file would leave
       // an offset that claims rows the database does not hold.
+      //
+      // Resets are applied FIRST, and they are the reason this order matters.
+      // `file.reset` means the host proved the file was rewritten in place
+      // rather than appended to, so the rows already stored for it describe
+      // bytes that no longer exist. The host was computing that flag and the
+      // indexer was ignoring it: the stale rows survived, the rewritten file's
+      // rows landed beside them under new keys, and the session was billed
+      // twice. Deleting by path inside the same transaction makes the rewrite
+      // a replacement.
       store.transaction(() => {
+        for (const file of batch.files) {
+          if (file.reset) store.deleteTurnsForPath(file.path);
+        }
         for (const row of batch.rows) store.upsertLogTurn(toTurnRow(row));
         for (const file of batch.files) store.upsertLogFile(toFileRow(file));
         for (const path of batch.missing) store.pruneFile(path);

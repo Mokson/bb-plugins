@@ -72,16 +72,42 @@ export interface LogParser {
   parseLines(lines: string[], ctx: ParseContext): ParsedLogTurn[];
 }
 
+/** Where a database scan resumes, and how much of it to take. */
+export interface DatabaseScanRequest {
+  /**
+   * Resume point, INCLUSIVE, in the units the parser's own cursor uses.
+   *
+   * Inclusive rather than exclusive so a group of rows sharing one timestamp
+   * can never straddle a page boundary and lose its tail. The overlap costs
+   * one re-read of the final group, and the store's upsert on `log_key` makes
+   * that a no-op.
+   */
+  sinceCursor: number;
+  /** Upper bound on rows returned by one scan. */
+  limit: number;
+}
+
+export interface DatabaseScanResult {
+  rows: ParsedLogTurn[];
+  /** Where the next scan resumes. Never moves backwards. */
+  cursor: number;
+  /** False when rows remain behind `cursor`. */
+  done: boolean;
+}
+
 /**
  * A provider whose log is a SQLite database rather than an append-only file.
  *
- * Cursor and OpenCode are read whole, by query, on every pass: there are no
- * lines to resume from. They still implement `LogParser` so one registry
- * covers every provider, but `parseLines` is inert for them and the indexer
- * branches on the presence of `scanDatabase`.
+ * Cursor and OpenCode have no byte offset to resume from, so they resume from
+ * an ORDERING cursor instead. That is the difference that matters at scale: a
+ * 50MB OpenCode store holds six figures of assistant messages, and returning
+ * all of them on every change turns a background pass into a stall. They still
+ * implement `LogParser` so one registry covers every provider, but
+ * `parseLines` is inert for them and the indexer branches on the presence of
+ * `scanDatabase`.
  */
 export interface DatabaseLogParser extends LogParser {
-  scanDatabase(path: string): ParsedLogTurn[];
+  scanDatabase(path: string, request: DatabaseScanRequest): DatabaseScanResult;
 }
 
 export function isDatabaseParser(

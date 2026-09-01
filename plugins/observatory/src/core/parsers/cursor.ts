@@ -20,6 +20,7 @@
 import { basename, dirname } from "node:path";
 import {
   type DatabaseLogParser,
+  type DatabaseScanResult,
   type ParseContext,
   type ParsedLogTurn,
 } from "./types.js";
@@ -58,11 +59,16 @@ export function decodeCursorMeta(value: string | null): CursorMeta | null {
   }
 }
 
+/**
+ * One presence row per session, so there is nothing to page: the scan is
+ * always answered whole and the cursor is the marker's own timestamp.
+ */
 export function scanCursorDatabase(
   path: string,
   open: (file: string) => ReadOnlyDatabase = openReadOnly,
-): ParsedLogTurn[] {
+): DatabaseScanResult {
   const db = open(path);
+  const empty: DatabaseScanResult = { rows: [], cursor: 0, done: true };
   try {
     const meta = db
       .prepare<[], { value: string }>("SELECT value FROM meta LIMIT 1")
@@ -78,9 +84,9 @@ export function scanCursorDatabase(
     const blobs = db
       .prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM blobs")
       .get();
-    if (createdAt === null && (blobs?.n ?? 0) === 0) return [];
+    if (createdAt === null && (blobs?.n ?? 0) === 0) return empty;
 
-    return [
+    const rows: ParsedLogTurn[] = [
       {
         provider: CURSOR_PROVIDER,
         providerThreadId: cursorSessionId(path),
@@ -103,6 +109,7 @@ export function scanCursorDatabase(
         mcpNames: [],
       },
     ];
+    return { rows, cursor: createdAt ?? 0, done: true };
   } finally {
     db.close();
   }
