@@ -12,7 +12,7 @@ bb reports per-thread token usage but no cost, no model on the usage event, and 
 
 ### Hard invariants
 
-1. The plugin never stops, kills, cancels, or archives a thread. No code path calls a stop or cancel API, and no surface renders a kill affordance. [auto: `pnpm --filter observatory test -t "never stops a thread"`]
+1. The plugin never stops, kills, cancels, or archives a thread it did not spawn. The one exception is the eval module, which may stop hidden threads it created itself when a case exceeds its cost, token, or time limit. No surface renders a kill affordance. [auto: `pnpm --filter observatory test -t "never stops a thread"`]
 
 2. A cache read/write split is never fabricated. `cache_read_tokens` and `cache_write_tokens` are written only from a matched provider log row; with no match, both stay NULL, `split_source` is `unavailable`, and every surface renders `n/a`, never `0` and never a derived guess. [auto: `pnpm --filter observatory test -t "cache split never fabricated"`]
 
@@ -22,7 +22,7 @@ bb reports per-thread token usage but no cost, no model on the usage event, and 
 
 5. An eval baseline changes only through `bb observatory eval baseline promote <run>`. No run, gate, or cron mutates `eval_baseline`. [auto: `pnpm --filter observatory test -t "baseline moves only by promote"`]
 
-6. `watch_mode` defaults to `observe`. In `observe` the plugin records signals and sends no message; in `off` it records nothing; only `steer` sends. [auto: `pnpm --filter observatory test -t "watch defaults to observe"`]
+6. `watch_mode` defaults to `observe`. In `observe` the plugin records signals and sends no message; in `off` it records nothing; only `steer` sends. A KV override set from the panel outranks the setting and applies without reload. [auto: `pnpm --filter observatory test -t "watch defaults to observe"`]
 
 7. Every steering message has an `obs_action` row committed before the send call is issued, with `at` no later than the send timestamp. A send that fails still leaves its `obs_action` row with the failure in `result`. [auto: `pnpm --filter observatory test -t "steer recorded before sent"`]
 
@@ -64,7 +64,7 @@ bb reports per-thread token usage but no cost, no model on the usage event, and 
 
 23. Tree budget cannot veto a spawn. On breach it steers the parent thread with the subtree bill.
 
-24. The post-compaction premise reminder is off by default. When on, a compaction in a thread with a resolved run folder sends exactly one queued message listing the ledger done-when line and the open decision rows.
+24. The post-compaction premise reminder is off by default. When on, a compaction in a thread with a resolved run folder sends exactly one queued message listing the ledger `## Done-when` section rows and the open decision rows.
 
 25. The attention inbox ranks open signals across modules with one evidence line each and is the panel's landing page. An empty inbox renders an explicit empty state, not a blank page.
 
@@ -103,7 +103,7 @@ Each criterion is a phase done-check.
 - c1: Deliver-stack edits land, the fixture repo exists as a registered bb project, and the plugin scaffold's tests pass green against the fake host. (phase 0)
 - c2: `bb observatory cost --tree <root>` prints priced rows with a cache split for a Claude Code run. (phase 1)
 - c3: `bb observatory cost-md <runFolder>` writes a file the retro seat consumes without edits. (phase 1)
-- c4: Coverage on a fresh deliver run inside bb is over 90 percent `log-exact` split source. (phase 1)
+- c4: On a fresh deliver run inside bb, over 90 percent of Claude Code and Codex turns carry a `log-exact` split source; ACP turns are excluded from the ratio and reported separately. (phase 1)
 - c5: The absorbed footer strip shows provider limits plus today's spend. (phase 1)
 - c6: A deliberately looping thread appears in the stall list within 30 seconds attributed to the correct rule. (phase 2)
 - c7: Phase 2 sends zero steers; `obs_action` holds no send rows. (phase 2)
@@ -134,7 +134,7 @@ The plan's ASCII layouts for the inbox, cost overview, and stall monitor are the
 
 ## Success metrics
 
-- Split coverage: share of turns with `log-exact` on runs inside bb, target over 90 percent - evaluate at the end of phase 1.
+- Split coverage: share of Claude Code and Codex turns with `log-exact` on runs inside bb, target over 90 percent - evaluate at the end of phase 1.
 - Rung-1 steer precision measured on phase 2 observe-only data - evaluate before enabling phase 3.
 - Cost agreement against ledger runlog sums within 2 percent - evaluate at integration.
 - Distillery draft acceptance rate - evaluate one month after phase 6.
