@@ -1194,3 +1194,30 @@ describe("ThreadRow hidden elements skip their work (B59, B61)", () => {
     expect(trailing(container).textContent).not.toContain("1d");
   });
 });
+
+describe("ThreadRow — the active state", () => {
+  /** The row's box, the element that carries the persistent background. */
+  function rowBox(container: HTMLElement): HTMLElement {
+    const box = rowElement(container).firstElementChild;
+    if (box === null) throw new Error("no row box rendered");
+    return box as HTMLElement;
+  }
+
+  it("gives the active row a persistent background and aria-current", () => {
+    const { container } = renderRow(row(), {}, { isActive: true });
+    // `hover:bg-accent/60` is always present, so the assertion is on the
+    // unprefixed class alone — the persistent half of the treatment.
+    expect(rowBox(container).classList.contains("bg-accent")).toBe(true);
+    expect(
+      container.querySelector("[data-sidebar-thread-id]")?.getAttribute("aria-current"),
+    ).toBe("true");
+  });
+
+  it("gives an inactive row neither", () => {
+    const { container } = renderRow(row());
+    expect(rowBox(container).classList.contains("bg-accent")).toBe(false);
+    expect(
+      container.querySelector("[data-sidebar-thread-id]")?.getAttribute("aria-current"),
+    ).toBeNull();
+  });
+});
