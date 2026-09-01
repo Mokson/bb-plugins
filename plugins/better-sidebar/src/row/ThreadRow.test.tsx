@@ -841,6 +841,9 @@ describe("ThreadRow row 1 layout (B57)", () => {
  * B56. A long branch starved the project name: `bb-plugins` rendered as
  * `bb-pl…` while the branch kept roughly four times the width, because both
  * were plain flex children and shrank in proportion to their natural width.
+ * B56's fix made every label shrinkable; since then the split itself was
+ * made equal rather than proportional (SecondRow's truncation pass), so the
+ * same number of pixels comes off each label.
  *
  * jsdom lays nothing out, so these assert the flex contract that decides the
  * outcome rather than measured pixels: who may shrink, and what caps whom.
@@ -868,9 +871,10 @@ describe("ThreadRow row 2 under pressure (B56)", () => {
    * project rendered in full, and the model — pinned `shrink-0` behind it —
    * overflowed the panel with nothing left to take the deficit.
    *
-   * Every label shrinks now, and none caps its own width. With
-   * `flex-basis: auto` the shrink factor is weighted by natural width, so the
-   * longest label gives up the most and all three keep a readable head.
+   * Every label shrinks now, and none caps its own width. The loss is
+   * shared equally across the labels — see SecondRow's truncation pass —
+   * rather than weighted by natural width, so a long branch can no longer
+   * starve a short project while it still has characters to spare.
    */
   it("lets every label shrink, and caps none of them", () => {
     const { container } = renderRow(
