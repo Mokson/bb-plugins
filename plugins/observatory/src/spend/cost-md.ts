@@ -147,10 +147,25 @@ function cell(value: string | number | null | undefined): string {
 }
 
 /**
- * Parse the run's LEDGER.md for a stage per row. The runlog is a markdown
- * table; the only structural assumption is a header cell named `stage`. Every
- * other cell in a row becomes a lookup key, so a table keyed by run id and one
- * keyed by seat name both resolve without a second parser.
+ * Fields per bullet runlog row before it is believed to be one. Real rows run
+ * to a dozen columns; a two-field bullet is prose that happens to hold a pipe.
+ */
+const BULLET_ROW_MIN_FIELDS = 4;
+/** A stage name: one short lowercase word, which is what the seats write. */
+const STAGE_TOKEN = /^[a-z][a-z-]{1,19}$/u;
+
+/**
+ * Parse the run's LEDGER.md for a stage per row.
+ *
+ * Two runlog shapes exist in the corpus and both are read here, because a
+ * stage column that is `n/a` for every row of every real run is a column
+ * nobody can use:
+ *
+ *   a markdown table with a `stage` header cell, and
+ *   `- <stage> | <field> | <field> | ...` bullet rows, where the stage leads.
+ *
+ * In both, every OTHER field becomes a lookup key, so a runlog keyed by run id
+ * and one keyed by seat name resolve without a second parser.
  */
 export function parseLedgerStages(markdown: string | null): Map<string, string> {
   const stages = new Map<string, string>();
@@ -165,9 +180,28 @@ export function parseLedgerStages(markdown: string | null): Map<string, string> 
   const lines = markdown.split("\n");
   let header: string[] | null = null;
   let stageIndex = -1;
+  /** Record `stage` against every other field of one parsed row. */
+  const record = (row: readonly string[], stage: string, skip: number) => {
+    if (!stage || stage === "n/a") return;
+    row.forEach((value, index) => {
+      const key = value.trim().toLowerCase();
+      if (index === skip || key === "" || key === "n/a") return;
+      if (!stages.has(key)) stages.set(key, stage);
+    });
+  };
+
   for (const line of lines) {
-    if (!line.trim().startsWith("|")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("|")) {
       header = null;
+      // The bullet runlog shape: the stage leads, the rest are lookup keys.
+      if (trimmed.startsWith("- ") && trimmed.includes("|")) {
+        const fields = cells(trimmed.slice(2));
+        const stage = fields[0]?.toLowerCase() ?? "";
+        if (fields.length >= BULLET_ROW_MIN_FIELDS && STAGE_TOKEN.test(stage)) {
+          record(fields, stage, 0);
+        }
+      }
       continue;
     }
     const row = cells(line);
@@ -179,13 +213,7 @@ export function parseLedgerStages(markdown: string | null): Map<string, string> 
     // The `| --- |` separator under the header.
     if (row.every((part) => /^:?-{2,}:?$/u.test(part))) continue;
     if (stageIndex === -1) continue;
-    const stage = row[stageIndex]?.trim();
-    if (!stage || stage === "n/a") continue;
-    row.forEach((value, index) => {
-      const key = value.trim().toLowerCase();
-      if (index === stageIndex || key === "" || key === "n/a") return;
-      if (!stages.has(key)) stages.set(key, stage);
-    });
+    record(row, row[stageIndex]?.trim() ?? "", stageIndex);
   }
   return stages;
 }

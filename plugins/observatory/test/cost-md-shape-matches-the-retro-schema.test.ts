@@ -6,7 +6,11 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { COST_MD_FLAGS, buildCostMd } from "../src/spend/cost-md.js";
+import {
+  COST_MD_FLAGS,
+  buildCostMd,
+  parseLedgerStages,
+} from "../src/spend/cost-md.js";
 import { TempDatabase } from "./fakes.js";
 import {
   COST_MD_NOW,
@@ -123,6 +127,28 @@ describe("COST.md", () => {
     expect(rows.find((row) => row[0] === "deliver-qa")?.[7]).not.toContain(
       "tier-policy",
     );
+  });
+
+  it("reads the stage from a bullet runlog as well as a pipe table", () => {
+    // The shape every real ledger in the corpus actually uses: the stage
+    // leads the row and the fields after it are the lookup keys.
+    const stages = parseLedgerStages(
+      [
+        "## Runlog",
+        "",
+        "- implement | stage workers queued+groom | bb-thread | thr_cckww2a73g | claude-opus-5 | low | accepted",
+        "- fix | park-hold on stage selection | orchestrator | n/a | claude-fable-5 | session | accepted",
+        // Prose with a pipe in it is not a row.
+        "- see the table above | nothing here",
+        "",
+      ].join("\n"),
+    );
+
+    expect(stages.get("thr_cckww2a73g")).toBe("implement");
+    expect(stages.get("orchestrator")).toBe("fix");
+    // `n/a` is never a key: it would map every unmatched row to one stage.
+    expect(stages.has("n/a")).toBe(false);
+    expect(stages.has("nothing here")).toBe(false);
   });
 
   it("stays a valid file with agents: 0 when the run folder matches nothing", () => {
