@@ -247,4 +247,9 @@ export const MIGRATIONS: string[] = [
   // one. Dropping it last (rather than recreating it above) keeps the self-heal
   // replay stable: on a healthy boot this statement is a no-op.
   `DROP INDEX IF EXISTS obs_signal_dedupe`,
+  // Appended at the TAIL, never inserted: migrations are keyed by index and
+  // replayed on every boot, so an insertion mid-list renumbers every statement
+  // after it. Audit resolves a run folder's threads on every pack build.
+  `CREATE INDEX IF NOT EXISTS obs_thread_run_folder
+     ON obs_thread (run_folder)`,
 ];

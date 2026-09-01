@@ -70,7 +70,7 @@ import {
   auditExport,
   auditSession,
   auditSessions,
-  buildAuditPack,
+  auditPackWithExport,
   formatSession,
   formatSessions,
   writeAuditPack,
@@ -584,7 +584,7 @@ export const CONTEXT_TOOL = {
 export const AUDIT_PACK_TOOL = {
   name: "observatory_audit_pack",
   description:
-    "Session metrics against the 7-day median, verification coverage, unverified edits, failures and insight facets for a thread or deliver run folder.",
+    "Session metrics against the 7-day median, verification coverage, unverified edits, failures and insight facets for a thread or deliver run folder. When the target resolves a run folder it also writes audit.json, audit.md and COST.md there and returns their paths.",
 } as const;
 
 export const FAILURES_TOOL = {
@@ -1572,7 +1572,7 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
       })
       .strict(),
     execute(target) {
-      return clampToolResult(buildAuditPack(auditRpcDeps(), target));
+      return clampToolResult(auditPackWithExport(auditRpcDeps(), target));
     },
   });
 

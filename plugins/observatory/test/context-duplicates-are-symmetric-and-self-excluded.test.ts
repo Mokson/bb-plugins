@@ -22,7 +22,7 @@ test("overlap is the same whichever block is asked first", () => {
 
 test("a block is never reported as a duplicate of itself", () => {
   const pairs = findDuplicates([
-    { name: "CLAUDE.md", text: RULE, estTokens: 30 },
+    { key: "instruction:CLAUDE.md", name: "CLAUDE.md", text: RULE, estTokens: 30 },
   ]);
 
   expect(pairs).toEqual([]);
@@ -30,9 +30,9 @@ test("a block is never reported as a duplicate of itself", () => {
 
 test("each overlapping pair is reported once, with what deleting it recovers", () => {
   const pairs = findDuplicates([
-    { name: "CLAUDE.md", text: RULE, estTokens: 30 },
-    { name: "skill:pr", text: REWORDED, estTokens: 40 },
-    { name: "AGENTS.md", text: OTHER, estTokens: 25 },
+    { key: "instruction:CLAUDE.md", name: "CLAUDE.md", text: RULE, estTokens: 30 },
+    { key: "skill:pr", name: "skill:pr", text: REWORDED, estTokens: 40 },
+    { key: "instruction:AGENTS.md", name: "AGENTS.md", text: OTHER, estTokens: 25 },
   ]);
 
   expect(pairs).toHaveLength(1);

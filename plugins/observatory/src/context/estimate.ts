@@ -55,9 +55,14 @@ export function firstTurnCacheWrites(
           AND lt.ts = (
             SELECT MIN(inner.ts) FROM obs_log_turn AS inner
              WHERE inner.provider = lt.provider
-               AND inner.provider_thread_id = lt.provider_thread_id
+               -- IS rather than =: a NULL thread id must group with the other
+               -- NULL ones instead of matching nothing.
+               AND inner.provider_thread_id IS lt.provider_thread_id
                AND inner.cache_write IS NOT NULL
-               AND inner.cache_write > 0)
+               AND inner.cache_write > 0
+               -- Mirror the outer predicate: a sidechain's first write is not
+               -- the thread's prefix, so it must not become the row picked.
+               AND inner.is_sidechain IS NOT 1)
         ORDER BY lt.ts DESC
         LIMIT ?`,
     )
@@ -76,8 +81,22 @@ export function newestProvider(db: Database): string | null {
 }
 
 export interface Calibration {
-  /** Multiplier to apply to raw chars/3.6. Null when never learned. */
+  /**
+   * The freshly fitted multiplier, persisted for the NEXT scan. Null when
+   * there was no evidence to fit against.
+   */
   factor: number | null;
+  /**
+   * The factor persisted BEFORE this call. Null when none was, which is the
+   * honest report: the scan then carries no calibration at all.
+   */
+  prior: number | null;
+  /**
+   * The multiplier this scan is priced with: `prior`, or 1 when there is none.
+   * Pricing with `factor` instead would make the total equal the observed
+   * prefix by construction.
+   */
+  applied: number;
   /**
    * How far the PREVIOUS factor's prediction fell from the observed prefix,
    * relative to it. Null when there is nothing to check against. This is the
@@ -98,28 +117,32 @@ export interface CalibrateInput {
 }
 
 /**
- * Judge the current factor against fresh evidence, then update it.
+ * Judge the stored factor against fresh evidence, then update it.
  *
- * Order matters: the reported error is out of sample. Fitting the factor first
- * and then measuring would report zero every time, which is the shape of a
- * metric that has stopped saying anything.
+ * Order matters twice over. The reported error is out of sample: fitting the
+ * factor first and then measuring would report zero every time, which is the
+ * shape of a metric that has stopped saying anything. And the caller prices
+ * its scan with `applied` — the PRIOR factor — for the same reason: a scan
+ * priced with a factor fitted from the very cache writes it is compared
+ * against would always land exactly on the observed median.
  */
 export function calibrate(input: CalibrateInput): Calibration {
   const { db, provider, rawEstimate } = input;
   if (!provider || rawEstimate <= 0) {
-    return { factor: null, error: null, samples: 0 };
+    return { factor: null, prior: null, applied: 1, error: null, samples: 0 };
   }
   const key = calibrationKey(provider);
   const stored = Number.parseFloat(input.getMeta(key) ?? "");
   const prior = Number.isFinite(stored) && stored > 0 ? stored : null;
   const samples = firstTurnCacheWrites(db, provider, input.sinceMs);
   const observed = median(samples);
+  const applied = prior ?? 1;
   if (observed === null || observed <= 0) {
-    return { factor: prior, error: null, samples: 0 };
+    return { factor: prior, prior, applied, error: null, samples: 0 };
   }
-  const predicted = rawEstimate * (prior ?? 1);
+  const predicted = rawEstimate * applied;
   const error = Math.abs(predicted - observed) / observed;
   const factor = observed / rawEstimate;
   input.setMeta(key, String(factor));
-  return { factor, error, samples: samples.length };
+  return { factor, prior, applied, error, samples: samples.length };
 }
