@@ -122,7 +122,10 @@ export class WatchQueries {
   private readonly itemsStatement: Statement<[string, number], ItemRowLite>;
   private readonly turnsStatement: Statement<[string], TurnRowLite>;
   private readonly treeCostStatement: Statement<[string], { total: number | null }>;
-  private readonly dayCostStatement: Statement<[string], { total: number | null }>;
+  private readonly dayCostStatement: Statement<
+    [string, string],
+    { total: number | null }
+  >;
   private readonly openSignalsStatement: Statement<[string], SignalRowLite>;
   private readonly threadSignalsStatement: Statement<[string, number], SignalRowLite>;
   private readonly actionsStatement: Statement<
@@ -157,8 +160,12 @@ export class WatchQueries {
     this.treeCostStatement = db.prepare(
       "SELECT SUM(cost_usd) AS total FROM obs_turn WHERE root_thread_id = ?",
     );
+    // A half-open RANGE, not `substr(started_at, 1, 10) = ?`. Wrapping the
+    // column in a function makes `obs_turn_started` unusable and turns the
+    // per-minute sweep's day rollup into a full scan per active thread.
     this.dayCostStatement = db.prepare(
-      "SELECT SUM(cost_usd) AS total FROM obs_turn WHERE substr(started_at, 1, 10) = ?",
+      `SELECT SUM(cost_usd) AS total FROM obs_turn
+        WHERE started_at >= ? AND started_at < ?`,
     );
     this.openSignalsStatement = db.prepare(
       `SELECT id, module, kind, thread_id, severity, opened_at, closed_at,
@@ -193,6 +200,38 @@ export class WatchQueries {
 
   activeThreads(): ThreadFact[] {
     return this.activeThreadsStatement.all().map(toThreadFact);
+  }
+
+  /**
+   * Just the two liveness facts the watch list renders per row.
+   *
+   * The list used to call `snapshot`, which sums subtree AND day cost for
+   * every row — two aggregates over `obs_turn` per active thread, for a view
+   * that shows neither. The rules need the full snapshot; a list does not.
+   */
+  liveness(threadId: string): {
+    lastEventAt: number | null;
+    openItem: ItemFact | null;
+  } {
+    const items = this.itemsStatement
+      .all(threadId, ITEM_WINDOW)
+      .map(toItemFact);
+    const turns = this.turnsStatement.all(threadId);
+    return {
+      lastEventAt: maxOf([
+        ...items.flatMap((item) => [item.startedAt, item.completedAt]),
+        ...turns.flatMap((turn) => [
+          toMs(turn.started_at),
+          toMs(turn.completed_at),
+        ]),
+      ]),
+      // `itemsStatement` is newest-first, so the first in-flight item it
+      // returns is the most recent one.
+      openItem:
+        items.find(
+          (item) => item.startedAt !== null && item.completedAt === null,
+        ) ?? null,
+    };
   }
 
   thread(threadId: string): ThreadFact | null {
@@ -295,6 +334,9 @@ export class WatchQueries {
       .sort((left, right) => left.at - right.at);
 
     const day = new Date(now).toISOString().slice(0, 10);
+    const nextDay = new Date(Date.parse(`${day}T00:00:00.000Z`) + 86_400_000)
+      .toISOString()
+      .slice(0, 10);
     return {
       thread,
       now,
@@ -309,7 +351,7 @@ export class WatchQueries {
       retries,
       treeCostUsd:
         this.treeCostStatement.get(thread.rootThreadId)?.total ?? 0,
-      dayCostUsd: this.dayCostStatement.get(day)?.total ?? 0,
+      dayCostUsd: this.dayCostStatement.get(day, nextDay)?.total ?? 0,
     };
   }
 }

@@ -14,6 +14,7 @@ import {
   SIGNAL_CHANNEL,
   type RuleId,
   type Severity,
+  type SignalBroadcast,
   type WatchMode,
 } from "./contract.js";
 import { inQuietHours, type QuietHours } from "./settings.js";
@@ -113,13 +114,16 @@ export function createLadder(deps: LadderDeps): Ladder {
       const capped = withinCap(transition.threadId, now);
       if (capped) return capped;
 
-      deps.publish(SIGNAL_CHANNEL, {
+      // Typed against the schema the app parses this channel with, so a
+      // field renamed here fails the build rather than the subscriber.
+      const broadcast: SignalBroadcast = {
         threadId: transition.threadId,
         kind: transition.rule,
         state: transition.state,
         severity: transition.severity,
         evidence: transition.evidence,
-      });
+      };
+      deps.publish(SIGNAL_CHANNEL, broadcast);
       perThread.get(transition.threadId)?.push(now);
       overall.push(now);
       return "sent";

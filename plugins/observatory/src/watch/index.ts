@@ -4,6 +4,8 @@ export {
   RULE_IDS,
   SIGNAL_CHANNEL,
   WATCH_MODES,
+  parseRuleId,
+  parseSeverity,
   signalBroadcastSchema,
   watchContract,
   type InboxAction,
@@ -30,7 +32,6 @@ export {
   inQuietHours,
   parseQuietHours,
   readWatchConfig,
-  thresholdKeys,
   type QuietHours,
   type WatchConfig,
 } from "./settings.js";

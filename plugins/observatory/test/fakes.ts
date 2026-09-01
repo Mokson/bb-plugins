@@ -350,12 +350,7 @@ export function makeWatchFixture(
     store,
     db,
     settingValues,
-    published: () =>
-      (
-        host.harness as unknown as {
-          realtimeSignals: Array<{ channel: string; payload: unknown }>;
-        }
-      ).realtimeSignals,
+    published: () => host.harness.inspection.realtimeSignals,
     seedThread(options = {}) {
       const threadId = options.threadId ?? "thr-watch";
       store.upsertThread({

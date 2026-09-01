@@ -17,7 +17,6 @@ import { createWatchRpcHandlers } from "../src/watch/rpc.js";
 import { MIGRATIONS } from "../src/core/store.js";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { event, makeIngestHost } from "./fakes.js";
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 const THREAD = "thr-1";
 const T0 = Date.parse("2026-09-01T12:00:00.000Z");
@@ -239,7 +238,3 @@ describe("a thread that runs the same command eight times", () => {
     expect(all[0]!.closed_at).not.toBeNull();
   });
 });
-
-/** The fake ingest host's `bb` is a structural stub; this keeps the cast in
- * one place so a widened SDK surface fails here rather than mid-test. */
-export type _IngestBb = BbPluginApi;

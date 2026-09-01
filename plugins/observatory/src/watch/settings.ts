@@ -5,8 +5,10 @@
 // effect, which is exactly wrong for the knob a person reaches for while
 // staring at a false positive, so the panel writes KV and the setting is only
 // the durable default underneath.
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import type { PluginSettingDescriptors } from "@get-bb/plugin-sdk";
+import type {
+  BbPluginApi,
+  PluginSettingDescriptors,
+} from "@get-bb/plugin-sdk";
 import { RULE_IDS, WATCH_MODES, type RuleId, type WatchMode } from "./contract.js";
 
 /** KV key holding the threshold overrides, `{ watch_silenceMinutes: 4 }`. */
@@ -152,11 +154,6 @@ export interface WatchConfig {
 function toNumber(value: unknown, fallback: number): number {
   const parsed = typeof value === "boolean" ? Number.NaN : Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-/** Every threshold key watch resolves, in a stable order. */
-export function thresholdKeys(): string[] {
-  return [...RULE_IDS.map((rule) => RULE_THRESHOLDS[rule].key), PER_DAY_KEY];
 }
 
 /**

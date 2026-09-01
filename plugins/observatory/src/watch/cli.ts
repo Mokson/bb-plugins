@@ -3,14 +3,13 @@
 // `--json` emits the RPC output verbatim so a script and the panel read one
 // contract, and `--follow` is deliberately absent from the render path: it
 // only changes how often the same renderer runs.
-import type { PluginCliResult } from "@get-bb/plugin-sdk";
+import type { BbPluginApi, PluginCliResult } from "@get-bb/plugin-sdk";
 import type { WatchMode, WatchRow } from "./contract.js";
 import { WATCH_MODES } from "./contract.js";
 import type { WatchHandle } from "./module.js";
 import { buildExplain, buildWatchList } from "./views.js";
 import { MODE_KV_KEY } from "./settings.js";
 import { settingsView } from "./rpc.js";
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 export const WATCH_CLI_COMMANDS = [
   {

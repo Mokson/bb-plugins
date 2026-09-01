@@ -3,8 +3,7 @@
 // A handler is a thin adapter over the views: it resolves the runtime, or
 // fails loudly if watch is not running, and never computes anything the CLI
 // would then have to recompute differently.
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import type { PluginRpcHandlers } from "@get-bb/plugin-sdk";
+import type { BbPluginApi, PluginRpcHandlers } from "@get-bb/plugin-sdk";
 import {
   watchContract,
   type WatchSettingsView,

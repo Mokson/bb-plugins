@@ -25,12 +25,37 @@ export const RULE_IDS = [
 export const ruleIdSchema = z.enum(RULE_IDS);
 export type RuleId = (typeof RULE_IDS)[number];
 
+/**
+ * Narrow a stored `obs_signal.kind` back to a rule id, or null.
+ *
+ * The column is plain text and signals are kept forever, so a row written by a
+ * build whose rule has since been renamed is a real shape a reader must
+ * survive. Parsing at the boundary keeps that a null in the view instead of a
+ * failed output validation at the wire.
+ */
+export function parseRuleId(value: string): RuleId | null {
+  return (RULE_IDS as readonly string[]).includes(value)
+    ? (value as RuleId)
+    : null;
+}
+
 export const WATCH_MODES = ["off", "observe", "steer"] as const;
 export const watchModeSchema = z.enum(WATCH_MODES);
 export type WatchMode = (typeof WATCH_MODES)[number];
 
 export const severitySchema = z.enum(["info", "warn", "critical"]);
 export type Severity = z.output<typeof severitySchema>;
+
+/**
+ * Narrow a stored `obs_signal.severity` back to the union, defaulting to
+ * `warn`. Same reason as `parseRuleId`: the column is nullable text, and a
+ * reader must not assert its way into a wire validation failure.
+ */
+export function parseSeverity(value: string | null): Severity {
+  return value === "critical" || value === "warn" || value === "info"
+    ? value
+    : "warn";
+}
 
 /** The module that opened a row. Only watch and spend exist; the rest are
  * declared so the inbox ranking never needs widening when they land. */

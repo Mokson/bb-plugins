@@ -7,7 +7,7 @@
 // nothing has to remember what fired last tick — the `obs_signal` table is
 // the memory, and it survives a plugin reload for free.
 import type { ObservatoryStore } from "../core/store.js";
-import type { RuleId, Severity } from "./contract.js";
+import { parseRuleId, parseSeverity } from "./contract.js";
 import type { Ladder, SignalTransition } from "./ladder.js";
 import type { WatchQueries } from "./queries.js";
 import { dedupeKey, evaluate, type Finding } from "./rules.js";
@@ -62,17 +62,24 @@ export function createEngine(deps: EngineDeps): WatchEngine {
     for (const row of open) {
       if (byKey.has(row.dedupe_key)) continue;
       deps.store.closeSignal(row.id, at);
+      // A row whose `kind` no longer names a live rule is still CLOSED — it is
+      // stale by definition — but it gets no transition: the ladder's
+      // broadcast is typed on the rule union, and there is nothing truthful to
+      // put in it.
+      const rule = parseRuleId(row.kind);
+      if (!rule) continue;
       transitions.push({
         signalId: row.id,
         threadId,
-        rule: row.kind as RuleId,
+        rule,
         state: "closed",
-        severity: (row.severity ?? "warn") as Severity,
+        severity: parseSeverity(row.severity),
         evidence: evidenceOf(row.payload) ?? `${row.kind} cleared`,
         at,
       });
     }
 
+    const closed = transitions.length;
     let opened = 0;
     for (const [key, finding] of byKey) {
       if (openKeys.has(key)) continue;
@@ -99,12 +106,7 @@ export function createEngine(deps: EngineDeps): WatchEngine {
 
     for (const transition of transitions) deps.ladder.applyLadder(transition);
 
-    return {
-      threadId,
-      opened,
-      closed: transitions.length - opened,
-      transitions,
-    };
+    return { threadId, opened, closed, transitions };
   }
 
   return {
@@ -122,22 +124,10 @@ export function createEngine(deps: EngineDeps): WatchEngine {
 
 /** The evidence line stored alongside a signal's payload, when there is one. */
 export function evidenceOf(payload: string | null): string | null {
-  if (!payload) return null;
-  try {
-    const parsed: unknown = JSON.parse(payload);
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      "evidence" in parsed &&
-      typeof (parsed as { evidence: unknown }).evidence === "string"
-    ) {
-      return (parsed as { evidence: string }).evidence;
-    }
-  } catch {
-    // A payload that is not JSON is a fact about an older row, not an error
-    // worth failing an evaluation over.
-  }
-  return null;
+  const parsed = parsePayload(payload);
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const evidence = (parsed as { evidence?: unknown }).evidence;
+  return typeof evidence === "string" ? evidence : null;
 }
 
 /** Parsed payload, or null. Shared by the RPC views. */
@@ -146,6 +136,8 @@ export function parsePayload(payload: string | null): unknown {
   try {
     return JSON.parse(payload) as unknown;
   } catch {
+    // A payload that is not JSON is a fact about an older row, not an error
+    // worth failing an evaluation over.
     return null;
   }
 }

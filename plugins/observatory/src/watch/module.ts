@@ -21,6 +21,7 @@ import { createLadder, type Ladder } from "./ladder.js";
 import { WatchQueries } from "./queries.js";
 import { createTrajectory, type Trajectory } from "./trajectory.js";
 import { readWatchConfig, type WatchConfig } from "./settings.js";
+import { RULE_IDS, type RuleId } from "./contract.js";
 
 export type SettingsReader = () => Promise<
   Record<string, string | boolean | undefined>
@@ -45,19 +46,17 @@ export interface WatchHandle {
   current: WatchRuntime | null;
 }
 
-/** The config watch falls back to before its first refresh lands. */
+/**
+ * The config watch falls back to before its first refresh lands. Every rule on,
+ * derived from `RULE_IDS` rather than restated: a rule added to the union must
+ * not need a second edit here to be evaluated.
+ */
 function bootConfig(): WatchConfig {
   return {
     mode: "observe",
-    enabled: {
-      "silence-no-inflight": true,
-      "repeated-identical-tool": true,
-      "read-edit-read": true,
-      "active-no-turn": true,
-      "burn-no-change": true,
-      "retry-storm": true,
-      "tree-budget": true,
-    },
+    enabled: Object.fromEntries(
+      RULE_IDS.map((rule) => [rule, true]),
+    ) as Record<RuleId, boolean>,
     thresholds: {},
     source: {},
     quietHours: null,

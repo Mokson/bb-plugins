@@ -40,13 +40,13 @@ import {
 import {
   WATCH_CLI_COMMANDS,
   WATCH_SETTING_DESCRIPTORS,
+  createTrajectory,
   createWatchModule,
   createWatchRpcHandlers,
   runWatchCli,
   watchContract,
   type WatchHandle,
 } from "./watch/index.js";
-import { createTrajectory } from "./watch/trajectory.js";
 
 export const PHASE = "phase 0 scaffold";
 

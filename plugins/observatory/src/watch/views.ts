@@ -14,6 +14,7 @@ import type {
   ThreadSignalView,
   WatchRow,
 } from "./contract.js";
+import { parseRuleId, parseSeverity } from "./contract.js";
 import { evidenceOf, parsePayload } from "./engine.js";
 import type { SignalRowLite, WatchQueries } from "./queries.js";
 import { STALL_RULES } from "./rules.js";
@@ -25,10 +26,7 @@ const SEVERITY_ORDER: Record<Severity, number> = {
 };
 
 function severityOf(row: SignalRowLite): Severity {
-  const value = row.severity;
-  return value === "critical" || value === "warn" || value === "info"
-    ? value
-    : "warn";
+  return parseSeverity(row.severity);
 }
 
 function toSignalView(row: SignalRowLite): SignalView {
@@ -65,7 +63,7 @@ export function buildWatchList(
 ): { watched: number; rows: WatchRow[] } {
   const threads = queries.activeThreads();
   const rows = threads.map((thread): WatchRow => {
-    const snapshot = queries.snapshot(thread.threadId, now);
+    const liveness = queries.liveness(thread.threadId);
     const open = queries
       .openSignals(thread.threadId)
       .sort(
@@ -79,14 +77,18 @@ export function buildWatchList(
       seat: thread.seat,
       state: open.length > 0 ? "stalled" : "healthy",
       silentMs:
-        snapshot?.lastEventAt === null || snapshot === null
+        liveness.lastEventAt === null
           ? 0
-          : Math.max(0, now - snapshot.lastEventAt),
-      inflight: snapshot?.openItem
-        ? { kind: snapshot.openItem.kind, name: snapshot.openItem.name }
+          : Math.max(0, now - liveness.lastEventAt),
+      inflight: liveness.openItem
+        ? { kind: liveness.openItem.kind, name: liveness.openItem.name }
         : null,
       stage: stageOf(thread.seat),
-      rule: worst ? (worst.kind as RuleId) : null,
+      // PARSED, not asserted. `kind` is a plain text column, and a row written
+      // by an older build with a since-renamed rule would otherwise be cast
+      // into the union and then fail the RPC's own output validation at the
+      // wire — a 500 for a row we can simply report as unattributed.
+      rule: worst ? parseRuleId(worst.kind) : null,
       diagnostic: worst ? (evidenceOf(worst.payload) ?? worst.kind) : null,
       openedAt: worst?.opened_at ?? null,
     };
