@@ -33,6 +33,8 @@ export interface BetterSidebarSettings {
    * lookup, so it is the only one whose toggle also switches off a request.
    */
   showModel: boolean;
+  /** B84: row 2's effort, the half of the model label after the dot. */
+  showEffort: boolean;
 }
 
 export type DateBucketKey = "today" | "yesterday" | "last-7" | "last-30" | "older";

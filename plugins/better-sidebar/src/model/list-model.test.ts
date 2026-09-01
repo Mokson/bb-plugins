@@ -101,6 +101,7 @@ const DEFAULT_SETTINGS: BetterSidebarSettings = {
   showProjectName: true,
   showBranch: true,
   showModel: true,
+  showEffort: false,
 };
 
 /**

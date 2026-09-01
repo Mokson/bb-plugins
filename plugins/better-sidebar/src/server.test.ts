@@ -545,6 +545,7 @@ describe("registration", () => {
       "showProjectName",
       "showBranch",
       "showModel",
+      "showEffort",
     ]);
     expect(descriptors.groupBy?.default).toBe("date");
     expect(descriptors.density?.default).toBe("default");
@@ -561,6 +562,9 @@ describe("registration", () => {
       expect(descriptors[key]?.type).toBe("boolean");
       expect(descriptors[key]?.default).toBe(true);
     }
+    // B84: effort ships off.
+    expect(descriptors.showEffort?.type).toBe("boolean");
+    expect(descriptors.showEffort?.default).toBe(false);
   });
 
   it("offers every B65 group mode as a select option", async () => {

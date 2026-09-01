@@ -765,21 +765,21 @@ describe("ThreadRow row 1 layout (B57)", () => {
   /**
    * Superseding B57.3. The row's base inset is symmetric — content sits
    * inside its rounded background rather than flush against both edges — and
-   * B9's per-depth indent adds to the left of it.
+   * B9's per-depth indent adds to the left of it. B74 halves the base to 4px.
    */
   it("insets the row equally on both sides, then indents by depth", () => {
     const { container: root } = renderRow(row({ depth: 0 }));
     const rootBox = rowElement(root).firstElementChild as HTMLElement;
-    expect(rootBox.style.paddingLeft).toBe("8px");
-    expect(rootBox.style.paddingRight).toBe("8px");
+    expect(rootBox.style.paddingLeft).toBe("4px");
+    expect(rootBox.style.paddingRight).toBe("4px");
     cleanup();
 
-    // 8px base + 2 x 12px nesting. The RIGHT side never moves: only the left
+    // 4px base + 2 x 12px nesting. The RIGHT side never moves: only the left
     // carries the indent, or a deep child's time would drift inward.
     const { container: child } = renderRow(row({ depth: 2 }));
     const childBox = rowElement(child).firstElementChild as HTMLElement;
-    expect(childBox.style.paddingLeft).toBe("32px");
-    expect(childBox.style.paddingRight).toBe("8px");
+    expect(childBox.style.paddingLeft).toBe("28px");
+    expect(childBox.style.paddingRight).toBe("4px");
   });
 
   /**

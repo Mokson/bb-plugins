@@ -37,6 +37,7 @@ export function SecondRow({
   providerId,
   showProjectName,
   showBranch,
+  showEffort,
   execution,
 }: {
   row: RenderRow;
@@ -47,6 +48,8 @@ export function SecondRow({
   providerId: string | null;
   showProjectName: boolean;
   showBranch: boolean;
+  /** B84: the effort half of the model label, after the dot. */
+  showEffort: boolean;
   /**
    * Model and effort, already gated by `showModel`. Null while the lookup is
    * in flight, when the thread never ran, and when the setting is off.
@@ -102,8 +105,12 @@ export function SecondRow({
         >
           {/* Model and effort stay ONE text node. Split into two spans, with
               the spacing carried by `gap`, the line's accessible text
-              collapsed to `claude-opus-5low`. The pair reads as one fact. */}
-          {execution.model} · {execution.reasoningLevel}
+              collapsed to `claude-opus-5low`. The pair reads as one fact.
+              B84: the effort half is settable away, and the node stays one
+              either way — the bare model, or the pair. */}
+          {showEffort
+            ? `${execution.model} · ${execution.reasoningLevel}`
+            : execution.model}
         </Label>
       ),
     });
@@ -283,11 +290,14 @@ function Label({
 export function ChildSecondRow({
   row,
   providerId,
+  showEffort,
   execution,
 }: {
   row: RenderRow;
   /** The provider whose mark rides on the model label; null draws none. */
   providerId: string | null;
+  /** B84: the effort half of the model label, after the dot. */
+  showEffort: boolean;
   /** null while the lookup is in flight, and when the thread never ran. */
   execution: { model: string; reasoningLevel: string } | null;
 }) {
@@ -310,7 +320,9 @@ export function ChildSecondRow({
             <ProviderGlyph providerId={providerId} size="small" monochrome />
           )}
           <span className="min-w-0 truncate">
-            {execution.model} · {execution.reasoningLevel}
+            {showEffort
+              ? `${execution.model} · ${execution.reasoningLevel}`
+              : execution.model}
           </span>
         </>
       )}

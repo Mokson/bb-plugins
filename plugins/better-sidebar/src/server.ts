@@ -221,6 +221,13 @@ export default function plugin(bb: BbPluginApi) {
         "The only field on the row that costs a backend lookup. Off, the list asks for no execution options at all.",
       default: true,
     },
+    showEffort: {
+      type: "boolean",
+      label: "Show the effort on the metadata row",
+      description:
+        "The reasoning level after the dot. Off, the row names the model alone. Needs the model on.",
+      default: false,
+    },
   });
 
   // These handlers do not cache. The frontend already caches both methods at
