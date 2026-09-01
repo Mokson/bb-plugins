@@ -44,9 +44,17 @@ export const spendRowSchema = z
     ]),
     turns: z.number(),
     inputTokens: z.number(),
-    /** NULL when ANY turn in this group has an unproven split. */
+    /**
+     * The sum over the turns whose split IS proven, NULL only when NO turn in
+     * the group has one. One unknown descendant used to null the whole
+     * aggregate, so in a 47-agent run every real row read `--`; the partial
+     * flags below say "this is a floor, not the total" instead.
+     */
     cacheReadTokens: z.number().nullable(),
     cacheWriteTokens: z.number().nullable(),
+    /** True when SOME turn in this group has an unproven split. */
+    cacheReadPartial: z.boolean().optional(),
+    cacheWritePartial: z.boolean().optional(),
     outputTokens: z.number(),
     costUsd: z.number().nullable(),
     /** True when any turn's cost came from the catalog rather than the bill. */

@@ -38,6 +38,7 @@ import {
   type SpendThreadView,
 } from "./spend/contract.js";
 import {
+  agentTotals,
   formatOverview,
   spendExport,
   spendOverview,
@@ -1220,7 +1221,9 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
         return clampToolResult({
           scope,
           threadId: id,
-          totals: view.totals,
+          // `agentTotals`, not the raw totals: a `0` here is read as a
+          // measurement, and an unpriced model has no measurement.
+          totals: agentTotals(view.totals),
           turns: view.turns.length,
         });
       }

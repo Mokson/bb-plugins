@@ -4,7 +4,7 @@
 // returns already flattened and ordered, so folding is the only thing this
 // file decides about shape; the model and day tabs reuse the same table with
 // every row at depth 0 and nothing to fold.
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -24,6 +24,7 @@ import {
   overviewInput,
   readStoredFilters,
   resolveFilters,
+  syncFilterSearch,
   writeStoredFilters,
   type Filters,
 } from "@/lib/filters";
@@ -48,9 +49,16 @@ const SELECT_CLASS =
 
 /**
  * Filter state resolved once on mount from the URL over storage, then owned
- * by the page. Later edits persist but do not rewrite the URL: the SDK's
- * `toPluginPanel` carries a subPath and no query, so a filter change cannot
- * push a new address without losing the panel's own history.
+ * by the page and mirrored back into both.
+ *
+ * Both writes matter, and for different reasons. The URL write (by
+ * `replaceState`, since `toPluginPanel` carries a subPath and no query) is
+ * what makes the address bar describe the slice on screen and survive a
+ * reload. The storage write on MOUNT is what stops the sticky value from
+ * outranking a deep link elsewhere: a page opened at `?range=7d` used to
+ * leave `1d` in storage, and the cache drilldown - which the SDK navigates to
+ * without a query - then read that stale `1d` back and rendered a different
+ * range than the page it was opened from.
  */
 function useFilters(): [Filters, (next: Filters) => void] {
   const [filters, setFilters] = useState<Filters>(() =>
@@ -62,12 +70,12 @@ function useFilters(): [Filters, (next: Filters) => void] {
         ),
   );
 
-  const update = useCallback((next: Filters) => {
-    setFilters(next);
-    writeStoredFilters(next);
-  }, []);
+  useEffect(() => {
+    writeStoredFilters(filters);
+    syncFilterSearch(filters);
+  }, [filters]);
 
-  return [filters, update];
+  return [filters, setFilters];
 }
 
 function FilterBar({
@@ -299,8 +307,12 @@ function OverviewTable({
               was a guess. Only the dollar column takes the mark.
             */}
             <Num>{formatTokens(row.inputTokens)}</Num>
-            <Num>{formatTokens(row.cacheReadTokens)}</Num>
-            <Num>{formatTokens(row.cacheWriteTokens)}</Num>
+            <Num>
+              {formatTokens(row.cacheReadTokens, false, row.cacheReadPartial)}
+            </Num>
+            <Num>
+              {formatTokens(row.cacheWriteTokens, false, row.cacheWritePartial)}
+            </Num>
             <Num>{formatTokens(row.outputTokens)}</Num>
             <Num>{formatUsd(row.costUsd, row.estimated)}</Num>
           </tr>

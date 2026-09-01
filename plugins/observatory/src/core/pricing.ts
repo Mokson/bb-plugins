@@ -29,6 +29,10 @@ export type PricingStatus =
   | "alias"
   | "prefix"
   | "logged"
+  // PRODUCT invariant 12 names this state, and no row ever carried it: the
+  // placeholder branch below reported "unknown", collapsing "this id can
+  // never have a price" into "nothing resolved this id, try again later".
+  | "unpriceable"
   | "unknown";
 
 export interface PriceTurnInput {
@@ -141,7 +145,7 @@ export function priceTurn(
     return {
       costUsd: null,
       costSource: "unpriceable",
-      pricingStatus: "unknown",
+      pricingStatus: "unpriceable",
       cacheSavingsUsd: null,
     };
   }

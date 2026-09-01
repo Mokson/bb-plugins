@@ -169,7 +169,10 @@ describe("COST.md", () => {
     expect(report.content).toContain("cache_read_share: n/a");
   });
 
-  it("reports the split as n/a rather than the reads it happens to know", () => {
+  // QA phase 1, H1: the header both suppressed the cache reads as unknown and
+  // counted them inside `tokens_total`, so its two cache keys were unusable
+  // and its token total was 40x the input+output it claimed to be.
+  it("reports a partial split as a floor and keeps it out of tokens_total", () => {
     temp = new TempDatabase();
     const store = temp.open();
     seedThread(store, { thread_id: "impl", run_folder: RUN_FOLDER });
@@ -185,6 +188,37 @@ describe("COST.md", () => {
     seedTurn(store, {
       thread_id: "impl",
       turn_id: "b",
+      cache_read_tokens: null,
+      cached_input_tokens: 9_999,
+      input_tokens: 100,
+      split_source: "unavailable",
+      cost_usd: 1,
+      cost_source: "logged",
+    });
+
+    const content = buildCostMd(store.db, {
+      runFolder: RUN_FOLDER,
+      now: () => COST_MD_NOW,
+      readLedger: () => null,
+    }).content;
+
+    // The reads one turn proved, marked as the floor they are.
+    expect(content).toContain("cache_read_tokens: 1000+");
+    // Input + output + reasoning only. The 1,000 reads and the 9,999 unsplit
+    // cached tokens are NOT in here; counting them while printing the same
+    // reads as unknown is the contradiction this test exists for.
+    expect(content).toContain("tokens_total: 200");
+    // 1000 / (200 + 1000), and a floor too.
+    expect(content).toContain("cache_read_share: 83.3%+");
+  });
+
+  it("reports the split as n/a only when no turn proved one", () => {
+    temp = new TempDatabase();
+    const store = temp.open();
+    seedThread(store, { thread_id: "impl", run_folder: RUN_FOLDER });
+    seedTurn(store, {
+      thread_id: "impl",
+      turn_id: "a",
       cache_read_tokens: null,
       cached_input_tokens: 9_999,
       input_tokens: 100,

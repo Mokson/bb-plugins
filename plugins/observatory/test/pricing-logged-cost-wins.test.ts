@@ -50,6 +50,10 @@ describe("cost precedence", () => {
       // `$0.00` reads as free; only null reads as unmeasured.
       expect(result.costUsd).toBeNull();
       expect(result.costSource).toBe("unpriceable");
+      // PRODUCT invariant 12 names this status and no stored row carried it:
+      // the branch reported "unknown", collapsing "this id can never have a
+      // price" into "nothing resolved it, try again after a catalog refresh".
+      expect(result.pricingStatus).toBe("unpriceable");
     }
   });
 

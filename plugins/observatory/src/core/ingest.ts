@@ -87,6 +87,13 @@ export interface IngestOptions {
   onThreadCommitted?: (threadId: string) => void;
 }
 
+/**
+ * Modules whose signals are recomputed from the ledger on every scan, and so
+ * are safe for `reset` to drop. `watch` is deliberately absent: it records
+ * what happened while a run was live and nothing can re-derive it.
+ */
+export const DERIVED_SIGNAL_MODULES: readonly string[] = ["spend"];
+
 export interface Ingest {
   start(signal: AbortSignal): Promise<void>;
   markDirty(threadId: string): void;
@@ -286,6 +293,13 @@ export function createIngest(options: IngestOptions): Ingest {
    * transaction, or a drain would resume with a carry that describes events it
    * is about to read again. Nothing here reads or writes a provider log: the
    * rows this drops are all re-derivable from bb's own event stream.
+   *
+   * The derived signals go too, for the same reason the watermark does. A
+   * cache-miss episode is a pure function of the turns it was detected over,
+   * and `obs_signal.dedupe_key` makes the detector idempotent - so a signal
+   * opened by an older estimator survives every later scan, and `--reset`
+   * re-derives the turns while the number on the cost page stays frozen at
+   * whatever the first pass computed.
    */
   function reset(threadIds: readonly string[]): void {
     // Prepared per call rather than at construction: this is the rare admin
@@ -294,10 +308,25 @@ export function createIngest(options: IngestOptions): Ingest {
       "UPDATE obs_thread SET last_event_seq = NULL WHERE thread_id = ?",
     );
     const clearCarry = store.db.prepare("DELETE FROM obs_meta WHERE key = ?");
+    // Scoped to the re-derivable modules by name. A watch signal records an
+    // event that was observed live and cannot be recomputed from the ledger,
+    // so dropping it would destroy the only copy.
+    const modules = DERIVED_SIGNAL_MODULES.map(() => "?").join(", ");
+    const clearActions = store.db.prepare(
+      `DELETE FROM obs_action WHERE signal_id IN (
+         SELECT id FROM obs_signal
+          WHERE thread_id = ? AND module IN (${modules}))`,
+    );
+    const clearSignals = store.db.prepare(
+      `DELETE FROM obs_signal
+        WHERE thread_id = ? AND module IN (${modules})`,
+    );
     store.db.transaction(() => {
       for (const threadId of threadIds) {
         clearWatermark.run(threadId);
         clearCarry.run(carryKey(threadId));
+        clearActions.run(threadId, ...DERIVED_SIGNAL_MODULES);
+        clearSignals.run(threadId, ...DERIVED_SIGNAL_MODULES);
         carries.delete(threadId);
         dirty.add(threadId);
       }

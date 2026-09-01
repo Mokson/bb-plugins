@@ -60,7 +60,10 @@ export function TabsTrigger({
         // than repainting a pill.
         // The host document styles bare `button` elements, so the reset is
         // explicit: a tab is text plus one underline, nothing else.
-        "-mb-px inline-flex cursor-pointer items-center gap-2 rounded-none border-0 border-b-2 border-transparent bg-transparent px-3 py-2 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        // `text-[11px]`, not Tailwind's `text-xs`: PRODUCT invariant 34 fixes
+        // the type scale at 11/13/16/24, and `text-xs` renders 12px - the
+        // three nodes that put a fourth size on the panel.
+        "-mb-px inline-flex cursor-pointer items-center gap-2 rounded-none border-0 border-b-2 border-transparent bg-transparent px-3 py-2 text-[11px] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
         selected && "border-b-foreground font-medium text-foreground",
         className,
       )}

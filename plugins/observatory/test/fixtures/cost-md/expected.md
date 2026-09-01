@@ -2,9 +2,9 @@ snapshot: final
 generated_at: 2026-08-31T12:00:00.000Z
 agents: 11
 cost_usd_total: 1.8700
-tokens_total: 62685
+tokens_total: 4935
 cache_read_tokens: 52500
-cache_read_share: 83.8%
+cache_read_share: 91.4%
 
 | agent | model | effort | stage | tool uses | duration s | cost usd | flags |
 | --- | --- | --- | --- | --- | --- | --- | --- |

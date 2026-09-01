@@ -6,9 +6,19 @@
 // sorted by cost descending, `n/a` for anything unmatched, and a CLOSED flag
 // vocabulary. A flag nobody defined is a flag the retro seat silently drops.
 //
-// The null discipline from `rollup.ts` reaches the header too: when any
-// selected turn has an unproven cache split, `cache_read_tokens` and
-// `cache_read_share` are `n/a` rather than the reads that happen to be known.
+// Two header keys are load-bearing and used to contradict each other.
+// `tokens_total` is input + output + reasoning and EXCLUDES cache reads and
+// writes, matching the retro schema's "a token count is not a cost, since
+// cache reads dominate the bill and never appear in the ledger's token
+// column". `cache_read_tokens` reports the reads the run could prove, with a
+// `+` suffix when some selected turn could not - a floor, not a total - and
+// `n/a` only when no turn in the run has a proven split. The earlier shape
+// counted those reads inside `tokens_total` while printing `n/a` beside them,
+// so the two keys the retro seat consumes stated opposite things.
+//
+// `cache_read_share` is that read count over ALL tokens processed
+// (`tokens_total` plus the proven reads), since the reads are no longer part
+// of the denominator.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Database } from "better-sqlite3";
@@ -54,7 +64,6 @@ interface AgentRow {
   input_tokens: number;
   output_tokens: number;
   reasoning_tokens: number;
-  cached_tokens: number;
   cache_read: number | null;
   read_nulls: number;
 }
@@ -95,11 +104,6 @@ SELECT th.thread_id, th.title, th.seat, th.tier_tag,
        COALESCE(SUM(t.input_tokens), 0) AS input_tokens,
        COALESCE(SUM(t.output_tokens), 0) AS output_tokens,
        COALESCE(SUM(t.reasoning_tokens), 0) AS reasoning_tokens,
-       COALESCE(SUM(COALESCE(t.cache_read_tokens, 0)
-                  + COALESCE(t.cache_write_tokens, 0)
-                  + CASE WHEN t.cache_read_tokens IS NULL
-                         THEN COALESCE(t.cached_input_tokens, 0) ELSE 0 END), 0)
-         AS cached_tokens,
        COALESCE(SUM(t.cache_read_tokens), 0) AS cache_read,
        SUM(CASE WHEN t.cache_read_tokens IS NULL THEN 1 ELSE 0 END) AS read_nulls,
        SUM(CASE WHEN t.model_requested IS NOT NULL
@@ -293,6 +297,7 @@ export function buildCostMd(
   let costTotal = 0;
   let tokensTotal = 0;
   let cacheRead = 0;
+  let readsProven = 0;
   let splitUnproven = false;
 
   const table = rows
@@ -306,11 +311,9 @@ export function buildCostMd(
 
       costTotal += row.cost_usd ?? 0;
       tokensTotal +=
-        row.input_tokens +
-        row.output_tokens +
-        row.reasoning_tokens +
-        row.cached_tokens;
+        row.input_tokens + row.output_tokens + row.reasoning_tokens;
       cacheRead += row.cache_read ?? 0;
+      readsProven += Math.max(0, row.turns - row.read_nulls);
       if (row.read_nulls > 0) splitUnproven = true;
 
       return {
@@ -334,10 +337,14 @@ export function buildCostMd(
     .sort((a, b) => (b.cost ?? -1) - (a.cost ?? -1))
     .map((entry) => `| ${entry.cells.join(" | ")} |`);
 
+  // `+` marks a floor: at least one selected turn has no proven split, so the
+  // real figure is higher than the one printed.
+  const suffix = splitUnproven ? "+" : "";
+  const processed = tokensTotal + cacheRead;
   const share =
-    splitUnproven || tokensTotal === 0
+    readsProven === 0 || processed === 0
       ? "n/a"
-      : `${((cacheRead / tokensTotal) * 100).toFixed(1)}%`;
+      : `${((cacheRead / processed) * 100).toFixed(1)}%${suffix}`;
 
   const content = [
     `snapshot: ${snapshot}`,
@@ -345,7 +352,7 @@ export function buildCostMd(
     `agents: ${rows.length}`,
     `cost_usd_total: ${costTotal.toFixed(4)}`,
     `tokens_total: ${tokensTotal}`,
-    `cache_read_tokens: ${splitUnproven ? "n/a" : cacheRead}`,
+    `cache_read_tokens: ${readsProven === 0 ? "n/a" : `${cacheRead}${suffix}`}`,
     `cache_read_share: ${share}`,
     "",
     "| agent | model | effort | stage | tool uses | duration s | cost usd | flags |",

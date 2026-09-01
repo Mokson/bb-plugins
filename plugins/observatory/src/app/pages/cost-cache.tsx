@@ -5,6 +5,7 @@
 // turns in the order PRODUCT invariant 18 fixes. The classified cause is the
 // first of those correlates, so showing the whole list is what makes the
 // classification auditable rather than a verdict.
+import { useEffect } from "react";
 import { Heading } from "@/components/spend-common";
 import { QueryFrame } from "@/components/spend-common";
 import {
@@ -16,7 +17,12 @@ import {
 } from "@/lib/format";
 import { useSpendQuery } from "@/lib/spend-rpc";
 import { fixtureCacheMisses } from "@/fixtures/spend";
-import { readStoredFilters, resolveFilters } from "@/lib/filters";
+import {
+  DEFAULT_FILTERS,
+  readStoredFilters,
+  resolveFilters,
+  syncFilterSearch,
+} from "@/lib/filters";
 import type { CacheMissRow, SpendCacheMisses } from "../../spend/contract.js";
 
 function Field({ label, value }: { label: string; value: string }) {
@@ -95,13 +101,24 @@ function MissBlock({ row }: { row: CacheMissRow }) {
  * range.
  */
 export function CostCache({ threadId }: { threadId?: string }) {
-  const range =
+  // Same precedence as the overview: URL over storage over default. The
+  // overview reconciles those two on mount, so arriving here through
+  // `toPluginPanel` - which carries a subPath and drops the query - inherits
+  // the range that was on screen rather than a stale sticky one.
+  const filters =
     typeof window === "undefined"
-      ? "7d"
+      ? DEFAULT_FILTERS
       : resolveFilters(
           new URLSearchParams(window.location.search),
           readStoredFilters(),
-        ).range;
+        );
+  const range = filters.range;
+
+  // The drilldown's own address states its range, so it survives a reload and
+  // can be copied.
+  useEffect(() => {
+    syncFilterSearch(filters);
+  }, [range, filters.group, filters.host, filters.provider]);
 
   const query = useSpendQuery<SpendCacheMisses>(
     "observatory_spend_cache_misses",

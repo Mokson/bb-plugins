@@ -100,9 +100,15 @@ function measures(agg: AggregateRow): Omit<SpendRow, "key" | "label" | "depth" |
   return {
     turns: agg.turns,
     inputTokens: agg.input_tokens,
-    // The whole point of the file: a partial split is not a number.
-    cacheReadTokens: agg.read_nulls > 0 ? null : agg.read_sum,
-    cacheWriteTokens: agg.write_nulls > 0 ? null : agg.write_sum,
+    // A partial split is still not a total, but it is not nothing either. The
+    // sum runs over the turns that HAVE a proven split and the row carries a
+    // partial flag, so the surface renders `353,000+`. Nulling on the first
+    // unknown descendant made every aggregate row in a real multi-agent run
+    // read `--` while the same reads were silently counted elsewhere.
+    cacheReadTokens: agg.turns - agg.read_nulls === 0 ? null : agg.read_sum,
+    cacheReadPartial: agg.read_nulls > 0 && agg.turns - agg.read_nulls > 0,
+    cacheWriteTokens: agg.turns - agg.write_nulls === 0 ? null : agg.write_sum,
+    cacheWritePartial: agg.write_nulls > 0 && agg.turns - agg.write_nulls > 0,
     outputTokens: agg.output_tokens,
     costUsd: agg.priced_turns === 0 ? null : agg.cost_sum,
     estimated: agg.non_logged > 0,
@@ -393,6 +399,37 @@ function totalsFor(
   };
 }
 
+/** The agent-tool shape of `SpendTotals`, where an unknown is `null`. */
+export interface AgentTotals {
+  spendUsd: number | null;
+  cacheSavedUsd: number | null;
+  cacheWriteUsd: number;
+  missCostUsd: number;
+  unpricedModels: number;
+  note?: string;
+}
+
+/**
+ * `SpendTotals` as an agent may read it.
+ *
+ * The panel renders an unpriced total `--`; the agent tool handed the same
+ * scope back `"spendUsd": 0`, and the model consuming it wrote "all costs read
+ * 0". PRODUCT invariant 12: a missing price never becomes `$0.00`. So the two
+ * totals that are sums over per-turn prices go null the moment any model in
+ * scope is unpriced, and a one-line note says why. `cacheWriteUsd` and
+ * `missCostUsd` are priced from the catalog independently of those turns and
+ * keep their figures.
+ */
+export function agentTotals(totals: SpendTotals): AgentTotals {
+  if (totals.unpricedModels === 0) return { ...totals };
+  return {
+    ...totals,
+    spendUsd: null,
+    cacheSavedUsd: null,
+    note: `spend is null, not zero: ${totals.unpricedModels} model(s) in scope have no price`,
+  };
+}
+
 export interface RollupDeps {
   db: Database;
   catalog?: PricingCatalog | null;
@@ -536,8 +573,12 @@ function money(value: number | null): string {
   return value === null ? "n/a" : value.toFixed(4);
 }
 
-function tokens(value: number | null): string {
-  return value === null ? "n/a" : String(value);
+function tokens(value: number | null, partial = false): string {
+  if (value === null) return "n/a";
+  // `+` is the floor marker: the number is every read this row could prove,
+  // and at least one turn under it could not. Dropping the suffix would state
+  // a total the ledger never established.
+  return partial ? `${value}+` : String(value);
 }
 
 /** The CLI rendering of an overview. The rpc returns the same object unformatted. */
@@ -557,7 +598,10 @@ export function formatOverview(overview: SpendOverview): string {
     lines.push(
       `${label.slice(0, 52).padEnd(52)} ${String(row.turns).padStart(6)} ${tokens(
         row.inputTokens,
-      ).padStart(10)} ${tokens(row.cacheReadTokens).padStart(10)} ${tokens(
+      ).padStart(10)} ${tokens(
+        row.cacheReadTokens,
+        row.cacheReadPartial,
+      ).padStart(10)} ${tokens(
         row.outputTokens,
       ).padStart(10)} ${(money(row.costUsd) + (row.estimated ? "~" : "")).padStart(10)}`,
     );
@@ -607,7 +651,9 @@ export function overviewMarkdown(
         row.kind
       } | ${row.turns} | ${
         row.inputTokens
-      } | ${tokens(row.cacheReadTokens)} | ${row.outputTokens} | ${money(
+      } | ${tokens(row.cacheReadTokens, row.cacheReadPartial)} | ${
+        row.outputTokens
+      } | ${money(
         row.costUsd,
       )} | ${row.estimated ? "yes" : "no"} |`,
   );
