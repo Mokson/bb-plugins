@@ -312,7 +312,7 @@ export class ObservatoryStore {
       `INSERT INTO obs_signal
          (module, kind, thread_id, turn_id, severity, opened_at, closed_at, payload, dedupe_key)
        VALUES (@module, @kind, @thread_id, @turn_id, @severity, @opened_at, NULL, @payload, @dedupe_key)
-       ON CONFLICT(dedupe_key) DO NOTHING`,
+       ON CONFLICT(dedupe_key) WHERE closed_at IS NULL DO NOTHING`,
     );
     this.selectSignalStatement = db.prepare(
       "SELECT id FROM obs_signal WHERE dedupe_key = ?",
