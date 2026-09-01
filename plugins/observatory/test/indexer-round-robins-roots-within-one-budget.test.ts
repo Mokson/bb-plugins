@@ -75,15 +75,15 @@ describe("one pass over two roots", () => {
     mkdirSync(join(greedy, "-p"), { recursive: true });
     mkdirSync(later, { recursive: true });
 
-    // Forty files, each an order of magnitude bigger than the whole budget:
-    // a pass that works through this root in order can never leave it.
-    const filler = "x".repeat(200_000);
+    // Forty files, each of them alone bigger than the whole budget, and each
+    // made of complete lines so reading one really does spend the budget
+    // rather than stopping at an unterminated tail.
     for (let index = 0; index < 40; index += 1) {
-      writeFileSync(
-        join(greedy, "-p", `s-${index}.jsonl`),
-        claudeLine(`s-${index}`, "req_a") +
-          `${JSON.stringify({ type: "user", pad: filler })}\n`,
-      );
+      let body = "";
+      for (let entry = 0; entry < 200; entry += 1) {
+        body += claudeLine(`s-${index}`, `req_${entry}`);
+      }
+      writeFileSync(join(greedy, "-p", `s-${index}.jsonl`), body);
     }
     writeFileSync(join(later, "rollout-x.jsonl"), rollout("codex-session"));
 
@@ -100,18 +100,18 @@ describe("one pass over two roots", () => {
 
     // The budget could not cover the first root, so this is a real contest.
     expect(result.done).toBe(false);
-    const window = { tsFrom: 0, tsTo: Number.MAX_SAFE_INTEGER };
-    // Both roots produced turns in the SAME pass.
+
+    // Both roots produced turns in the SAME pass. In list order the second
+    // root is never reached at all: the first root's first file spends the
+    // whole budget and every file after it, in every root, is skipped.
+    const providers = new Set(
+      store.listUnmatchedSince(0, 100_000).map((row) => row.provider),
+    );
+    expect([...providers].sort()).toEqual(["claude-code", "codex"]);
     expect(
       store.listLogTurns({
-        ...window,
-        provider: "claude-code",
-        providerThreadId: "s-0",
-      }),
-    ).toHaveLength(1);
-    expect(
-      store.listLogTurns({
-        ...window,
+        tsFrom: 0,
+        tsTo: Number.MAX_SAFE_INTEGER,
         provider: "codex",
         providerThreadId: "codex-session",
       }),

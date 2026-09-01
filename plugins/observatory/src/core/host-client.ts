@@ -50,13 +50,27 @@ const DB_ROW_BYTE_WEIGHT = 4 * 1024;
 /** Rows one database scan may return, however much budget is left. */
 const MAX_DB_ROWS_PER_SCAN = 2_000;
 
+/** A root still holding files to read, and the budget left to read them with. */
+interface RootQueue {
+  root: string;
+  files: string[];
+  budget: number;
+}
+
 /**
- * The smallest byte slice a file gets when its root's turn comes round.
+ * Hand `amount` bytes back to the roots still working.
  *
- * Below this a large log makes no progress: it would read a fragment, stop at
- * the last complete line, and re-read the same fragment on the next pass.
+ * A root that runs out of files before it runs out of budget has not earned
+ * the right to waste it: the leftover is carried forward to the roots that
+ * still have something to read, which is what keeps a fair split from also
+ * being a wasteful one.
  */
-const MIN_FILE_SLICE = 1024 * 1024;
+function redistribute(queues: RootQueue[], amount: number): void {
+  if (amount <= 0 || queues.length === 0) return;
+  const share = Math.floor(amount / queues.length);
+  for (const queue of queues) queue.budget += share;
+  queues[0]!.budget += amount - share * queues.length;
+}
 
 /**
  * How much of a file's head identifies it.
@@ -411,68 +425,81 @@ export class LocalHostClient implements HostClient {
     // Every root is walked before any of them is read, because `missing` is
     // only correct once the whole tree has been seen. Walking is cheap;
     // reading is what the budget is for.
-    const queues: Array<{ root: string; files: string[] }> = [];
+    const queues: RootQueue[] = [];
     for (const root of input.roots) {
       const found = await discoverFiles(root);
       for (const path of found) seen.add(path);
       // Newest first: the sessions a person is asking about are the ones they
       // just ran, so a budget that runs out mid-pass leaves the OLD tail
       // unindexed rather than the live one.
-      if (found.length) queues.push({ root, files: await newestFirst(found) });
+      if (found.length) {
+        queues.push({ root, files: await newestFirst(found), budget: 0 });
+      }
     }
 
-    // Round robin over the roots, one file per turn.
+    // Round robin over the roots, each spending its OWN share of the budget.
     //
-    // The list order used to be the schedule, and with one shared budget that
-    // meant `~/.claude/projects` (2,000+ files, gigabytes) consumed every pass
-    // and no later root was ever reached: after days of running, the live
-    // database held claude-code rows and nothing else. Taking one file from
-    // each root in turn, with the remaining budget divided between the roots
-    // that still have work, gives every provider a share of every pass.
-    // Unspent budget is not lost: it stays in `remaining` for the next turn.
-    let remaining = input.maxBytes;
+    // The list order used to be the schedule, and one shared pot meant
+    // `~/.claude/projects` (2,000+ files, gigabytes) consumed every pass on its
+    // own: after days of running, the live database held claude-code rows and
+    // nothing else. Not a slow backlog, a permanent one. Two things fix it,
+    // and both are needed. Taking one file from each root in turn is the
+    // rotation; giving each root its own slice of the budget is what stops the
+    // first root's first file from spending the whole pass before the rotation
+    // gets a second turn. A root that finishes early hands its leftover to the
+    // roots still working, so fairness costs no throughput.
+    redistribute(queues, input.maxBytes);
     let turn = 0;
     while (queues.length) {
-      if (remaining <= 0 || rows.length >= input.limit) {
-        // Out of budget. The trees were fully walked above, so `missing` is
-        // still correct; the caller is told to come back with `done: false`.
+      if (rows.length >= input.limit) {
+        // The trees were fully walked above, so `missing` is still correct;
+        // the caller is told to come back with `done: false`.
         done = false;
         break;
       }
       turn %= queues.length;
       const queue = queues[turn]!;
-      const path = queue.files.shift()!;
-      if (queue.files.length === 0) queues.splice(turn, 1);
-      else turn += 1;
-
-      const parser = parserFor(path);
-      if (!parser) continue;
-
-      const slice = Math.min(
-        remaining,
-        Math.max(MIN_FILE_SLICE, Math.floor(remaining / (queues.length || 1))),
-      );
-      let outcome: IndexOutcome | null;
-      try {
-        outcome = await indexOne(
-          queue.root,
-          path,
-          parser,
-          resumeState(input, path),
-          slice,
-        );
-      } catch {
-        // The file vanished or became unreadable mid-sweep. Next pass.
+      if (queue.budget <= 0) {
+        // This root is spent for the pass. Its files stay unread and the next
+        // pass resumes them from the same cursors.
+        queues.splice(turn, 1);
+        done = false;
         continue;
       }
-      if (!outcome) continue;
 
-      files.push(outcome.file);
-      remaining -= outcome.bytesRead;
-      if (!outcome.complete) done = false;
-      for (const row of outcome.rows) {
-        rows.push(toWireRow(row, path, outcome.file.indexedBytes));
+      const path = queue.files.shift()!;
+      const exhausted = queue.files.length === 0;
+      if (exhausted) {
+        queues.splice(turn, 1);
+      } else {
+        turn += 1;
       }
+
+      const parser = parserFor(path);
+      let outcome: IndexOutcome | null = null;
+      if (parser) {
+        try {
+          outcome = await indexOne(
+            queue.root,
+            path,
+            parser,
+            resumeState(input, path),
+            queue.budget,
+          );
+        } catch {
+          // The file vanished or became unreadable mid-sweep. Next pass.
+          outcome = null;
+        }
+      }
+      if (outcome) {
+        files.push(outcome.file);
+        queue.budget -= outcome.bytesRead;
+        if (!outcome.complete) done = false;
+        for (const row of outcome.rows) {
+          rows.push(toWireRow(row, path, outcome.file.indexedBytes));
+        }
+      }
+      if (exhausted) redistribute(queues, Math.max(0, queue.budget));
     }
 
     // A cursor for a path the walk did not find. The roots were fully walked
