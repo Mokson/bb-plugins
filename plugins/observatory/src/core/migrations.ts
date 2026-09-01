@@ -233,4 +233,38 @@ export const MIGRATIONS: string[] = [
   `CREATE INDEX IF NOT EXISTS obs_log_turn_session
      ON obs_log_turn (provider, provider_thread_id, ts)`,
   `CREATE INDEX IF NOT EXISTS obs_log_turn_path ON obs_log_turn (path)`,
+  // Phase 4, context module. A snapshot is one scan of one cwd: what the
+  // prefix of every request in that project is made of. It is kept rather
+  // than recomputed so composition can be compared across days, and so a
+  // calibration factor has a history to be judged against.
+  `CREATE TABLE IF NOT EXISTS obs_ctx_snapshot (
+     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+     project_id         TEXT,
+     cwd                TEXT NOT NULL,
+     taken_at           TEXT NOT NULL,
+     provider           TEXT,
+     total_est_tokens   INTEGER NOT NULL,
+     calibration_factor REAL,
+     calibration_error  REAL
+   )`,
+  `CREATE INDEX IF NOT EXISTS obs_ctx_snapshot_cwd
+     ON obs_ctx_snapshot (cwd, taken_at)`,
+  // One row per surface block. `duplicate_of` names the block this one
+  // overlaps and `dead` marks a skill description no indexed session ever
+  // used: both are derived once at scan time so the panel and the CLI read
+  // the same verdict rather than each recomputing it.
+  `CREATE TABLE IF NOT EXISTS obs_ctx_block (
+     snapshot_id  INTEGER NOT NULL,
+     surface      TEXT NOT NULL
+                  CHECK (surface IN ('instruction','skill','mcp','plugin-tool')),
+     path         TEXT,
+     name         TEXT,
+     bytes        INTEGER NOT NULL,
+     est_tokens   INTEGER NOT NULL,
+     hash         TEXT,
+     duplicate_of TEXT,
+     dead         INTEGER NOT NULL DEFAULT 0
+   )`,
+  `CREATE INDEX IF NOT EXISTS obs_ctx_block_snapshot
+     ON obs_ctx_block (snapshot_id)`,
 ];
