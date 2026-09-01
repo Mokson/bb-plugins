@@ -1,73 +1,55 @@
 // The spend module's wire contract.
 //
-// Types and zod schemas only. The app imports the types with `import type`
-// and the server seat implements the method names verbatim, so neither side
-// owns the shape alone. Nothing here reaches for the store, the ledger, or
-// better-sqlite3: this file is the seam, not a participant.
+// Same discipline as `src/contract.ts`: the panel imports these types with
+// `import type` only, every value it renders arrives over rpc, and the CLI
+// formats the SAME objects, so the two surfaces cannot drift.
 //
-// Method names use underscores. bb rejects dots in rpc method names and the
-// panel addresses these over `POST /api/v1/plugins/observatory/rpc/<method>`.
+// Nullability is the load-bearing part here. `cacheReadTokens`,
+// `cacheWriteTokens` and `costUsd` are nullable on every row because the
+// ledger refuses to invent a cache split or a price, and a rollup that summed
+// an unknown as zero would turn "unmeasured" into "free" on a cost page.
 import { z } from "zod";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 
-/** The windows the overview offers. Widest last; `1d` is the default. */
 export const spendRangeSchema = z.enum(["1d", "7d", "30d", "90d"]);
-
-/** How the overview folds rows. Lineage is the thread/seat tree. */
 export const spendGroupSchema = z.enum(["lineage", "model", "day"]);
 
-/**
- * What a row stands for. `unparented` is a real bucket, not an error: turns
- * whose thread never resolved a parent still cost money and must total.
- */
-export const spendRowKindSchema = z.enum([
-  "thread",
-  "seat",
-  "group",
-  "model",
-  "day",
-  "unparented",
-]);
+export type SpendRange = z.output<typeof spendRangeSchema>;
+export type SpendGroup = z.output<typeof spendGroupSchema>;
 
-/**
- * The four hero numbers plus the unpriced-model count.
- *
- * `cacheSavedUsd` is what the cache read cost instead of a fresh prefix;
- * `missCostUsd` is what the misses charged. They are reported separately
- * because netting them hides which one moved.
- */
 export const spendTotalsSchema = z
   .object({
     spendUsd: z.number(),
     cacheSavedUsd: z.number(),
     cacheWriteUsd: z.number(),
     missCostUsd: z.number(),
+    /** Distinct models in range whose turns could not be priced. */
     unpricedModels: z.number(),
   })
   .strict();
 
-/**
- * One overview row. The tree arrives flat: `depth` and `parentKey` carry the
- * shape so the server owns ordering and the panel owns only collapse state.
- *
- * `cacheReadTokens` and `cacheWriteTokens` are nullable and stay null when no
- * provider log row matched (PRODUCT invariant 2). Null renders `--`; it never
- * renders `0`.
- */
 export const spendRowSchema = z
   .object({
     key: z.string(),
     label: z.string(),
-    depth: z.number().int().min(0),
+    depth: z.number(),
     parentKey: z.string().optional(),
-    kind: spendRowKindSchema,
+    kind: z.enum([
+      "thread",
+      "seat",
+      "group",
+      "model",
+      "day",
+      "unparented",
+    ]),
     turns: z.number(),
     inputTokens: z.number(),
+    /** NULL when ANY turn in this group has an unproven split. */
     cacheReadTokens: z.number().nullable(),
     cacheWriteTokens: z.number().nullable(),
     outputTokens: z.number(),
     costUsd: z.number().nullable(),
-    /** True renders the number with a superscript `e` (invariant 27). */
+    /** True when any turn's cost came from the catalog rather than the bill. */
     estimated: z.boolean(),
     childCount: z.number().optional(),
   })
@@ -76,6 +58,12 @@ export const spendRowSchema = z
 export const spendOverviewInputSchema = z
   .object({
     range: spendRangeSchema,
+    /**
+     * Reserved. The ledger stores no host id today (`obs_thread` has no such
+     * column and core is the only writer), so a supplied host does not narrow
+     * the result. Kept on the wire so the filter can start working without a
+     * contract change.
+     */
     host: z.string().optional(),
     provider: z.string().optional(),
     group: spendGroupSchema,
@@ -85,14 +73,6 @@ export const spendOverviewInputSchema = z
 export const spendOverviewSchema = z
   .object({ totals: spendTotalsSchema, rows: z.array(spendRowSchema) })
   .strict();
-
-/** Where a turn's cache read/write split came from. */
-export const splitSourceSchema = z.enum([
-  "log-exact",
-  "log-window",
-  "sidechain",
-  "unavailable",
-]);
 
 export const turnRowSchema = z
   .object({
@@ -109,39 +89,28 @@ export const turnRowSchema = z
     reasoningTokens: z.number().nullable(),
     costUsd: z.number().nullable(),
     costSource: z.string(),
-    splitSource: splitSourceSchema,
+    splitSource: z.string(),
     flags: z.array(z.string()),
   })
   .strict();
 
-export const spendThreadHeaderSchema = z
-  .object({
-    threadId: z.string(),
-    title: z.string(),
-    provider: z.string(),
-    seat: z.string().nullable(),
-    tier: z.string().nullable(),
-    runFolder: z.string().nullable(),
-  })
-  .strict();
-
-export const spendThreadInputSchema = z
-  .object({ threadId: z.string() })
-  .strict();
-
 export const spendThreadSchema = z
   .object({
-    thread: spendThreadHeaderSchema,
+    thread: z
+      .object({
+        threadId: z.string(),
+        title: z.string(),
+        provider: z.string(),
+        seat: z.string().nullable(),
+        tier: z.string().nullable(),
+        runFolder: z.string().nullable(),
+      })
+      .strict(),
     totals: spendTotalsSchema,
     turns: z.array(turnRowSchema),
   })
   .strict();
 
-/**
- * The classified cause, in the fixed precedence of PRODUCT invariant 18. The
- * drilldown still lists every correlate observed, so `cause` narrows the story
- * without hiding it.
- */
 export const cacheMissCauseSchema = z.enum([
   "compaction",
   "context-cleared",
@@ -154,13 +123,12 @@ export const cacheMissCauseSchema = z.enum([
   "unknown",
 ]);
 
-export const cacheMissCorrelateSchema = z
-  .object({ kind: z.string(), detail: z.string(), at: z.string() })
-  .strict();
+export type CacheMissCause = z.output<typeof cacheMissCauseSchema>;
 
 export const cacheMissRowSchema = z
   .object({
     threadId: z.string(),
+    provider: z.string().optional(),
     turnId: z.string(),
     prevTurnId: z.string(),
     at: z.string(),
@@ -169,26 +137,16 @@ export const cacheMissRowSchema = z
     drop: z.number(),
     estimatedUsd: z.number().nullable(),
     cause: cacheMissCauseSchema,
-    /**
-     * Additive, and optional so a server that omits it still validates. The
-     * drilldown's no-transcript line names the provider that owed the
-     * transcript; without it the line can only say "unknown".
-     */
-    provider: z.string().optional(),
-    correlates: z.array(cacheMissCorrelateSchema),
+    /** Every correlate observed in the gap, not only the classified one. */
+    correlates: z.array(
+      z
+        .object({ kind: z.string(), detail: z.string(), at: z.string() })
+        .strict(),
+    ),
     recurrence7d: z.number(),
   })
   .strict();
 
-export const spendCacheMissesInputSchema = z
-  .object({ range: spendRangeSchema, threadId: z.string().optional() })
-  .strict();
-
-export const spendCacheMissesSchema = z
-  .object({ rows: z.array(cacheMissRowSchema) })
-  .strict();
-
-/** The footer strip's one number, kept separate so the strip stays cheap. */
 export const spendTodaySchema = z
   .object({
     spendUsd: z.number(),
@@ -198,54 +156,122 @@ export const spendTodaySchema = z
   })
   .strict();
 
-export const spendExportInputSchema = z
-  .object({
-    range: spendRangeSchema,
-    group: spendGroupSchema,
-    format: z.enum(["md", "json"]),
-  })
-  .strict();
-
 export const spendExportSchema = z
   .object({ content: z.string(), filename: z.string() })
   .strict();
 
-export type SpendRange = z.output<typeof spendRangeSchema>;
-export type SpendGroup = z.output<typeof spendGroupSchema>;
-export type SpendRowKind = z.output<typeof spendRowKindSchema>;
+// --- absorbed usage-tracker footer strip -----------------------------------
+//
+// Ported from `bb-plugins/plugins/usage-tracker/server.ts` unchanged in shape:
+// the strip's app code is being absorbed as is, so any drift here would break
+// it silently.
+
+export const USAGE_PROVIDER_IDS = ["codex", "claudeCode", "cursor"] as const;
+export const SIDEBAR_PROVIDER_IDS = ["claudeCode", "codex"] as const;
+export const COMPACT_LIMIT_OPTIONS = ["Weekly", "Five-hour"] as const;
+
+const usageCostSchema = z
+  .object({
+    usedUsdCents: z.number().finite(),
+    limitUsdCents: z.number().finite(),
+  })
+  .strict();
+
+const usageWindowSchema = z
+  .object({
+    label: z.string(),
+    usedPercent: z.number().finite(),
+    barPercent: z.number().finite().min(0).max(100),
+    resetsAt: z.string().nullable(),
+    cost: usageCostSchema.nullable(),
+  })
+  .strict();
+
+const usageProviderSchema = z
+  .object({
+    id: z.enum(USAGE_PROVIDER_IDS),
+    name: z.string(),
+    status: z.enum([
+      "ok",
+      "not_installed",
+      "unauthenticated",
+      "expired",
+      "error",
+    ]),
+    accountEmail: z.string().nullable(),
+    planLabel: z.string().nullable(),
+    message: z.string().nullable(),
+    windows: z.array(usageWindowSchema),
+  })
+  .strict();
+
+export const usageSnapshotSchema = z
+  .object({
+    fetchedAt: z.string(),
+    host: z
+      .object({ id: z.string().nullable(), name: z.string().nullable() })
+      .strict(),
+    providers: z.array(usageProviderSchema),
+  })
+  .strict();
+
+export const usagePreferencesSchema = z
+  .object({
+    enabledProviderIds: z.array(z.enum(SIDEBAR_PROVIDER_IDS)),
+    compactLimit: z.enum(COMPACT_LIMIT_OPTIONS),
+  })
+  .strict();
+
 export type SpendTotals = z.output<typeof spendTotalsSchema>;
 export type SpendRow = z.output<typeof spendRowSchema>;
 export type SpendOverview = z.output<typeof spendOverviewSchema>;
-export type SplitSource = z.output<typeof splitSourceSchema>;
 export type TurnRow = z.output<typeof turnRowSchema>;
-export type SpendThreadHeader = z.output<typeof spendThreadHeaderSchema>;
-export type SpendThread = z.output<typeof spendThreadSchema>;
-export type CacheMissCause = z.output<typeof cacheMissCauseSchema>;
-export type CacheMissCorrelate = z.output<typeof cacheMissCorrelateSchema>;
+export type SpendThreadView = z.output<typeof spendThreadSchema>;
 export type CacheMissRow = z.output<typeof cacheMissRowSchema>;
-export type SpendCacheMisses = z.output<typeof spendCacheMissesSchema>;
 export type SpendToday = z.output<typeof spendTodaySchema>;
 export type SpendExport = z.output<typeof spendExportSchema>;
+export type UsageSnapshotView = z.output<typeof usageSnapshotSchema>;
+export type UsagePreferencesView = z.output<typeof usagePreferencesSchema>;
 
 export const spendContract = defineRpcContract({
-  observatory_spend_overview: {
+  "observatory_spend_overview": {
     input: spendOverviewInputSchema,
     output: spendOverviewSchema,
   },
-  observatory_spend_thread: {
-    input: spendThreadInputSchema,
+  "observatory_spend_thread": {
+    input: z.object({ threadId: z.string().min(1) }).strict(),
     output: spendThreadSchema,
   },
-  observatory_spend_cache_misses: {
-    input: spendCacheMissesInputSchema,
-    output: spendCacheMissesSchema,
+  "observatory_spend_cache_misses": {
+    input: z
+      .object({ range: spendRangeSchema, threadId: z.string().optional() })
+      .strict(),
+    output: z.object({ rows: z.array(cacheMissRowSchema) }).strict(),
   },
-  observatory_spend_today: {
+  "observatory_spend_today": {
     input: z.object({}).strict(),
     output: spendTodaySchema,
   },
-  observatory_spend_export: {
-    input: spendExportInputSchema,
+  "observatory_spend_export": {
+    input: z
+      .object({
+        range: spendRangeSchema,
+        group: spendGroupSchema,
+        format: z.enum(["md", "json"]),
+      })
+      .strict(),
     output: spendExportSchema,
   },
+  "observatory_usage": {
+    input: z.object({ threadId: z.string().trim().min(1).nullable() }).strict(),
+    output: usageSnapshotSchema,
+  },
+  "observatory_usage_preferences": {
+    input: z.null(),
+    output: usagePreferencesSchema,
+  },
 });
+
+// Aliases the panel pages import; same shapes, panel-side names.
+export type SpendThread = SpendThreadView;
+export type SpendCacheMisses = z.output<typeof spendContract.observatory_spend_cache_misses.output>;

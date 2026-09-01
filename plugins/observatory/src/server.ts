@@ -5,9 +5,10 @@
 // served identically to the CLI and the panel, and a doctor that checks the
 // provider log roots exist. Every module's `setup` is a stub; the modules
 // themselves land in later phases behind these seams.
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 import type {
   BbPluginApi,
   PluginSettingDescriptor,
@@ -27,6 +28,33 @@ import {
   defaultLogRoots,
   type LogIndexer,
 } from "./core/indexer.js";
+import {
+  spendContract,
+  type CacheMissRow,
+  type SpendGroup,
+  type SpendRange,
+  type SpendThreadView,
+} from "./spend/contract.js";
+import {
+  formatOverview,
+  spendExport,
+  spendOverview,
+  spendThread,
+  spendToday,
+  type OverviewQuery,
+  type RollupDeps,
+} from "./spend/rollup.js";
+import {
+  DEFAULT_CACHE_TTL_MINUTES,
+  detectCacheMisses,
+} from "./spend/cache-miss.js";
+import { scanFingerprints } from "./spend/fingerprint.js";
+import { buildCostMd, type Snapshot } from "./spend/cost-md.js";
+import {
+  COMPACT_LIMIT_OPTIONS,
+  loadUsageSnapshot,
+  usagePreferences,
+} from "./spend/usage.js";
 import {
   CORE_MODULE_ID,
   ModuleRegistry,
@@ -135,6 +163,32 @@ export const SETTING_DESCRIPTORS = {
     label: "Retention: turns (days)",
     default: "365",
   },
+  "spend_cacheTtlMinutes": {
+    type: "string",
+    label: "Provider prompt-cache TTL (minutes)",
+    description:
+      "An idle gap longer than this expires the cached prefix, which is how a cache miss is classified idle-expiry.",
+    default: String(DEFAULT_CACHE_TTL_MINUTES),
+  },
+  "usage_enableClaudeCode": {
+    type: "boolean",
+    label: "Footer strip: Claude Code",
+    description: "Show Claude Code usage in the sidebar footer.",
+    default: true,
+  },
+  "usage_enableCodex": {
+    type: "boolean",
+    label: "Footer strip: Codex",
+    description: "Show Codex usage in the sidebar footer.",
+    default: true,
+  },
+  "usage_compactLimit": {
+    type: "select",
+    label: "Footer strip: compact limit",
+    description: "Which limit the compact percentage and bar show.",
+    options: [...COMPACT_LIMIT_OPTIONS],
+    default: "Weekly",
+  },
   "budget_perTreeUsd": {
     type: "string",
     label: "Budget: per thread tree (USD)",
@@ -189,6 +243,8 @@ export interface CoreRuntime {
    * second one over the same database.
    */
   indexer: LogIndexer | null;
+  /** Null when the log stack is absent; then nothing downstream can price. */
+  catalog: PricingCatalog | null;
 }
 
 export interface CoreHandle {
@@ -306,6 +362,12 @@ function indexBudget(
 export function createCoreModule(
   handle: CoreHandle,
   settings: () => Promise<Record<string, string | boolean | undefined>>,
+  /**
+   * Hooks other modules push onto, fired after a thread's turns commit. The
+   * array is read per drain rather than captured, so a module registered
+   * AFTER core still gets called.
+   */
+  commitHooks: ReadonlyArray<(threadId: string) => void> = [],
 ): ObservatoryModule {
   return defineModule({
     id: CORE_MODULE_ID,
@@ -329,8 +391,17 @@ export function createCoreModule(
         logs: stack?.logs ?? null,
         priceTurn: stack?.priceTurn ?? null,
         catalog: stack?.catalog,
+        onThreadCommitted: (threadId) => {
+          for (const hook of commitHooks) hook(threadId);
+        },
       });
-      handle.current = { store, events, ingest, indexer: stack?.indexer ?? null };
+      handle.current = {
+        store,
+        events,
+        ingest,
+        indexer: stack?.indexer ?? null,
+        catalog: stack?.catalog ?? null,
+      };
 
       bb.background.service("ingest", {
         start: (signal) => ingest.start(signal),
@@ -373,22 +444,100 @@ export function createCoreModule(
 }
 
 /**
- * Non-core modules are still stubs: they are read-only analyzers over the
+ * What the spend surfaces read. It is a VIEW of what core wrote — spend owns
+ * `obs_signal` rows tagged `spend` and nothing else — so the handle carries
+ * the store rather than a second connection.
+ */
+export interface SpendRuntime {
+  store: ObservatoryStore;
+  catalog: PricingCatalog | null;
+  ttlMinutes: number;
+}
+
+export interface SpendHandle {
+  current: SpendRuntime | null;
+}
+
+function parseMinutes(value: string | boolean | undefined, fallback: number) {
+  const parsed = Number.parseFloat(typeof value === "string" ? value : "");
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/**
+ * Spend: read-only over the ledger, with one write of its own — the
+ * `cache-miss` and `prefix-changed` signals. Its detector runs on the ingest
+ * commit hook rather than a timer, so a drilldown is current the moment the
+ * turn that caused it landed, and its idempotence comes from the signal dedupe
+ * key rather than from remembering what it already scanned.
+ */
+export function createSpendModule(
+  core: CoreHandle,
+  handle: SpendHandle,
+  settings: () => Promise<Record<string, string | boolean | undefined>>,
+  commitHooks: Array<(threadId: string) => void>,
+): ObservatoryModule {
+  return defineModule({
+    id: "spend",
+    async setup(ctx) {
+      const runtime = core.current;
+      if (!runtime) {
+        // Core disabled or tripped: there is no ledger to analyze, and
+        // pretending otherwise would serve an empty cost page as a real one.
+        ctx.bb.log.warn("[spend] core is not running; rollups unavailable");
+        return;
+      }
+      const values = await settings();
+      handle.current = {
+        store: runtime.store,
+        catalog: runtime.catalog,
+        ttlMinutes: parseMinutes(
+          values["spend_cacheTtlMinutes"],
+          DEFAULT_CACHE_TTL_MINUTES,
+        ),
+      };
+      const scan = (threadId: string) => {
+        const spend = handle.current;
+        if (!spend) return;
+        const deps = {
+          db: spend.store.db,
+          store: spend.store,
+          catalog: spend.catalog,
+          ttlMinutes: spend.ttlMinutes,
+        };
+        detectCacheMisses(deps, { threadId });
+        scanFingerprints(deps, { threadId });
+      };
+      commitHooks.push((threadId) => {
+        // `ctx.job` logs a throw and counts it against THIS module's breaker,
+        // so a bad scan cannot reject into the drain loop or trip core.
+        void ctx.job("cache-miss scan", () => scan(threadId))();
+      });
+      ctx.bb.log.info("[spend] rollups and cache-miss detector registered");
+    },
+  });
+}
+
+/**
+ * The remaining modules are still stubs: they are read-only analyzers over the
  * ledger core writes, and they land in later phases behind these seams.
  */
 export function buildModules(
   handle: CoreHandle,
   settings: () => Promise<Record<string, string | boolean | undefined>>,
+  spend: SpendHandle = { current: null },
+  commitHooks: Array<(threadId: string) => void> = [],
 ): readonly ObservatoryModule[] {
   return MODULE_IDS.map((id) =>
     id === CORE_MODULE_ID
-      ? createCoreModule(handle, settings)
-      : defineModule({
-          id,
-          setup(ctx) {
-            ctx.bb.log.info(`[${id}] registered`);
-          },
-        }),
+      ? createCoreModule(handle, settings, commitHooks)
+      : id === "spend"
+        ? createSpendModule(handle, spend, settings, commitHooks)
+        : defineModule({
+            id,
+            setup(ctx) {
+              ctx.bb.log.info(`[${id}] registered`);
+            },
+          }),
   );
 }
 
@@ -402,6 +551,13 @@ const USAGE = [
   "  backfill   Drain history and re-join it: --since <ISO|Nd> [--provider p]",
   "             --reset  re-read every event; rebuilds derived rows, never",
   "                      touches provider logs",
+  "  cost       Priced rollups: --range 1d|7d|30d|90d --group lineage|model|day",
+  "             --tree <threadId>  per-turn split for one thread",
+  "             --run <folder>     only threads attributed to that run folder",
+  "             --json             the rpc object, unformatted",
+  "  cost-md    Write COST.md for a run folder: cost-md <runFolder>",
+  "             [--snapshot final|mid-run] [--stdout]",
+  "  cache-misses  Prefix drops and their cause: [--range 7d] [--thread <id>]",
 ].join("\n");
 
 export interface StatusDeps {
@@ -599,6 +755,181 @@ function parseRoots(value: string | boolean | undefined): string[] {
     .filter((entry) => entry.length > 0);
 }
 
+/**
+ * The cap bb applies to a tool's own text, reused as the ceiling on this
+ * tool's RESULT. A cost report is the kind of payload that grows without
+ * bound (one row per turn of a long run), and a tool result that fills the
+ * context is worse than one that says it was truncated.
+ */
+export const TOOL_RESULT_LIMIT = 4096;
+
+/**
+ * The agent-facing tool's text, exported so its budget is asserted rather than
+ * hoped for. One tool with one scope enum: a model handed five cost tools
+ * calls the wrong one, and every character here is charged to every session
+ * the tool is mounted in.
+ */
+export const COST_TOOL = {
+  name: "observatory_cost",
+  description:
+    "Cost, tokens and cache split for a bb thread, its subtree, or a deliver run folder. Returns compact JSON.",
+} as const;
+
+export function clampToolResult(payload: unknown): string {
+  const full = JSON.stringify(payload);
+  if (full.length <= TOOL_RESULT_LIMIT) return full;
+  const notice = '{"truncated":true,"body":';
+  const room = TOOL_RESULT_LIMIT - notice.length - 2;
+  return `${notice}${JSON.stringify(full.slice(0, room))}}`.slice(
+    0,
+    TOOL_RESULT_LIMIT,
+  );
+}
+
+const RANGES: readonly SpendRange[] = ["1d", "7d", "30d", "90d"];
+const GROUPS: readonly SpendGroup[] = ["lineage", "model", "day"];
+
+/** An unrecognized range would silently widen the bill, so it is an error. */
+export function parseRange(value: string | undefined): SpendRange {
+  if (value === undefined) return "7d";
+  const found = RANGES.find((range) => range === value);
+  if (!found) throw new Error(`--range must be one of ${RANGES.join(", ")}`);
+  return found;
+}
+
+export function parseGroup(value: string | undefined): SpendGroup {
+  if (value === undefined) return "lineage";
+  const found = GROUPS.find((group) => group === value);
+  if (!found) throw new Error(`--group must be one of ${GROUPS.join(", ")}`);
+  return found;
+}
+
+export function parseSnapshot(value: string | undefined): Snapshot | undefined {
+  if (value === undefined) return undefined;
+  if (value !== "final" && value !== "mid-run") {
+    throw new Error("--snapshot must be final or mid-run");
+  }
+  return value;
+}
+
+export function formatThread(view: SpendThreadView): string {
+  const number = (value: number | null) =>
+    value === null ? "n/a" : String(value);
+  const lines = [
+    `${view.thread.title} (${view.thread.threadId})`,
+    `provider ${view.thread.provider}  seat ${view.thread.seat ?? "n/a"}`,
+    `spend ${view.totals.spendUsd.toFixed(4)}  cache saved ${view.totals.cacheSavedUsd.toFixed(4)}`,
+    "",
+    `${"started".padEnd(26)} ${"model".padEnd(28)} ${"in".padStart(9)} ${"read".padStart(9)} ${"out".padStart(9)} ${"usd".padStart(9)}  flags`,
+  ];
+  for (const turn of view.turns) {
+    lines.push(
+      `${turn.startedAt.padEnd(26)} ${(turn.modelReported ?? "n/a")
+        .slice(0, 28)
+        .padEnd(28)} ${number(turn.inputTokens).padStart(9)} ${number(
+        turn.cacheReadTokens,
+      ).padStart(9)} ${number(turn.outputTokens).padStart(9)} ${(turn.costUsd ===
+      null
+        ? "n/a"
+        : turn.costUsd.toFixed(4)
+      ).padStart(9)}  ${turn.flags.join(" ")}`,
+    );
+  }
+  if (view.turns.length === 0) lines.push("  (no turns)");
+  return lines.join("\n");
+}
+
+export function formatCacheMisses(rows: readonly CacheMissRow[]): string {
+  if (rows.length === 0) return "no cache misses in range";
+  const lines = [
+    `${"at".padEnd(26)} ${"thread".padEnd(24)} ${"drop".padStart(10)} ${"usd".padStart(8)} ${"n7d".padStart(4)}  cause`,
+  ];
+  for (const row of rows) {
+    lines.push(
+      `${row.at.padEnd(26)} ${row.threadId.slice(0, 24).padEnd(24)} ${String(
+        row.drop,
+      ).padStart(10)} ${(row.estimatedUsd === null
+        ? "n/a"
+        : row.estimatedUsd.toFixed(4)
+      ).padStart(8)} ${String(row.recurrence7d).padStart(4)}  ${row.cause}`,
+    );
+  }
+  return lines.join("\n");
+}
+
+export const SPEND_COMMANDS = ["cost", "cost-md", "cache-misses"] as const;
+export type SpendCommand = (typeof SPEND_COMMANDS)[number];
+
+/**
+ * The three spend subcommands, together because they share one failure mode:
+ * the spend module not running. Raising that once here is what keeps each
+ * command from having to decide what an absent ledger prints.
+ */
+export function runSpendCommand(
+  spendDeps: () => RollupDeps & { store: ObservatoryStore; ttlMinutes: number },
+  command: SpendCommand,
+  argv: readonly string[],
+): { exitCode: number; stdout?: string; stderr?: string } {
+  try {
+    const deps = spendDeps();
+    if (command === "cache-misses") {
+      const threadId = flagValue(argv, "thread");
+      const rows = detectCacheMisses(deps, {
+        range: parseRange(flagValue(argv, "range")),
+        ...(threadId === undefined ? {} : { threadId }),
+      });
+      return hasFlag(argv, "json")
+        ? { exitCode: 0, stdout: `${JSON.stringify(rows, null, 2)}\n` }
+        : { exitCode: 0, stdout: `${formatCacheMisses(rows)}\n` };
+    }
+    if (command === "cost-md") {
+      const folder = argv.find((entry) => !entry.startsWith("--"));
+      if (!folder) {
+        return { exitCode: 1, stderr: "cost-md needs a run folder\n" };
+      }
+      const snapshot = parseSnapshot(flagValue(argv, "snapshot"));
+      const report = buildCostMd(deps.db, {
+        runFolder: folder,
+        ...(snapshot === undefined ? {} : { snapshot }),
+      });
+      if (hasFlag(argv, "stdout")) {
+        return { exitCode: 0, stdout: report.content };
+      }
+      writeFileSync(report.filename, report.content, "utf8");
+      return {
+        exitCode: 0,
+        stdout: `wrote ${report.filename} (${report.agents} agents, ${report.snapshot})\n`,
+      };
+    }
+    const tree = flagValue(argv, "tree");
+    if (tree !== undefined) {
+      const view = spendThread(deps, tree);
+      return hasFlag(argv, "json")
+        ? { exitCode: 0, stdout: `${JSON.stringify(view, null, 2)}\n` }
+        : { exitCode: 0, stdout: `${formatThread(view)}\n` };
+    }
+    const provider = flagValue(argv, "provider");
+    const runFolder = flagValue(argv, "run");
+    const query: OverviewQuery = {
+      range: parseRange(flagValue(argv, "range")),
+      group: parseGroup(flagValue(argv, "group")),
+      ...(provider === undefined ? {} : { provider }),
+      ...(runFolder === undefined ? {} : { runFolder }),
+    };
+    const overview = spendOverview(deps, query);
+    return hasFlag(argv, "json")
+      ? { exitCode: 0, stdout: `${JSON.stringify(overview, null, 2)}\n` }
+      : { exitCode: 0, stdout: `${formatOverview(overview)}\n` };
+  } catch (error) {
+    // A bad flag and an absent module are both the operator's answer, not a
+    // crash: the CLI is the surface people reach for when something is wrong.
+    return {
+      exitCode: 1,
+      stderr: `${error instanceof Error ? error.message : String(error)}\n`,
+    };
+  }
+}
+
 /** Threads per `threads.list` page during a backfill. */
 const BACKFILL_PAGE = 500;
 /** Upper bound on drain passes, so an unreadable thread cannot loop forever. */
@@ -734,12 +1065,26 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
   void host;
 
   const core: CoreHandle = { current: null };
+  const spend: SpendHandle = { current: null };
+  const commitHooks: Array<(threadId: string) => void> = [];
   const registry = new ModuleRegistry({
     bb,
     db: () => db,
     settings: readSettings,
   });
-  await registry.register(buildModules(core, readSettings));
+  await registry.register(buildModules(core, readSettings, spend, commitHooks));
+
+  /** Every spend surface refuses rather than serving an empty page as a real one. */
+  const spendDeps = () => {
+    const runtime = spend.current;
+    if (!runtime) throw new Error("spend module is not running");
+    return {
+      db: runtime.store.db,
+      store: runtime.store,
+      catalog: runtime.catalog,
+      ttlMinutes: runtime.ttlMinutes,
+    };
+  };
 
   const status = () =>
     buildStatus({
@@ -752,6 +1097,77 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
 
   bb.rpc.register(observatoryContract, {
     "observatory_status": () => status(),
+  });
+
+  bb.rpc.register(spendContract, {
+    "observatory_spend_overview": (input) => spendOverview(spendDeps(), input),
+    "observatory_spend_thread": ({ threadId }) =>
+      spendThread(spendDeps(), threadId),
+    "observatory_spend_cache_misses": ({ range, threadId }) => ({
+      rows: detectCacheMisses(spendDeps(), {
+        range,
+        ...(threadId === undefined ? {} : { threadId }),
+      }),
+    }),
+    "observatory_spend_today": () => spendToday(spendDeps()),
+    "observatory_spend_export": (input) => spendExport(spendDeps(), input),
+    // The absorbed footer strip. `bb.sdk` shapes the ports structurally, so
+    // the ported loader needs no adapter.
+    "observatory_usage": ({ threadId }) => loadUsageSnapshot(bb.sdk, threadId),
+    "observatory_usage_preferences": async () => {
+      const values = await readSettings();
+      return usagePreferences({
+        claudeCode: values["usage_enableClaudeCode"] !== false,
+        codex: values["usage_enableCodex"] !== false,
+        compactLimit: values["usage_compactLimit"],
+      });
+    },
+  });
+
+  // The agent-facing view of the same rollups. Kept to one tool with one
+  // scope enum: a model given five cost tools calls the wrong one.
+  bb.agents.registerTool({
+    name: COST_TOOL.name,
+    description: COST_TOOL.description,
+    parameters: z
+      .object({
+        scope: z.enum(["thread", "tree", "run"]),
+        id: z
+          .string()
+          .min(1)
+          .describe("Thread id for thread/tree, run folder path for run."),
+      })
+      .strict(),
+    execute({ scope, id }) {
+      const deps = spendDeps();
+      if (scope === "run") {
+        const report = buildCostMd(deps.db, { runFolder: id });
+        return clampToolResult({
+          scope,
+          id,
+          agents: report.agents,
+          snapshot: report.snapshot,
+          costMd: report.content,
+        });
+      }
+      const view = spendThread(deps, id);
+      if (scope === "thread") {
+        return clampToolResult({
+          scope,
+          threadId: id,
+          totals: view.totals,
+          turns: view.turns.length,
+        });
+      }
+      const tree = spendOverview(deps, { range: "90d", group: "lineage" });
+      return clampToolResult({
+        scope,
+        threadId: id,
+        rows: tree.rows.filter(
+          (row) => row.key === id || row.parentKey === id,
+        ),
+      });
+    },
   });
 
   bb.cli.register({
@@ -789,6 +1205,26 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
         usage:
           "bb observatory backfill --since <ISO|Nd> [--provider <id>] [--reset]",
       },
+      {
+        name: "cost",
+        summary:
+          "Priced rollups by lineage, model or day, or one thread's per-turn split.",
+        usage:
+          "bb observatory cost [--range 7d] [--group lineage|model|day] [--tree <threadId>] [--run <folder>] [--json]",
+      },
+      {
+        name: "cost-md",
+        summary:
+          "Write the retro seat's COST.md for a deliver run folder.",
+        usage:
+          "bb observatory cost-md <runFolder> [--snapshot final|mid-run] [--stdout]",
+      },
+      {
+        name: "cache-misses",
+        summary:
+          "Turns whose cached prefix stopped being reused, with the correlate that explains it.",
+        usage: "bb observatory cache-misses [--range 7d] [--thread <threadId>]",
+      },
     ],
     async run(argv) {
       const [command] = argv;
@@ -821,6 +1257,9 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
           return indexNow(runtime, argv.slice(1), values["index_budgetMb"]);
         }
         return backfill(bb, runtime, argv.slice(1));
+      }
+      if (SPEND_COMMANDS.includes(command as SpendCommand)) {
+        return runSpendCommand(spendDeps, command as SpendCommand, argv.slice(1));
       }
       if (command === "doctor") {
         const values = await readSettings();
