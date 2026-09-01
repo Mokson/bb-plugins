@@ -10,16 +10,68 @@
 import type { ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ESTIMATE_MARK, formatUsd } from "@/lib/format";
-import { ABSENT_MESSAGE, type SpendQuery } from "@/lib/spend-rpc";
-import type { SpendTotals } from "../../spend/contract.js";
+import { type ModuleQuery } from "@/lib/module-rpc";
+import type { SpendRange, SpendTotals } from "../../spend/contract.js";
+
+/** Every control on a panel page: 24px tall, 11px, one hairline, radius 4. */
+export const SELECT_CLASS =
+  "h-6 rounded-[4px] border border-border bg-transparent px-1 text-[11px]";
+
+/** The ranges every ranged page offers, in the order the contract lists them. */
+export const RANGE_OPTIONS: readonly SpendRange[] = ["1d", "7d", "30d", "90d"];
+
+/** The one range control the audit pages share with the cost filter bar. */
+export function RangeSelect({
+  value,
+  onChange,
+}: {
+  value: SpendRange;
+  onChange: (next: SpendRange) => void;
+}) {
+  return (
+    <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+      range
+      <select
+        className={SELECT_CLASS}
+        value={value}
+        onChange={(event) => onChange(event.target.value as SpendRange)}
+      >
+        {RANGE_OPTIONS.map((range) => (
+          <option key={range} value={range}>
+            {range}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
 /** A section heading. 16px, the only size above body on a page. */
 export function Heading({ children }: { children: ReactNode }) {
   return <h2 className="text-[16px] font-semibold">{children}</h2>;
 }
 
+/**
+ * The row a page's hero numbers sit in.
+ *
+ * An auto-fit grid rather than four fixed columns: the panel is resizable and
+ * a 24px number in a 900px-wide panel would otherwise be squeezed into a
+ * column narrower than its own digits and collide with its neighbour. Below
+ * roughly four times the 160px minimum the row wraps instead.
+ */
+export function HeroRow({ children }: { children: ReactNode }) {
+  return (
+    <div
+      className="grid gap-6"
+      style={{ gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}
+    >
+      {children}
+    </div>
+  );
+}
+
 /** One 11px label above a 24px number. Never more than four in a row. */
-function Hero({ label, value }: { label: string; value: string }) {
+export function Hero({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-[11px] text-muted-foreground">{label}</span>
@@ -46,12 +98,12 @@ export function Heroes({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <div className="grid grid-cols-4 gap-6">
+      <HeroRow>
         <Hero label="spend usd" value={formatUsd(totals.spendUsd)} />
         <Hero label="cache saved usd" value={formatUsd(totals.cacheSavedUsd)} />
         <Hero label="cache write usd" value={formatUsd(totals.cacheWriteUsd)} />
         <Hero label="miss cost usd" value={formatUsd(totals.missCostUsd)} />
-      </div>
+      </HeroRow>
       {totals.unpricedModels > 0 ? (
         <p className="text-[11px] text-muted-foreground">
           {totals.unpricedModels} models unpriced{" "}
@@ -81,7 +133,7 @@ export function QueryFrame<T>({
   query,
   children,
 }: {
-  query: SpendQuery<T>;
+  query: ModuleQuery<T>;
   children: (data: T) => ReactNode;
 }) {
   if (query.kind === "loading") {
@@ -91,7 +143,7 @@ export function QueryFrame<T>({
     return (
       <div className="flex flex-col gap-3">
         <PageSkeleton />
-        <p className="text-[11px] text-muted-foreground">{ABSENT_MESSAGE}</p>
+        <p className="text-[11px] text-muted-foreground">{query.message}</p>
       </div>
     );
   }
@@ -105,11 +157,11 @@ export function QueryFrame<T>({
 export function PageSkeleton() {
   return (
     <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-4 gap-6">
+      <HeroRow>
         {[0, 1, 2, 3].map((slot) => (
           <Skeleton key={slot} className="h-8 w-full rounded-[4px]" />
         ))}
-      </div>
+      </HeroRow>
       <Skeleton className="h-40 w-full rounded-[4px]" />
     </div>
   );

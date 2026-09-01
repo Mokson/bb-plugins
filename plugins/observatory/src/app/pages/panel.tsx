@@ -10,13 +10,17 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ObservatorySettings } from "./settings.js";
-import { PANEL_PATH, PLACEHOLDERS, ROUTES } from "./routes.js";
+import { AUDIT_ROUTES, PANEL_PATH, PLACEHOLDERS, ROUTES } from "./routes.js";
 import { useStatus } from "./status.js";
 import { CostOverview } from "./cost.js";
 import { CostCache } from "./cost-cache.js";
 import { ThreadCost } from "./thread-cost.js";
+import { ContextAudit } from "./context.js";
+import { AuditSessions } from "./audit-sessions.js";
+import { AuditFailures } from "./audit-failures.js";
+import { AuditInsights } from "./audit-insights.js";
 
-export { PANEL_PATH, PLACEHOLDERS, ROUTES };
+export { AUDIT_ROUTES, PANEL_PATH, PLACEHOLDERS, ROUTES };
 
 function Heading({ title }: { title: string }) {
   return <h2 className="text-[16px] font-semibold">{title}</h2>;
@@ -97,6 +101,41 @@ function Inbox() {
  * of string comparisons is easier to audit than a pattern language. The tab
  * strip highlights the first segment, so `cost/cache` keeps Cost selected.
  */
+function Audit({
+  segments,
+}: {
+  segments: readonly string[];
+}) {
+  const navigate = useBbNavigate();
+  const [, second, third] = segments;
+  const route = AUDIT_ROUTES.some((entry) => entry.id === second)
+    ? (second as string)
+    : "sessions";
+
+  return (
+    <section className="flex flex-col gap-3 py-4">
+      <Heading title="Audit" />
+      <Tabs
+        value={route}
+        onValueChange={(next) =>
+          navigate.toPluginPanel(PANEL_PATH, { subPath: `audit/${next}` })
+        }
+      >
+        <TabsList>
+          {AUDIT_ROUTES.map((entry) => (
+            <TabsTrigger key={entry.id} value={entry.id}>
+              {entry.title}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+      {route === "failures" ? <AuditFailures /> : null}
+      {route === "insights" ? <AuditInsights /> : null}
+      {route === "sessions" ? <AuditSessions threadId={third} /> : null}
+    </section>
+  );
+}
+
 function Route({ segments }: { segments: readonly string[] }) {
   const [head, second, third] = segments;
 
@@ -105,6 +144,8 @@ function Route({ segments }: { segments: readonly string[] }) {
   if (head === "threads" && second !== undefined) {
     return <ThreadCost threadId={second} />;
   }
+  if (head === "context") return <ContextAudit />;
+  if (head === "audit") return <Audit segments={segments} />;
   if (head === "cost") {
     if (second === "cache") return <CostCache threadId={third} />;
     return <CostOverview />;

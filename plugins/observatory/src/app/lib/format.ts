@@ -79,6 +79,45 @@ export function formatTime(value: string | null | undefined): string {
   }).format(date);
 }
 
+/**
+ * A share held as a fraction (0..1) rendered as a percentage with one
+ * decimal. Composition shares are often under 1% and rounding them to `0%`
+ * reads as "not present" rather than "small".
+ */
+export function formatShare(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return UNKNOWN;
+  }
+  return `${(value * 100).toLocaleString("en-US", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  })}%`;
+}
+
+/**
+ * A delta against a median, held as a fraction. Always signed: the sign is
+ * the whole message, and an unsigned `12%` beside a median reads as a share.
+ */
+export function formatDelta(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return UNKNOWN;
+  }
+  const percent = value * 100;
+  const sign = percent > 0 ? "+" : "";
+  return `${sign}${percent.toLocaleString("en-US", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  })}%`;
+}
+
+/** A byte count, grouped like a token count and never abbreviated. */
+export function formatBytes(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return UNKNOWN;
+  }
+  return Math.round(value).toLocaleString("en-US");
+}
+
 /** A percentage for the cache-miss drop line. */
 export function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) {

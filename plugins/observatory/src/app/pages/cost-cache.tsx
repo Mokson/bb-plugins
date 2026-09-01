@@ -14,7 +14,7 @@ import {
   formatTokens,
   formatUsd,
 } from "@/lib/format";
-import { useSpendQuery } from "@/lib/spend-rpc";
+import { useModuleQuery } from "@/lib/module-rpc";
 import { fixtureCacheMisses } from "@/fixtures/spend";
 import { readStoredFilters, resolveFilters } from "@/lib/filters";
 import type { CacheMissRow, SpendCacheMisses } from "../../spend/contract.js";
@@ -100,7 +100,7 @@ export function CostCache({ threadId }: { threadId?: string }) {
           readStoredFilters(),
         ).range;
 
-  const query = useSpendQuery<SpendCacheMisses>(
+  const query = useModuleQuery<SpendCacheMisses>(
     "observatory_spend_cache_misses",
     { range, ...(threadId === undefined ? {} : { threadId }) },
     fixtureCacheMisses,

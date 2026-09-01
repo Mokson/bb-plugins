@@ -15,7 +15,7 @@ import {
   formatUsd,
   UNKNOWN,
 } from "@/lib/format";
-import { useSpendQuery } from "@/lib/spend-rpc";
+import { useModuleQuery } from "@/lib/module-rpc";
 import { fixtureThread } from "@/fixtures/spend";
 import { PANEL_PATH } from "./routes.js";
 import type { SpendThread, TurnRow } from "../../spend/contract.js";
@@ -116,7 +116,7 @@ function TurnTable({ turns }: { turns: readonly TurnRow[] }) {
  */
 export function ThreadCost({ threadId }: { threadId: string }) {
   const navigate = useBbNavigate();
-  const query = useSpendQuery<SpendThread>(
+  const query = useModuleQuery<SpendThread>(
     "observatory_spend_thread",
     { threadId },
     fixtureThread,

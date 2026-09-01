@@ -101,3 +101,14 @@ export function overviewInput(filters: Filters): {
     ...(filters.provider === "" ? {} : { provider: filters.provider }),
   };
 }
+
+/**
+ * The thread id the context page narrows to, read from the query rather than
+ * the path: the path owns identity (`observatory/context` is the project's
+ * prefix) and the query owns filters. It lives beside the cost filters, free
+ * of the SDK app runtime, so a test can name the rule without a browser.
+ */
+export function readThreadFilter(search: string): string | null {
+  const thread = new URLSearchParams(search).get("thread");
+  return thread === null || thread === "" ? null : thread;
+}

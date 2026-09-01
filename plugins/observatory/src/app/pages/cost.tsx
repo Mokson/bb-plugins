@@ -14,6 +14,7 @@ import {
   Num,
   NumHead,
   QueryFrame,
+  SELECT_CLASS,
   TextHead,
 } from "@/components/spend-common";
 import { formatCount, formatTokens, formatUsd } from "@/lib/format";
@@ -28,7 +29,7 @@ import {
   type Filters,
 } from "@/lib/filters";
 import { toggleKey, visibleRows } from "@/lib/rows";
-import { useSpendQuery } from "@/lib/spend-rpc";
+import { useModuleQuery } from "@/lib/module-rpc";
 import { fixtureOverview } from "@/fixtures/spend";
 import { PANEL_PATH } from "./routes.js";
 import type {
@@ -42,9 +43,6 @@ const GROUP_TITLES: Record<SpendGroup, string> = {
   model: "Model",
   day: "Day",
 };
-
-const SELECT_CLASS =
-  "h-6 rounded-[4px] border border-border bg-transparent px-1 text-[11px]";
 
 /**
  * Filter state resolved once on mount from the URL over storage, then owned
@@ -130,7 +128,7 @@ function FilterBar({
  */
 function ExportActions({ filters }: { filters: Filters }) {
   // The export is a user action, not a page load, so it posts on click rather
-  // than through `useSpendQuery`. A missing server half surfaces the same way
+  // than through `useModuleQuery`. A missing server half surfaces the same way
   // any other failure does: one line beside the buttons, no empty download.
   const [note, setNote] = useState<string | null>(null);
 
@@ -300,7 +298,7 @@ function OverviewTable({
 export function CostOverview() {
   const navigate = useBbNavigate();
   const [filters, setFilters] = useFilters();
-  const query = useSpendQuery<SpendOverview>(
+  const query = useModuleQuery<SpendOverview>(
     "observatory_spend_overview",
     overviewInput(filters),
     fixtureOverview,

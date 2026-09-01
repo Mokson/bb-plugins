@@ -10,12 +10,22 @@ import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { ObservatoryPanel, PANEL_PATH } from "./pages/panel.js";
 import { ObservatorySettings } from "./pages/settings.js";
 import { ThreadCost } from "./pages/thread-cost.js";
+import { ThreadContext } from "./pages/context.js";
+import { ThreadAudit } from "./pages/audit-sessions.js";
 import { mountSidebarUsageStrip } from "./lib/usage/sidebar-strip.js";
 import "./usage-strip.css";
 
-/** The thread panel's Cost tab, rendering the panel route's own component. */
+/** The thread panel's tabs, each rendering the panel route's own component. */
 function ThreadCostTab({ threadId }: PluginThreadPanelProps) {
   return <ThreadCost threadId={threadId} />;
+}
+
+function ThreadContextTab({ threadId }: PluginThreadPanelProps) {
+  return <ThreadContext threadId={threadId} />;
+}
+
+function ThreadAuditTab({ threadId }: PluginThreadPanelProps) {
+  return <ThreadAudit threadId={threadId} />;
 }
 
 export default definePluginApp((app) => {
@@ -43,6 +53,22 @@ export default definePluginApp((app) => {
     title: "Cost",
     icon: "Eye",
     component: ThreadCostTab,
+  });
+
+  // The same thread read two more ways: what its window is made of, and how
+  // this session compares with the last seven days of sessions.
+  app.slots.threadPanelAction({
+    id: "observatory-context",
+    title: "Context",
+    icon: "Eye",
+    component: ThreadContextTab,
+  });
+
+  app.slots.threadPanelAction({
+    id: "observatory-audit",
+    title: "Audit",
+    icon: "Eye",
+    component: ThreadAuditTab,
   });
 
   // The absorbed usage-tracker strip plus today's spend. It is a content
