@@ -201,6 +201,13 @@ export const watchContract = defineRpcContract({
       .object({
         mode: watchModeSchema.optional(),
         thresholds: z.record(z.string(), z.number()).optional(),
+        /**
+         * Threshold keys whose KV override is dropped, so the row falls back
+         * to the plugin setting. A distinct field rather than a sentinel
+         * value: the panel cannot know what the setting says while KV shadows
+         * it, so it can only ask for the override to go away.
+         */
+        reset: z.array(z.string()).optional(),
       })
       .strict(),
     output: watchSettingsSchema,
@@ -229,3 +236,29 @@ export const signalBroadcastSchema = z
   .strict();
 
 export type SignalBroadcast = z.output<typeof signalBroadcastSchema>;
+
+// App-side names.
+//
+// The panel was written against a second draft of this file that used a
+// `Watch`-prefixed vocabulary. The shapes above stayed the source of truth;
+// these are the same schemas and the same types under the names the app
+// imports, so there is exactly one contract and no adapter layer between the
+// two halves.
+
+export const WATCH_SIGNAL_CHANNEL = SIGNAL_CHANNEL;
+
+export type WatchSeverity = Severity;
+export type WatchSignal = SignalView;
+export type WatchSignalRow = ThreadSignalView;
+export type WatchSignalEvent = SignalBroadcast;
+export type WatchSettings = WatchSettingsView;
+/** Which layer decided a threshold, so the panel can offer a reset. */
+export type WatchSource = WatchSettingsView["source"][string];
+
+type Method<K extends keyof typeof watchContract> = z.output<
+  (typeof watchContract)[K]["output"]
+>;
+export type WatchList = Method<"observatory_watch_list">;
+export type WatchExplain = Method<"observatory_watch_explain">;
+export type WatchSignals = Method<"observatory_watch_signals">;
+export type Inbox = Method<"observatory_inbox">;

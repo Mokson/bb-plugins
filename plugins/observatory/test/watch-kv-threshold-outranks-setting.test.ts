@@ -112,4 +112,32 @@ describe("a watch threshold", () => {
     expect(after.mode).toBe("steer");
     expect(after.note).not.toBeNull();
   });
+
+  it("drops only the reset keys, so those rows follow the setting again", async () => {
+    fixture = makeWatchFixture({
+      "watch_silenceMinutes": "9",
+      "watch_repeatCount": "5",
+    });
+    await fixture.runtime.refresh();
+    const handlers = createWatchRpcHandlers(fixture.host.bb, {
+      current: fixture.runtime,
+    });
+
+    const overridden = await handlers["observatory_watch_settings_set"]({
+      thresholds: { "watch_silenceMinutes": 2, "watch_repeatCount": 3 },
+    });
+    expect(overridden.source["watch_silenceMinutes"]).toBe("kv");
+    expect(overridden.source["watch_repeatCount"]).toBe("kv");
+
+    const after = await handlers["observatory_watch_settings_set"]({
+      reset: ["watch_silenceMinutes"],
+    });
+
+    // The reset row falls back to the setting's 9, not to the 2 it held.
+    expect(after.thresholds["watch_silenceMinutes"]).toBe(9);
+    expect(after.source["watch_silenceMinutes"]).toBe("setting");
+    // Its neighbour's override is untouched.
+    expect(after.thresholds["watch_repeatCount"]).toBe(3);
+    expect(after.source["watch_repeatCount"]).toBe("kv");
+  });
 });

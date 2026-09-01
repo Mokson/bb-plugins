@@ -54,17 +54,20 @@ export function createWatchRpcHandlers(
       if (input.mode) {
         await bb.storage.kv.set(MODE_KV_KEY, input.mode satisfies WatchMode);
       }
-      if (input.thresholds) {
+      if (input.thresholds || input.reset?.length) {
         // Merge, not replace: the panel edits one field at a time, and a
         // replace would silently drop every other override in the same key.
-        const existing =
-          (await bb.storage.kv.get<Record<string, number>>(
+        const next = {
+          ...((await bb.storage.kv.get<Record<string, number>>(
             THRESHOLDS_KV_KEY,
-          )) ?? {};
-        await bb.storage.kv.set(THRESHOLDS_KV_KEY, {
-          ...existing,
+          )) ?? {}),
           ...input.thresholds,
-        });
+        };
+        // A reset deletes the override rather than writing the setting's
+        // current value: the row has to keep following the setting afterwards,
+        // not freeze at whatever it happens to say today.
+        for (const key of input.reset ?? []) delete next[key];
+        await bb.storage.kv.set(THRESHOLDS_KV_KEY, next);
       }
       await current.refresh();
       return settingsView(current);

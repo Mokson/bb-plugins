@@ -6,15 +6,16 @@
 // same page reads the same in either theme and in a screenshot.
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ObservatorySettings } from "./settings.js";
 import { PANEL_PATH, PLACEHOLDERS, ROUTES } from "./routes.js";
-import { useStatus } from "./status.js";
 import { CostOverview } from "./cost.js";
 import { CostCache } from "./cost-cache.js";
 import { ThreadCost } from "./thread-cost.js";
+import { InboxPage } from "./inbox.js";
+import { StallsPage } from "./stalls.js";
+import { Trajectory } from "./trajectory.js";
+import { WatchSettingsPage } from "./watch-settings.js";
 
 export { PANEL_PATH, PLACEHOLDERS, ROUTES };
 
@@ -34,62 +35,6 @@ function Placeholder({ route }: { route: string }) {
   );
 }
 
-function Inbox() {
-  const state = useStatus();
-  if (state.kind === "loading") {
-    return <Skeleton className="mt-4 h-24 w-full" />;
-  }
-  if (state.kind === "error") {
-    return (
-      <p className="py-4 text-[13px] text-muted-foreground">{state.message}</p>
-    );
-  }
-  const { status } = state;
-  return (
-    <section className="flex flex-col gap-3 py-4">
-      <Heading title="Modules" />
-      <p className="text-[11px] text-muted-foreground">{status.phase}</p>
-      <table className="w-full text-[13px]">
-        <thead>
-          <tr className="text-[11px] text-muted-foreground">
-            <th className="py-1 text-left font-normal">module</th>
-            <th className="py-1 text-left font-normal">state</th>
-            <th className="py-1 text-left font-normal">source</th>
-            <th className="py-1 text-right font-normal tabular-nums">
-              failures
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {status.modules.map((module) => (
-            <tr key={module.id} className="border-t border-border">
-              <td className="h-6 py-0">{module.id}</td>
-              <td className="h-6 py-0">
-                {module.tripped ? "tripped" : module.enabled ? "on" : "off"}
-              </td>
-              <td className="h-6 py-0">{module.source}</td>
-              <td className="h-6 py-0 text-right tabular-nums">
-                {module.failures}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <Separator />
-      <table className="w-full text-[13px]">
-        <tbody>
-          {Object.entries(status.counts).map(([key, value]) => (
-            <tr key={key}>
-              <td className="h-6 py-0 text-muted-foreground">{key}</td>
-              <td className="h-6 py-0 text-right tabular-nums">{value}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </section>
-  );
-}
-
 /**
  * The route body for one `subPath`.
  *
@@ -100,9 +45,18 @@ function Inbox() {
 function Route({ segments }: { segments: readonly string[] }) {
   const [head, second, third] = segments;
 
-  if (head === undefined || head === "") return <Inbox />;
-  if (head === "settings") return <ObservatorySettings />;
+  if (head === undefined || head === "") return <InboxPage />;
+  if (head === "settings") {
+    return (
+      <>
+        <WatchSettingsPage />
+        <ObservatorySettings />
+      </>
+    );
+  }
+  if (head === "stalls") return <StallsPage />;
   if (head === "threads" && second !== undefined) {
+    if (third === "trajectory") return <Trajectory threadId={second} />;
     return <ThreadCost threadId={second} />;
   }
   if (head === "cost") {

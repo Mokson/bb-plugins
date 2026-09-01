@@ -19,7 +19,7 @@ export function Heading({ children }: { children: ReactNode }) {
 }
 
 /** One 11px label above a 24px number. Never more than four in a row. */
-function Hero({ label, value }: { label: string; value: string }) {
+export function Hero({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-[11px] text-muted-foreground">{label}</span>
