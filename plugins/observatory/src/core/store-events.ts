@@ -144,7 +144,7 @@ export class EventStore {
     this.staleThreadsStatement = db.prepare(
       `SELECT thread_id, last_event_seq, last_seen_at, status
          FROM obs_thread
-        WHERE status IS NULL OR status NOT IN ('archived', 'deleted')
+        WHERE (status IS NULL OR status NOT IN ('archived', 'deleted'))
           AND (last_seen_at IS NULL OR last_seen_at < ?)
         ORDER BY COALESCE(last_seen_at, '')
         LIMIT ?`,

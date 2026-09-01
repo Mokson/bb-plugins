@@ -138,12 +138,6 @@ export function applyMigrations(
 
 type Nullable<T> = { [K in keyof T]: T[K] | null };
 
-function columns(row: Record<string, unknown>, keys: readonly string[]) {
-  const out: Record<string, unknown> = {};
-  for (const key of keys) out[key] = row[key] ?? null;
-  return out;
-}
-
 const THREAD_COLUMNS = [
   "thread_id",
   "project_id",
@@ -214,22 +208,75 @@ const ITEM_COLUMNS = [
   "error",
 ] as const;
 
-function upsert(table: string, keys: readonly string[], pk: readonly string[]) {
-  const names = keys.join(", ");
-  const binds = keys.map((key) => `@${key}`).join(", ");
-  const updates = keys
-    .filter((key) => !pk.includes(key))
-    .map((key) => `${key} = excluded.${key}`)
-    .join(", ");
-  return `INSERT INTO ${table} (${names}) VALUES (${binds})
-          ON CONFLICT(${pk.join(", ")}) DO UPDATE SET ${updates}`;
+/**
+ * A PARTIAL upsert: only the keys a caller actually supplied are written.
+ *
+ * This is the difference between a patch and a row. Ingest folds one page of
+ * events at a time, and a page proves only some columns — a later page may
+ * carry a turn's `completed_at` and nothing else. Binding the whole column
+ * list, which is what a single fixed statement forces, makes every absent key
+ * an explicit NULL, so each page ERASES what the previous page established:
+ * the split, the cache columns, the cost, `started_at`.
+ *
+ * The prepared-once property survives because statements are cached per key
+ * shape, and callers only have a handful of shapes.
+ */
+class PartialUpsert {
+  private readonly cache = new Map<string, Statement>();
+
+  constructor(
+    private readonly db: Database,
+    private readonly table: string,
+    private readonly keys: readonly string[],
+    private readonly pk: readonly string[],
+    /**
+     * Columns an UPDATE must never overwrite once they hold a value, because
+     * another writer owns them. `split_source` is the case that matters: the
+     * log join proves it, and a later event page re-asserting its
+     * "unavailable" default would throw the proof away.
+     */
+    private readonly keepExisting: readonly string[] = [],
+  ) {}
+
+  run(row: Record<string, unknown>): void {
+    const present = this.keys.filter((key) => row[key] !== undefined);
+    const shape = present.join(",");
+    let statement = this.cache.get(shape);
+    if (!statement) {
+      statement = this.db.prepare(this.sql(present));
+      this.cache.set(shape, statement);
+    }
+    const bindings: Record<string, unknown> = {};
+    for (const key of present) bindings[key] = row[key];
+    statement.run(bindings);
+  }
+
+  private sql(present: readonly string[]): string {
+    const names = present.join(", ");
+    const binds = present.map((key) => `@${key}`).join(", ");
+    const updates = present
+      .filter((key) => !this.pk.includes(key))
+      .map((key) =>
+        this.keepExisting.includes(key)
+          ? `${key} = COALESCE(${this.table}.${key}, excluded.${key})`
+          : `${key} = excluded.${key}`,
+      )
+      .join(", ");
+    const conflict = `ON CONFLICT(${this.pk.join(", ")})`;
+    // A patch carrying only the primary key still has to insert the row, but
+    // it has nothing to update, and `DO UPDATE SET` with no assignment is a
+    // syntax error.
+    const action = updates ? `DO UPDATE SET ${updates}` : "DO NOTHING";
+    return `INSERT INTO ${this.table} (${names}) VALUES (${binds})
+            ${conflict} ${action}`;
+  }
 }
 
 export class ObservatoryStore {
   readonly db: Database;
-  private readonly upsertThreadStatement: Statement;
-  private readonly upsertTurnStatement: Statement;
-  private readonly upsertItemStatement: Statement;
+  private readonly threadUpsert: PartialUpsert;
+  private readonly turnUpsert: PartialUpsert;
+  private readonly itemUpsert: PartialUpsert;
   private readonly insertSignalStatement: Statement;
   private readonly selectSignalStatement: Statement<
     [string],
@@ -246,15 +293,19 @@ export class ObservatoryStore {
 
   constructor(db: Database) {
     this.db = db;
-    this.upsertThreadStatement = db.prepare(
-      upsert("obs_thread", THREAD_COLUMNS, ["thread_id"]),
+    this.threadUpsert = new PartialUpsert(db, "obs_thread", THREAD_COLUMNS, [
+      "thread_id",
+    ]);
+    this.turnUpsert = new PartialUpsert(
+      db,
+      "obs_turn",
+      TURN_COLUMNS,
+      ["thread_id", "turn_id"],
+      ["split_source"],
     );
-    this.upsertTurnStatement = db.prepare(
-      upsert("obs_turn", TURN_COLUMNS, ["thread_id", "turn_id"]),
-    );
-    this.upsertItemStatement = db.prepare(
-      upsert("obs_item", ITEM_COLUMNS, ["item_id"]),
-    );
+    this.itemUpsert = new PartialUpsert(db, "obs_item", ITEM_COLUMNS, [
+      "item_id",
+    ]);
     // DO NOTHING, then read: the conflict is the dedupe key doing its job, and
     // the caller needs the EXISTING episode's id, not a new one.
     this.insertSignalStatement = db.prepare(
@@ -292,20 +343,21 @@ export class ObservatoryStore {
   }
 
   upsertThread(row: Partial<Nullable<ThreadRow>> & { thread_id: string }): void {
-    this.upsertThreadStatement.run({
-      ...columns(row, THREAD_COLUMNS),
-      depth: row.depth ?? 0,
-    });
+    // `depth` is NOT NULL in the schema; an explicit null still means zero,
+    // but an ABSENT depth leaves whatever the last resolve proved.
+    this.threadUpsert.run(
+      row.depth === undefined ? row : { ...row, depth: row.depth ?? 0 },
+    );
   }
 
   upsertTurn(
     row: Partial<Nullable<TurnRow>> & { thread_id: string; turn_id: string },
   ): void {
-    this.upsertTurnStatement.run(columns(row, TURN_COLUMNS));
+    this.turnUpsert.run(row);
   }
 
   upsertItem(row: Partial<Nullable<ItemRow>> & { item_id: string; thread_id: string }): void {
-    this.upsertItemStatement.run(columns(row, ITEM_COLUMNS));
+    this.itemUpsert.run(row);
   }
 
   /** Returns the existing episode's id when `dedupeKey` is already open. */

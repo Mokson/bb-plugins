@@ -33,6 +33,11 @@ export const TICK_BUDGET_MS = 250;
 export const IDLE_POLL_MS = 1_000;
 /** A thread not drained within this is re-queued by `reconcileStale`. */
 export const STALE_AFTER_MS = 5 * 60 * 1_000;
+/**
+ * Threads whose normalize carry stays resident. The durable copy in `obs_meta`
+ * is authoritative, so this is purely a read cache and evicting is free.
+ */
+export const CARRY_CACHE_LIMIT = 256;
 
 /** Event types that mean "this thread has ledger-relevant new rows". */
 const INGEST_EVENT_TYPES = new Set([
@@ -47,6 +52,9 @@ const INGEST_EVENT_TYPES = new Set([
   "item/completed",
   "provider/error",
   "client/turn/requested",
+  // A rejected request never becomes a turn, but it clears the pending model
+  // in the carry, so the drain has to see it.
+  "client/turn/rejected",
 ]);
 
 export interface IngestCounters {
@@ -76,6 +84,8 @@ export interface Ingest {
   markDirty(threadId: string): void;
   drainOnce(): Promise<number>;
   drainThread(threadId: string): Promise<number>;
+  /** Forget how far these threads were drained; the next drain re-reads all. */
+  reset(threadIds: readonly string[]): void;
   reconcileStale(): Promise<number>;
   rejoinPending(): JoinSummary | null;
   counters(): IngestCounters;
@@ -96,8 +106,17 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 export function createIngest(options: IngestOptions): Ingest {
   const { bb, store, events } = options;
   const now = options.now ?? Date.now;
-  const registry =
-    options.registry ?? new ThreadRegistry({ threads: bb.sdk.threads, log: bb.log });
+  // `bb.sdk` is bind-gated: touching it during `createCoreModule` setup, which
+  // runs before `listen`, throws. The registry is therefore built on the first
+  // drain rather than in the factory.
+  let registryInstance = options.registry ?? null;
+  function registry(): ThreadRegistry {
+    registryInstance ??= new ThreadRegistry({
+      threads: bb.sdk.threads,
+      log: bb.log,
+    });
+    return registryInstance;
+  }
   const dirty = new Set<string>();
   const carries = new Map<string, NormalizeCarry>();
   const counters: IngestCounters = {
@@ -115,6 +134,46 @@ export function createIngest(options: IngestOptions): Ingest {
   }
 
   /**
+   * The carry is as durable as the watermark it pairs with.
+   *
+   * The watermark says "events up to seq N are folded in"; the carry says what
+   * that fold left half-finished — the running token baseline and the open
+   * turn. Keeping the watermark on disk and the carry in memory meant a plugin
+   * reload replayed neither, and the first `thread/tokenUsage/updated` after
+   * the reload was read as a delta against nothing, so a whole thread's
+   * running total was billed to one turn. They are written in one transaction
+   * for the same reason.
+   */
+  function carryKey(threadId: string): string {
+    return `carry:${threadId}`;
+  }
+
+  function loadCarry(threadId: string): NormalizeCarry {
+    const cached = carries.get(threadId);
+    if (cached) return cached;
+    const raw = store.getMeta(carryKey(threadId));
+    if (!raw) return emptyCarry();
+    try {
+      // A carry is a cache of derivable state, so a shape that no longer
+      // parses is a re-derive, never a crash.
+      return { ...emptyCarry(), ...(JSON.parse(raw) as NormalizeCarry) };
+    } catch {
+      return emptyCarry();
+    }
+  }
+
+  /** Keep the newest threads' carries resident; the rest reload from disk. */
+  function rememberCarry(threadId: string, carry: NormalizeCarry): void {
+    carries.delete(threadId);
+    carries.set(threadId, carry);
+    while (carries.size > CARRY_CACHE_LIMIT) {
+      const oldest = carries.keys().next();
+      if (oldest.done) break;
+      carries.delete(oldest.value);
+    }
+  }
+
+  /**
    * Drain one thread from its watermark to the tail.
    *
    * The watermark is stored, not remembered, so a reload resumes where the
@@ -122,23 +181,20 @@ export function createIngest(options: IngestOptions): Ingest {
    * same rows by primary key.
    */
   async function drainThread(threadId: string): Promise<number> {
-    const resolved = await registry.resolve(threadId);
-    // Read the watermark BEFORE the registry upsert and carry it through
-    // every write: `upsertThread` writes the full column list, so a row
-    // rebuilt from the registry alone would null `last_event_seq` and make
-    // the next drain replay the whole thread.
+    const resolved = await registry().resolve(threadId);
     const watermark = events.watermark(threadId);
-    const row = {
-      ...resolved.row,
-      last_event_seq: watermark,
-      last_seen_at: new Date(now()).toISOString(),
-    };
     // The registry row must land first: turns denormalize `root_thread_id`,
-    // and the join needs `provider_thread_id` on the thread.
-    store.upsertThread(row);
+    // and the join needs `provider_thread_id` on the thread. The upsert is a
+    // PATCH, so the columns the registry cannot know — `last_event_seq`, and
+    // `provider_thread_id`, which only the event stream carries — keep the
+    // values earlier drains proved instead of being nulled on every tick.
+    store.upsertThread({
+      ...resolved.row,
+      last_seen_at: new Date(now()).toISOString(),
+    });
     const rootThreadId = resolved.row.root_thread_id ?? threadId;
 
-    let carry = carries.get(threadId) ?? emptyCarry();
+    let carry = loadCarry(threadId);
     let afterSeq = watermark;
     let ingested = 0;
     const deadline = now() + TICK_BUDGET_MS;
@@ -160,9 +216,7 @@ export function createIngest(options: IngestOptions): Ingest {
       const write = store.db.transaction(() => {
         if (result.thread.provider_thread_id) {
           store.upsertThread({
-            ...row,
             thread_id: threadId,
-            last_event_seq: afterSeq,
             provider_thread_id: result.thread.provider_thread_id,
           });
         }
@@ -175,6 +229,10 @@ export function createIngest(options: IngestOptions): Ingest {
             new Date(now()).toISOString(),
           );
         }
+        // Same transaction as the watermark: a carry that outran its
+        // watermark would double count on the next drain, and one that lagged
+        // would drop a turn's tokens.
+        store.setMeta(carryKey(threadId), JSON.stringify(result.carry));
       });
       write();
 
@@ -192,10 +250,40 @@ export function createIngest(options: IngestOptions): Ingest {
       }
     }
 
-    carries.set(threadId, carry);
+    // An empty drain means the durable carry is already current, so the
+    // resident copy is redundant and an idle thread stops holding memory.
+    if (ingested === 0) carries.delete(threadId);
+    else rememberCarry(threadId, carry);
     counters.drains += 1;
     counters.lastDrainAt = new Date(now()).toISOString();
     return ingested;
+  }
+
+  /**
+   * Rewind these threads to the start of their event history.
+   *
+   * The watermark and the carry are one fact in two places — "folded up to
+   * seq N, with this much left open" — so they are cleared together, in one
+   * transaction, or a drain would resume with a carry that describes events it
+   * is about to read again. Nothing here reads or writes a provider log: the
+   * rows this drops are all re-derivable from bb's own event stream.
+   */
+  function reset(threadIds: readonly string[]): void {
+    // Prepared per call rather than at construction: this is the rare admin
+    // path, and the drain loop should not carry statements it never runs.
+    const clearWatermark = store.db.prepare(
+      "UPDATE obs_thread SET last_event_seq = NULL WHERE thread_id = ?",
+    );
+    const clearCarry = store.db.prepare("DELETE FROM obs_meta WHERE key = ?");
+    store.db.transaction(() => {
+      for (const threadId of threadIds) {
+        clearWatermark.run(threadId);
+        clearCarry.run(carryKey(threadId));
+        carries.delete(threadId);
+        dirty.add(threadId);
+      }
+    })();
+    counters.dirty = dirty.size;
   }
 
   async function drainOnce(): Promise<number> {
@@ -273,7 +361,7 @@ export function createIngest(options: IngestOptions): Ingest {
       "thread.archived",
     ] as const) {
       bb.events.on(name, ({ thread }) => {
-        registry.invalidate(thread.id);
+        registry().invalidate(thread.id);
         markDirty(thread.id);
       });
     }
@@ -292,6 +380,7 @@ export function createIngest(options: IngestOptions): Ingest {
     markDirty,
     drainOnce,
     drainThread,
+    reset,
     reconcileStale,
     rejoinPending,
     counters: () => ({ ...counters, dirty: dirty.size }),

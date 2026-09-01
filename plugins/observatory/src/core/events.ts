@@ -61,6 +61,15 @@ export interface TurnCounters {
 export interface NormalizeCarry {
   /** The turn open at the page boundary; thread-scoped usage attaches here. */
   openTurnId: string | null;
+  /**
+   * The turn that most recently completed, until the next one starts.
+   *
+   * Providers flush the usage total AFTER they close the turn, so a
+   * `thread/tokenUsage/updated` routinely arrives with no turn open. Dropping
+   * it would still advance the running baseline, which silently donates that
+   * turn's tokens to whichever turn opens next.
+   */
+  lastCompletedTurnId: string | null;
   /** Last seen thread running totals, or null before the first usage event. */
   totals: TokenTotals | null;
   /** Newest `client/turn/requested` execution, applied to turns after it. */
@@ -93,6 +102,7 @@ export interface NormalizeResult {
 export function emptyCarry(): NormalizeCarry {
   return {
     openTurnId: null,
+    lastCompletedTurnId: null,
     totals: null,
     modelRequested: null,
     effort: null,
@@ -251,6 +261,12 @@ export function normalizeEvents(args: {
         thread_id: threadId,
         turn_id: turnId,
         root_thread_id: args.rootThreadId ?? null,
+        // Every turn is born without a proven cache split. Saying so here,
+        // rather than only on turn/started, is what keeps a turn first seen
+        // mid-flight (the watermark landed after its start) out of the NULL
+        // state the coverage view cannot classify. The store keeps an
+        // existing value, so this never overwrites a join's proof.
+        split_source: "unavailable",
       };
       turns.set(turnId, patch);
     }
@@ -288,13 +304,16 @@ export function normalizeEvents(args: {
         if (execution && typeof execution.reasoningLevel === "string") {
           carry.effort = execution.reasoningLevel;
         }
-        // The request precedes its turn, but a steer mid-turn should still
-        // land on the turn already running.
-        if (openTurn) {
-          const patch = turnPatch(openTurn);
-          patch.model_requested = carry.modelRequested;
-          patch.effort = carry.effort;
-        }
+        // Recorded, not applied. A request names the model for the turn it is
+        // about to open; applying it to whatever turn happens to be running
+        // would relabel an already-finished turn with the NEXT one's model.
+        break;
+      }
+      case "client/turn/rejected": {
+        // The request never became a turn, so its model must not leak into
+        // the next turn that starts.
+        carry.modelRequested = null;
+        carry.effort = null;
         break;
       }
       case "turn/started": {
@@ -305,11 +324,12 @@ export function normalizeEvents(args: {
         patch.started_at = at;
         patch.model_requested = carry.modelRequested;
         patch.effort = carry.effort;
-        patch.split_source = patch.split_source ?? "unavailable";
         if (row.data.providerThreadId) {
           thread.provider_thread_id = row.data.providerThreadId;
         }
         carry.openTurnId = turnId;
+        // A new turn closes the previous turn's trailing-usage window.
+        carry.lastCompletedTurnId = null;
         break;
       }
       case "turn/completed": {
@@ -329,6 +349,7 @@ export function normalizeEvents(args: {
           patch.error_category = patch.error_category ?? "turn-interrupted";
         }
         if (carry.openTurnId === turnId) carry.openTurnId = null;
+        carry.lastCompletedTurnId = turnId;
         break;
       }
       case "thread/tokenUsage/updated": {
@@ -341,8 +362,12 @@ export function normalizeEvents(args: {
         };
         const step = delta(current, carry.totals);
         carry.totals = current;
-        if (!openTurn) break;
-        const accumulated = carry.usageByTurn[openTurn] ?? {
+        // The baseline has already advanced, so a usage event with no open
+        // turn is spend that WILL otherwise be charged to the next turn. It
+        // belongs to the turn that just finished.
+        const usageTurn = openTurn ?? carry.lastCompletedTurnId;
+        if (!usageTurn) break;
+        const accumulated = carry.usageByTurn[usageTurn] ?? {
           input: 0,
           cached: 0,
           output: 0,
@@ -354,8 +379,8 @@ export function normalizeEvents(args: {
           output: accumulated.output + step.output,
           reasoning: accumulated.reasoning + step.reasoning,
         };
-        carry.usageByTurn[openTurn] = next;
-        const patch = turnPatch(openTurn);
+        carry.usageByTurn[usageTurn] = next;
+        const patch = turnPatch(usageTurn);
         patch.input_tokens = next.input;
         patch.cached_input_tokens = next.cached;
         patch.output_tokens = next.output;
@@ -400,6 +425,12 @@ export function normalizeEvents(args: {
             : completed
               ? "completed"
               : "pending";
+        const path = itemPath(item);
+        const fingerprint = itemFingerprint(item);
+        // started/completed are two halves of one row, and each half only
+        // knows its own timestamp. Emitting the other as an explicit null is
+        // how `item/completed` used to erase the `started_at` that
+        // `item/started` had just proved, so the absent half is OMITTED.
         items.push({
           item_id: item.id,
           thread_id: threadId,
@@ -408,13 +439,16 @@ export function normalizeEvents(args: {
           kind: item.type,
           name: itemName(item),
           status,
-          started_at: completed ? null : at,
-          completed_at: completed ? at : null,
-          duration_ms:
-            typeof item.durationMs === "number" ? item.durationMs : null,
-          path: itemPath(item),
-          input_fingerprint: itemFingerprint(item),
-          error: typeof item.error === "string" ? "error" : null,
+          ...(completed ? { completed_at: at } : { started_at: at }),
+          // Likewise for the fields only one half carries: a `completed`
+          // payload that omits the path must not blank the path `started`
+          // recorded, so an unknown value is left out rather than nulled.
+          ...(typeof item.durationMs === "number"
+            ? { duration_ms: item.durationMs }
+            : {}),
+          ...(path === null ? {} : { path }),
+          ...(fingerprint === null ? {} : { input_fingerprint: fingerprint }),
+          ...(typeof item.error === "string" ? { error: "error" } : {}),
         });
         if (completed && openTurn) {
           const counter = counters(openTurn);
