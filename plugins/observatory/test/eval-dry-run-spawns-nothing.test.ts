@@ -14,7 +14,7 @@ const fixture = makeGitFixture();
 afterAll(() => fixture.dispose());
 
 describe("dry-run spawns nothing", () => {
-  it("touches no sdk thread surface across list, validate and run", () => {
+  it("touches no sdk thread surface across list, validate and run", async () => {
     const host = makeHarness();
     const deps = {
       store: new EvalStore(host.bb.storage.database()),
@@ -24,9 +24,9 @@ describe("dry-run spawns nothing", () => {
     };
     const worktreeRoot = `${fixture.root}/worktrees`;
 
-    expect(runEvalCommand(deps, ["list"], undefined).exitCode).toBe(0);
-    expect(runEvalCommand(deps, ["validate"], undefined).exitCode).toBe(0);
-    const result = runEvalCommand(
+    expect((await runEvalCommand(deps, ["list"], undefined)).exitCode).toBe(0);
+    expect((await runEvalCommand(deps, ["validate"], undefined)).exitCode).toBe(0);
+    const result = await runEvalCommand(
       deps,
       ["run", "--dry-run"],
       `${worktreeRoot}/data.db`,
@@ -37,7 +37,7 @@ describe("dry-run spawns nothing", () => {
     expect(host.harness.sdk.calls).toEqual([]);
   });
 
-  it("prints the spawn arguments it declined to use", () => {
+  it("prints the spawn arguments it declined to use", async () => {
     const host = makeHarness();
     const deps = {
       store: new EvalStore(host.bb.storage.database()),
@@ -45,7 +45,7 @@ describe("dry-run spawns nothing", () => {
         "planned": caseYaml("planned", fixture),
       }),
     };
-    const result = runEvalCommand(
+    const result = await runEvalCommand(
       deps,
       ["run", "--dry-run"],
       `${fixture.root}/plan/data.db`,
@@ -58,15 +58,15 @@ describe("dry-run spawns nothing", () => {
     expect(host.harness.sdk.calls).toEqual([]);
   });
 
-  it("refuses a non-dry run with exit 2 rather than half-running one", () => {
+  it("refuses a non-dry run with exit 2 rather than half-running one", async () => {
     const host = makeHarness();
     const deps = {
       store: new EvalStore(host.bb.storage.database()),
       casesDir: writeCases(fixture.root, { "live": caseYaml("live", fixture) }),
     };
-    const result = runEvalCommand(deps, ["run"], undefined);
+    const result = await runEvalCommand(deps, ["run"], undefined);
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("part 2");
+    expect(result.stderr).toContain("needs the plugin host");
     expect(host.harness.sdk.calls).toEqual([]);
   });
 });

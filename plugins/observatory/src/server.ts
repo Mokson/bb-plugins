@@ -55,11 +55,19 @@ import {
   loadUsageSnapshot,
   usagePreferences,
 } from "./spend/usage.js";
-// --- eval (part 1: cases, dry run, reads) ---
+// --- eval ---
 import type { Database } from "better-sqlite3";
 import { evalContract } from "./eval/contract.js";
 import { EvalStore } from "./eval/store.js";
 import { EVAL_CLI_COMMANDS, EVAL_COMMAND, runEvalCommand } from "./eval/cli.js";
+import type { EvalLiveDeps } from "./eval/deps.js";
+import { stackSha } from "./eval/dryrun.js";
+import {
+  NIGHTLY_KV_KEY,
+  hashCasesDir,
+  shouldRunNightly,
+  type NightlyFingerprint,
+} from "./eval/nightly.js";
 import {
   casesView,
   loadCases,
@@ -74,6 +82,7 @@ import {
   defineModule,
   moduleEnabledKvKey,
   moduleEnabledSettingKey,
+  type ModuleContext,
   type ModuleId,
   type ObservatoryModule,
 } from "./module.js";
@@ -531,19 +540,23 @@ export function createSpendModule(
 }
 
 // ---------------------------------------------------------------------------
-// eval (part 1: cases, dry run, reads)
+// eval
 //
-// Unlike spend, eval does NOT read the ledger: its inputs are case files under
-// `eval_casesDir` and its own three tables. So it needs no `CoreHandle`, and
-// it stays useful when core is disabled — `eval validate` is the check an
+// Unlike spend, eval does not read the ledger for its INPUTS: those are case
+// files under `eval_casesDir` and its own three tables. It reads `obs_turn`
+// only to price a run it is already driving, so it needs no `CoreHandle` and
+// stays useful when core is disabled — `eval validate` is the check an
 // operator wants precisely when the rest of the plugin is unhappy.
 //
-// The runner, harvest, gate and baseline land in part 2 behind the seams in
-// `src/eval/{runner,gate,baseline}.ts`.
+// The nightly cron is the one thing here that can spend money on its own, so
+// it is guarded twice: it runs only on the `smoke` tag, and only when the
+// skill stack's HEAD or the case files actually moved.
 // ---------------------------------------------------------------------------
 
 export interface EvalRuntime {
   deps: EvalDeps;
+  live: EvalLiveDeps;
+  databasePath: string | undefined;
 }
 
 export interface EvalHandle {
@@ -551,6 +564,9 @@ export interface EvalHandle {
 }
 
 export const DEFAULT_EVAL_CASES_DIR = "~/.agents/eval/cases";
+
+/** The tag the nightly runs, and the only tag it will ever run. */
+export const NIGHTLY_TAG = "smoke";
 
 export function createEvalModule(
   db: () => Database,
@@ -562,18 +578,58 @@ export function createEvalModule(
     async setup(ctx) {
       const values = await settings();
       const configured = values["eval_casesDir"];
-      handle.current = {
-        deps: {
-          store: new EvalStore(db()),
-          casesDir:
-            typeof configured === "string" && configured.trim() !== ""
-              ? configured.trim()
-              : DEFAULT_EVAL_CASES_DIR,
-        },
+      const casesDir =
+        typeof configured === "string" && configured.trim() !== ""
+          ? configured.trim()
+          : DEFAULT_EVAL_CASES_DIR;
+      const database = db();
+      const runtime: EvalRuntime = {
+        deps: { store: new EvalStore(database), casesDir },
+        live: { bb: ctx.bb, db: database },
+        databasePath: database.name,
       };
-      ctx.bb.log.info("[eval] cases and dry run registered");
+      handle.current = runtime;
+
+      registerEvalNightly(ctx, runtime);
+      ctx.bb.log.info(`[eval] registered over ${casesDir}`);
     },
   });
+}
+
+/**
+ * The nightly smoke suite. It skips when neither `~/.agents` HEAD nor the
+ * case files changed, because a nightly whose inputs are identical can only
+ * reproduce last night's answer at full price.
+ */
+function registerEvalNightly(ctx: ModuleContext, runtime: EvalRuntime): void {
+  ctx.bb.background.schedule(
+    "eval-nightly",
+    "0 3 * * *",
+    ctx.job("eval-nightly", async () => {
+      if (!(await ctx.enabled())) return;
+      const current: NightlyFingerprint = {
+        stackSha: stackSha("~/.agents"),
+        casesHash: hashCasesDir(runtime.deps.casesDir),
+      };
+      const previous = await ctx.bb.storage.kv.get<NightlyFingerprint>(NIGHTLY_KV_KEY);
+      if (!shouldRunNightly(current, previous)) {
+        ctx.bb.log.info("[eval] nightly skipped: stack and cases unchanged");
+        return;
+      }
+      // The fingerprint is written BEFORE the run, so a suite that crashes
+      // halfway does not re-spend the whole night's budget on the next tick.
+      await ctx.bb.storage.kv.set(NIGHTLY_KV_KEY, current);
+      const result = await runEvalCommand(
+        runtime.deps,
+        ["run", "--tag", NIGHTLY_TAG, "--gate"],
+        runtime.databasePath,
+        runtime.live,
+      );
+      ctx.bb.log.info(
+        `[eval] nightly finished with exit ${result.exitCode}\n${result.stdout ?? result.stderr ?? ""}`,
+      );
+    }),
+  );
 }
 
 // --- end eval ---
@@ -1360,7 +1416,12 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
         if (!runtime) {
           return { exitCode: 1, stderr: "eval module is not running\n" };
         }
-        return runEvalCommand(runtime.deps, argv.slice(1), db.name);
+        return await runEvalCommand(
+          runtime.deps,
+          argv.slice(1),
+          runtime.databasePath,
+          runtime.live,
+        );
       }
       // --- end eval ---
       if (SPEND_COMMANDS.includes(command as SpendCommand)) {

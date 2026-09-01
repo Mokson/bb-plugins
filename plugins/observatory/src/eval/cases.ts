@@ -153,6 +153,12 @@ export const caseSchema = z
     /** Repeats of the same case; variance is the point, so 1 is the floor. */
     trials: z.number().int().positive().default(1),
     retries: z.number().int().nonnegative().default(0),
+    /**
+     * Leave the worktree on disk when a trial fails. Off by default: a suite
+     * that keeps every red tree fills a disk, and harvest already saved the
+     * evidence. Turn it on for the one case being debugged.
+     */
+    keep_on_fail: z.boolean().default(false),
     fixture: fixtureSchema,
     invocation: invocationSchema,
     harness: harnessSchema,

@@ -124,14 +124,20 @@ function countAssertions(value: EvalCase["assert"]): number {
   return Object.values(value).filter((entry) => entry !== undefined).length;
 }
 
-export function buildSpawnPlan(value: EvalCase, worktree: string, trial: number): SpawnPlan {
+export function buildSpawnPlan(
+  value: EvalCase,
+  worktree: string,
+  trial: number,
+  runId: string,
+): SpawnPlan {
   const { orchestrator } = value.harness;
   return {
     projectId: value.fixture.project,
-    // The title carries the case and trial because part 2 finds its own
-    // hidden threads by title, and a shared title would let two trials
-    // harvest each other's events.
-    title: `eval ${value.name} trial ${trial}`,
+    // The title IS the operation id. The runner looks it up before spawning,
+    // so a retried invocation rejoins the thread it already paid for. The run
+    // id is in there because without it a second run of the same case would
+    // adopt the first run's finished thread and measure nothing.
+    title: `eval ${runId} ${value.name} trial ${trial}`,
     visibility: "hidden",
     providerId: orchestrator.provider,
     model: orchestrator.model,
@@ -220,7 +226,7 @@ export function dryRun(options: DryRunOptions): DryRunReport {
         case: value.name,
         trial,
         worktree,
-        spawn: buildSpawnPlan(value, worktree, trial),
+        spawn: buildSpawnPlan(value, worktree, trial, runId),
         answers: value.answers.length,
         assertions: countAssertions(value.assert),
       };

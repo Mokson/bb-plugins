@@ -26,7 +26,7 @@ function loadOne(name: string) {
 }
 
 describe("an eval_run row is written with status dry-run", () => {
-  it("records the id, tag, stack sha and the selected case names", () => {
+  it("records the id, tag, stack sha and the selected case names", async () => {
     const store = new EvalStore(temp.openDatabase());
     const { loaded } = loadOne("recorded");
     const report = dryRun({
@@ -50,7 +50,7 @@ describe("an eval_run row is written with status dry-run", () => {
     expect(report.stackSha).toBe(row!.stack_sha);
   });
 
-  it("serves that row back through the run views and `eval show`", () => {
+  it("serves that row back through the run views and `eval show`", async () => {
     const database = temp.openDatabase();
     const store = new EvalStore(database);
     const { loaded, dir } = loadOne("served");
@@ -68,15 +68,15 @@ describe("an eval_run row is written with status dry-run", () => {
     // No trials ran, so no case results exist. An empty list, never a fake row.
     expect(view.results).toEqual([]);
 
-    const shown = runEvalCommand(deps, ["show", "run-served"], undefined);
+    const shown = await runEvalCommand(deps, ["show", "run-served"], undefined);
     expect(shown.exitCode).toBe(0);
     expect(shown.stdout).toContain("status dry-run");
     expect(shown.stdout).toContain("no case results recorded");
   });
 
-  it("answers an unknown run id with exit 1 rather than an empty run", () => {
+  it("answers an unknown run id with exit 1 rather than an empty run", async () => {
     const store = new EvalStore(temp.openDatabase());
-    const result = runEvalCommand(
+    const result = await runEvalCommand(
       { store, casesDir: fixture.root },
       ["show", "run-nope"],
       undefined,

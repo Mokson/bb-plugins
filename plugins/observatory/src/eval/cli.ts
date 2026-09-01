@@ -2,11 +2,31 @@
 //
 // One subcommand word after `eval`, so the dispatch in `server.ts` stays a
 // single branch and every eval concern lives here. Exit codes are the
-// contract: 0 valid, 1 an invalid case or a bad flag, 2 a surface that part 2
-// still owns. `--gate` will read exit codes, so they cannot be decorative.
+// contract, and `--gate` reads them, so they cannot be decorative:
+//
+//   0  valid, or a gate that passed (or warned without `--strict`)
+//   1  an invalid case, a bad flag, a failed gate, a strict warning
+//   2  no baseline to compare against, or a surface the host did not wire
+//
+// The read commands take `EvalDeps` alone. The three that spend money take
+// `EvalLiveDeps` as well, and refuse rather than improvise when the host did
+// not supply it — a `eval run` that quietly did nothing would be worse than
+// one that says it cannot run.
 import type { LoadedCase } from "./cases.js";
 import { selectCases } from "./cases.js";
+import type { EvalLiveDeps } from "./deps.js";
 import { dryRun, formatDryRun, worktreeRootFor } from "./dryrun.js";
+import { promoteBaseline } from "./baseline.js";
+import { gateExitCode } from "./gate.js";
+import { artifactsRootFor } from "./harvest.js";
+import { formatLiveRun, liveRun } from "./live.js";
+import { stopOwnedThread } from "./runner.js";
+import {
+  DEFAULT_JUDGE_FIXTURES_DIR,
+  loadJudgeFixtures,
+  runJudge,
+  scoreJudge,
+} from "./assert.js";
 import type { EvalDeps } from "./views.js";
 import { casesView, loadCases, runView, runsView } from "./views.js";
 
@@ -22,9 +42,9 @@ export const EVAL_CLI_COMMANDS = [
   {
     name: "eval",
     summary:
-      "Deliver-stack regression cases: list them, validate them, and dry-run their provisioning.",
+      "Deliver-stack regression cases: list them, run them, gate a run against its baseline.",
     usage:
-      "bb observatory eval list | validate [--case <name>] | show <runId> | run [--tag <t>] [--case <name>] --dry-run [--keep]",
+      "bb observatory eval list | validate | run [--tag <t>] [--case <n>] [--trials <n>] [--gate] [--strict] [--dry-run] | cancel <runId> | runs | show <runId> | baseline promote <runId> | baseline show | judge-validate",
   },
 ] as const;
 
@@ -103,20 +123,30 @@ function show(deps: EvalDeps, runId: string | undefined): CliResult {
         result.threadId ?? "-"
       }`,
     );
+    if (result.artifactsDir !== null) lines.push(`  artifacts ${result.artifactsDir}`);
   }
   return { exitCode: 0, stdout: `${lines.join("\n")}\n` };
 }
 
-function run(
+function runs(deps: EvalDeps, argv: readonly string[]): CliResult {
+  const raw = Number(flagValue(argv, "limit") ?? "20");
+  const limit = Number.isFinite(raw) && raw > 0 ? Math.min(Math.floor(raw), 500) : 20;
+  const view = runsView(deps, limit);
+  if (view.runs.length === 0) return { exitCode: 0, stdout: "no runs recorded\n" };
+  const lines = view.runs.map(
+    (run) =>
+      `${run.id}  ${(run.status ?? "?").padEnd(9)}  gate ${(run.gate ?? "-").padEnd(8)}  ${
+        run.cases.length
+      } cases  tag ${run.tag ?? "-"}`,
+  );
+  return { exitCode: 0, stdout: `${lines.join("\n")}\n` };
+}
+
+function dryRunCommand(
   deps: EvalDeps,
   argv: readonly string[],
   databasePath: string | undefined,
 ): CliResult {
-  if (!hasFlag(argv, "dry-run")) {
-    // Exit 2, not 1: "not built yet" must be distinguishable from "your cases
-    // are broken" by anything scripting this command.
-    return { exitCode: 2, stderr: "runner arrives in part 2\n" };
-  }
   const filter = filterFrom(argv);
   const selected = selectCases(loadCases(deps), filter);
   if (selected.length === 0) {
@@ -129,34 +159,202 @@ function run(
     keep: hasFlag(argv, "keep"),
     worktreeRoot: worktreeRootFor(databasePath),
   });
-  const broken =
-    report.invalid.length > 0 || report.plans.some((plan) => plan.error !== null);
+  const broken = report.invalid.length > 0 || report.plans.some((plan) => plan.error !== null);
+  return { exitCode: broken ? 1 : 0, stdout: `${formatDryRun(report)}\n` };
+}
+
+async function run(
+  deps: EvalDeps,
+  live: EvalLiveDeps | undefined,
+  argv: readonly string[],
+  databasePath: string | undefined,
+): Promise<CliResult> {
+  if (hasFlag(argv, "dry-run")) return dryRunCommand(deps, argv, databasePath);
+  if (live === undefined) {
+    return { exitCode: 2, stderr: "eval run needs the plugin host; use --dry-run\n" };
+  }
+  const filter = filterFrom(argv);
+  const selected = selectCases(loadCases(deps), filter);
+  if (selected.length === 0) {
+    return { exitCode: 1, stderr: `no case matched in ${deps.casesDir}\n` };
+  }
+  const trialsRaw = flagValue(argv, "trials");
+  const trials = trialsRaw === undefined ? undefined : Number(trialsRaw);
+  if (trials !== undefined && (!Number.isInteger(trials) || trials < 1)) {
+    return { exitCode: 1, stderr: `--trials must be a positive integer, got "${trialsRaw}"\n` };
+  }
+  const report = await liveRun({
+    bb: live.bb,
+    db: live.db,
+    store: deps.store,
+    selected,
+    worktreeRoot: worktreeRootFor(databasePath),
+    artifactsRoot: artifactsRootFor(databasePath),
+    ...(filter.tag === undefined ? {} : { tag: filter.tag }),
+    ...(trials === undefined ? {} : { trials }),
+    gate: hasFlag(argv, "gate"),
+    ...(live.checkLedgerScript === undefined
+      ? {}
+      : { checkLedgerScript: live.checkLedgerScript }),
+  });
+  const stdout = `${formatLiveRun(report)}\n`;
+  if (report.gate !== null) {
+    return { exitCode: gateExitCode(report.gate.verdict, hasFlag(argv, "strict")), stdout };
+  }
+  const failed =
+    report.invalid.length > 0 ||
+    report.outcomes.some((outcome) => outcome.result.status !== "pass");
+  return { exitCode: failed ? 1 : 0, stdout };
+}
+
+async function cancel(
+  deps: EvalDeps,
+  live: EvalLiveDeps | undefined,
+  runId: string | undefined,
+): Promise<CliResult> {
+  if (runId === undefined) {
+    return { exitCode: 1, stderr: "usage: bb observatory eval cancel <runId>\n" };
+  }
+  if (live === undefined) return { exitCode: 2, stderr: "eval cancel needs the plugin host\n" };
+  if (deps.store.run(runId) === null) {
+    return { exitCode: 1, stderr: `no such run: ${runId}\n` };
+  }
+  // The status moves first: an in-flight runner reads it between sweeps, so
+  // even a thread this process fails to stop is abandoned by its own loop.
+  deps.store.cancelRun(runId, new Date().toISOString());
+  const lines: string[] = [`run ${runId} cancelled`];
+  for (const threadId of deps.store.runThreadIds(runId)) {
+    try {
+      await stopOwnedThread(live.bb, deps.store, threadId);
+      lines.push(`  stopped ${threadId}`);
+    } catch (error) {
+      lines.push(
+        `  could not stop ${threadId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+  return { exitCode: 0, stdout: `${lines.join("\n")}\n` };
+}
+
+function baseline(deps: EvalDeps, argv: readonly string[]): CliResult {
+  const [action, runId] = argv;
+  if (action === "show") {
+    const rows = [...deps.store.baselines().values()];
+    if (rows.length === 0) return { exitCode: 0, stdout: "no baselines promoted\n" };
+    const lines = rows
+      .sort((left, right) => left.case.localeCompare(right.case))
+      .map(
+        (row) =>
+          `${row.case}  from ${row.run_id ?? "-"}  at ${row.promoted_at ?? "-"}  ${
+            row.metrics_json ?? "{}"
+          }`,
+      );
+    return { exitCode: 0, stdout: `${lines.join("\n")}\n` };
+  }
+  if (action !== "promote") {
+    return {
+      exitCode: 1,
+      stderr: "usage: bb observatory eval baseline <promote <runId> | show>\n",
+    };
+  }
+  if (runId === undefined) {
+    return { exitCode: 1, stderr: "usage: bb observatory eval baseline promote <runId>\n" };
+  }
+  const report = promoteBaseline({
+    store: deps.store,
+    runId,
+    promotedAt: new Date().toISOString(),
+  });
+  const lines = [
+    ...report.promoted.map((name) => `promoted ${name}`),
+    ...report.skipped.map((entry) => `skipped  ${entry.case}: ${entry.reason}`),
+  ];
   return {
-    exitCode: broken ? 1 : 0,
-    stdout: `${formatDryRun(report)}\n`,
+    exitCode: report.promoted.length === 0 ? 1 : 0,
+    stdout: `${lines.join("\n")}\n`,
   };
 }
 
+async function judgeValidate(
+  deps: EvalDeps,
+  live: EvalLiveDeps | undefined,
+  argv: readonly string[],
+): Promise<CliResult> {
+  if (live === undefined) {
+    return { exitCode: 2, stderr: "eval judge-validate needs the plugin host\n" };
+  }
+  const model = flagValue(argv, "model");
+  if (model === undefined) {
+    return {
+      exitCode: 1,
+      stderr: "usage: bb observatory eval judge-validate --model <provider/model> [--project <id>]\n",
+    };
+  }
+  const projectId = flagValue(argv, "project") ?? live.defaultProjectId;
+  if (projectId === undefined) {
+    return { exitCode: 1, stderr: "judge-validate needs --project <id>\n" };
+  }
+  const dir = live.judgeFixturesDir ?? DEFAULT_JUDGE_FIXTURES_DIR;
+  const { fixtures, skipped } = loadJudgeFixtures(dir);
+  if (fixtures.length === 0) {
+    return { exitCode: 1, stderr: `no labelled fixtures in ${dir}\n` };
+  }
+  const rows: Array<{ name: string; expected: "pass" | "fail"; got: "pass" | "fail" }> = [];
+  for (const fixture of fixtures) {
+    const verdict = await runJudge({
+      bb: live.bb,
+      projectId,
+      judge: { rubric: fixture.rubric, model },
+      // The fixture carries its evidence inline, so the rubric is applied to
+      // the same bytes on every machine.
+      artifactsDir: "",
+      inlineEvidence: fixture.evidence,
+    });
+    rows.push({ name: fixture.name, expected: fixture.label, got: verdict.verdict });
+  }
+  const report = scoreJudge(rows);
+  const lines = report.rows.map(
+    (row) => `${row.correct ? "ok  " : "MISS"} ${row.name}: expected ${row.expected}, got ${row.got}`,
+  );
+  for (const name of skipped) lines.push(`skip ${name}: not a labelled fixture`);
+  lines.push(
+    `TPR ${report.tpr.toFixed(2)}  TNR ${report.tnr.toFixed(2)}  threshold ${report.threshold}`,
+    report.trusted
+      ? "judge is trustworthy; its verdicts count"
+      : "judge is ADVISORY only until both rates reach the threshold",
+  );
+  // Advisory, so a weak judge reports rather than fails the command.
+  return { exitCode: 0, stdout: `${lines.join("\n")}\n` };
+}
+
 const USAGE = [
-  "Usage: bb observatory eval <list|validate|show|run>",
+  "Usage: bb observatory eval <list|validate|run|cancel|runs|show|baseline|judge-validate>",
   "",
-  "  list                  Every case file, its tags, validity and last result",
-  "  validate [--case <n>] Load and schema-check cases; exit 1 on any failure",
-  "  show <runId>          One run and its per-case results",
-  "  run --dry-run         Provision worktrees, print the plan, spawn nothing",
-  "       [--tag <t>] [--case <n>] [--keep]",
+  "  list                   Every case file, its tags, validity and last result",
+  "  validate [--case <n>]  Load and schema-check cases; exit 1 on any failure",
+  "  run                    Spawn one hidden thread per trial and assert",
+  "       [--tag <t>] [--case <n>] [--trials <n>] [--gate] [--strict]",
+  "       [--dry-run [--keep]]   Provision and print the plan, spawn nothing",
+  "  cancel <runId>         Stop the threads this plugin spawned for a run",
+  "  runs [--limit <n>]     Recorded runs, newest first",
+  "  show <runId>           One run and its per-case results",
+  "  baseline promote <runId> | baseline show",
+  "  judge-validate --model <provider/model> [--project <id>]",
 ].join("\n");
 
 /**
  * Dispatch `eval <sub>`. `argv` excludes the `observatory` and `eval` words.
- * `databasePath` names the sqlite file, which is how the worktree root is
- * derived; tests pass their own root through `deps`.
+ * `databasePath` names the sqlite file, which is how the worktree and
+ * artifacts roots are derived; tests pass their own roots through `deps`.
  */
-export function runEvalCommand(
+export async function runEvalCommand(
   deps: EvalDeps,
   argv: readonly string[],
   databasePath: string | undefined,
-): CliResult {
+  live?: EvalLiveDeps,
+): Promise<CliResult> {
   const [sub, ...rest] = argv;
   try {
     if (sub === "list") {
@@ -164,7 +362,11 @@ export function runEvalCommand(
     }
     if (sub === "validate") return validate(deps, rest);
     if (sub === "show") return show(deps, rest[0]);
-    if (sub === "run") return run(deps, rest, databasePath);
+    if (sub === "runs") return runs(deps, rest);
+    if (sub === "run") return await run(deps, live, rest, databasePath);
+    if (sub === "cancel") return await cancel(deps, live, rest[0]);
+    if (sub === "baseline") return baseline(deps, rest);
+    if (sub === "judge-validate") return await judgeValidate(deps, live, rest);
     const helpRequested = sub === undefined || sub === "--help" || sub === "-h";
     return helpRequested
       ? { exitCode: 0, stdout: `${USAGE}\n` }

@@ -109,6 +109,61 @@ export class EvalStore {
     return new Map(rows.map((row) => [row.case, row]));
   }
 
+  /** Move a run to its final state without rewriting the columns it froze. */
+  finishRun(runId: string, finishedAt: string, status: string, gate: string | null): void {
+    this.db
+      .prepare("UPDATE eval_run SET finished_at = ?, status = ?, gate = ? WHERE id = ?")
+      .run(finishedAt, status, gate, runId);
+  }
+
+  /** Mark a run cancelled. An in-flight runner reads this between sweeps. */
+  cancelRun(runId: string, at: string): void {
+    this.db
+      .prepare(
+        "UPDATE eval_run SET status = 'cancelled', finished_at = ? WHERE id = ?",
+      )
+      .run(at, runId);
+  }
+
+  /**
+   * Whether this plugin spawned the thread. The stop guard reads this rather
+   * than a process-local set, so a cancel from a later process is bound by
+   * the same ownership record. PRODUCT.md invariant 1.
+   */
+  ownsThread(threadId: string): boolean {
+    const row = this.db
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM eval_case_result WHERE thread_id = ?",
+      )
+      .get(threadId);
+    return (row?.n ?? 0) > 0;
+  }
+
+  /** Every thread a run spawned, in case order. `eval cancel` stops these. */
+  runThreadIds(runId: string): string[] {
+    return this.db
+      .prepare<[string], { thread_id: string }>(
+        `SELECT thread_id FROM eval_case_result
+          WHERE run_id = ? AND thread_id IS NOT NULL ORDER BY "case", trial`,
+      )
+      .all(runId)
+      .map((row) => row.thread_id);
+  }
+
+  /**
+   * The ONLY write to `eval_baseline` in the plugin. It is named for its
+   * caller so that a grep for baseline writes lands on `baseline.ts` and
+   * nowhere else.
+   */
+  promoteBaselineRow(row: EvalBaselineRow): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO eval_baseline ("case", run_id, metrics_json, promoted_at)
+         VALUES (@case, @run_id, @metrics_json, @promoted_at)`,
+      )
+      .run(row);
+  }
+
   baselines(): Map<string, EvalBaselineRow> {
     const rows = this.db
       .prepare<[], EvalBaselineRow>(
