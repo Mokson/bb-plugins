@@ -42,17 +42,7 @@ export function casesView(deps: EvalDeps, cases: readonly LoadedCase[]): EvalCas
   };
 }
 
-/** A stored `cases_json` that no longer parses is shown as empty, not thrown. */
-function parseCases(json: string | null): string[] {
-  if (json === null) return [];
-  try {
-    const value: unknown = JSON.parse(json);
-    return Array.isArray(value) ? value.filter((name) => typeof name === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
+/** Stored JSON that no longer parses reads as absent, never as a throw. */
 function parseJson(json: string | null): unknown {
   if (json === null) return null;
   try {
@@ -60,6 +50,11 @@ function parseJson(json: string | null): unknown {
   } catch {
     return null;
   }
+}
+
+function parseCases(json: string | null): string[] {
+  const value = parseJson(json);
+  return Array.isArray(value) ? value.filter((name) => typeof name === "string") : [];
 }
 
 export function runSummary(row: EvalRunRow): EvalRunSummary {

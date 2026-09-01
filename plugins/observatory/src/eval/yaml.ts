@@ -27,12 +27,17 @@ interface Line {
   number: number;
 }
 
-const UNSUPPORTED: ReadonlyArray<{ probe: RegExp; why: string }> = [
+/**
+ * Probes that are unambiguous at the START of a line. The rest — anchors,
+ * aliases, tags, block scalars — are recognised in `parseScalar` instead,
+ * where the value is already separated from its key and from any quoting.
+ * Probing the whole line for them rejected valid input: an invocation like
+ * `text: "fix the *rounding* bug"` looks exactly like an alias to a regex
+ * that cannot see quotes.
+ */
+const UNSUPPORTED_LINE: ReadonlyArray<{ probe: RegExp; why: string }> = [
   { probe: /^%/, why: "directives are not supported" },
   { probe: /^---|^\.\.\./, why: "document markers are not supported" },
-  { probe: /(^|\s)[&*][A-Za-z0-9_-]+/, why: "anchors and aliases are not supported" },
-  { probe: /(^|\s)!!?[A-Za-z]/, why: "tags are not supported" },
-  { probe: /:\s*[|>][-+0-9]*\s*$/, why: "block scalars are not supported" },
 ];
 
 function scan(source: string): Line[] {
@@ -49,7 +54,7 @@ function scan(source: string): Line[] {
       throw new YamlError("tabs may not indent", number);
     }
     const body = text.trimStart();
-    for (const { probe, why } of UNSUPPORTED) {
+    for (const { probe, why } of UNSUPPORTED_LINE) {
       if (probe.test(body)) throw new YamlError(why, number);
     }
     lines.push({ indent, text: body, number });
@@ -212,12 +217,12 @@ function parseMapping(
       throw new YamlError(`key "${entry.key}" has no value`, line.number);
     }
     // A block sequence may sit at the parent's own indent, which is legal
-    // YAML and reads better for long assertion lists.
-    const childIndent = next.indent === indent ? indent : next.indent;
+    // YAML and reads better for long assertion lists. Anything ELSE at the
+    // parent's indent is the next sibling key, so this key has no value.
     if (next.indent === indent && !next.text.startsWith("- ")) {
       throw new YamlError(`key "${entry.key}" has no value`, line.number);
     }
-    const [value, after] = parseBlock(lines, i + 1, childIndent);
+    const [value, after] = parseBlock(lines, i + 1, next.indent);
     map[entry.key] = value;
     i = after;
   }
@@ -238,9 +243,23 @@ function unquote(text: string): string {
   return text;
 }
 
+/**
+ * YAML constructs this subset refuses. Checked HERE rather than on the whole
+ * line, because only here is the text known to be an unquoted value: the same
+ * characters inside a quoted scalar are data, not syntax.
+ */
+const UNSUPPORTED_VALUE: ReadonlyArray<{ probe: RegExp; why: string }> = [
+  { probe: /^[&*][A-Za-z0-9_-]/, why: "anchors and aliases are not supported" },
+  { probe: /^!!?[A-Za-z]/, why: "tags are not supported" },
+  { probe: /^[|>][-+0-9]*$/, why: "block scalars are not supported" },
+];
+
 function parseScalar(text: string, line: number): unknown {
   if (text.startsWith("[")) return parseFlow(text, line, "]");
   if (text.startsWith("{")) return parseFlow(text, line, "}");
+  for (const { probe, why } of UNSUPPORTED_VALUE) {
+    if (probe.test(text)) throw new YamlError(why, line);
+  }
   if (text.startsWith('"') || text.startsWith("'")) {
     if (!/^(".*"|'.*')$/s.test(text)) {
       throw new YamlError("unterminated quoted scalar", line);

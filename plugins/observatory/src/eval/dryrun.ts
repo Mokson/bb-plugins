@@ -93,7 +93,7 @@ export const execGit: GitRunner = (cwd, args) =>
  * outlive a reboot's tmp sweep, and a half-swept worktree is a confusing
  * failure rather than a clear one.
  */
-export function worktreeRootFor(databasePath: string | undefined): string {
+export function worktreeRootFor(databasePath?: string): string {
   const usable =
     databasePath !== undefined &&
     databasePath !== "" &&
@@ -194,7 +194,7 @@ export function dryRun(options: DryRunOptions): DryRunReport {
   const now = (options.now ?? (() => new Date()))();
   const startedAt = now.toISOString();
   const runId = options.runId ?? makeRunId(now);
-  const root = options.worktreeRoot ?? worktreeRootFor(undefined);
+  const root = options.worktreeRoot ?? worktreeRootFor();
 
   const invalid = options.selected
     .filter((entry) => entry.value === null)

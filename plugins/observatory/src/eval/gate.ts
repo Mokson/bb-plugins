@@ -4,8 +4,7 @@
 // `--gate` turns a run into a pass/fail verdict on the current skill stack
 // (PRODUCT.md done-check c12). A gate never mutates a baseline: PRODUCT.md
 // invariant 5 reserves that for `eval baseline promote`.
-import type { EvalCaseResultRow, EvalRunRow } from "./store.js";
-import type { EvalBaselineRow } from "./store.js";
+import type { EvalBaselineRow, EvalCaseResultRow, EvalRunRow } from "./store.js";
 import { NotImplementedError } from "./runner.js";
 
 export type GateVerdict = "pass" | "fail" | "not-run";

@@ -49,15 +49,18 @@ function filterFrom(argv: readonly string[]): { tag?: string; case?: string } {
 function formatList(deps: EvalDeps, cases: readonly LoadedCase[]): string {
   const view = casesView(deps, cases);
   if (view.cases.length === 0) return `no cases in ${deps.casesDir}`;
-  const width = Math.max(...view.cases.map((entry) => entry.name.length));
+  const tagsOf = (entry: (typeof view.cases)[number]) =>
+    entry.tags.length === 0 ? "-" : entry.tags.join(",");
+  const nameWidth = Math.max(...view.cases.map((entry) => entry.name.length));
+  const tagWidth = Math.max(...view.cases.map((entry) => tagsOf(entry).length));
   return view.cases
     .map((entry) => {
       const last = entry.lastResult;
       const seen = last === null ? "never run" : `${last.status ?? "?"} in ${last.runId}`;
-      const tags = entry.tags.length === 0 ? "-" : entry.tags.join(",");
-      return entry.valid
-        ? `${entry.name.padEnd(width)}  ok       ${tags}  ${seen}`
-        : `${entry.name.padEnd(width)}  INVALID  ${tags}  ${entry.error ?? ""}`;
+      const lead = `${entry.name.padEnd(nameWidth)}  ${
+        entry.valid ? "ok     " : "INVALID"
+      }  ${tagsOf(entry).padEnd(tagWidth)}`;
+      return entry.valid ? `${lead}  ${seen}` : `${lead}  ${entry.error ?? ""}`;
     })
     .join("\n");
 }
@@ -104,7 +107,11 @@ function show(deps: EvalDeps, runId: string | undefined): CliResult {
   return { exitCode: 0, stdout: `${lines.join("\n")}\n` };
 }
 
-function run(deps: EvalDeps, argv: readonly string[], worktreeRoot: string): CliResult {
+function run(
+  deps: EvalDeps,
+  argv: readonly string[],
+  databasePath: string | undefined,
+): CliResult {
   if (!hasFlag(argv, "dry-run")) {
     // Exit 2, not 1: "not built yet" must be distinguishable from "your cases
     // are broken" by anything scripting this command.
@@ -120,7 +127,7 @@ function run(deps: EvalDeps, argv: readonly string[], worktreeRoot: string): Cli
     selected,
     ...(filter.tag === undefined ? {} : { tag: filter.tag }),
     keep: hasFlag(argv, "keep"),
-    worktreeRoot,
+    worktreeRoot: worktreeRootFor(databasePath),
   });
   const broken =
     report.invalid.length > 0 || report.plans.some((plan) => plan.error !== null);
@@ -151,14 +158,13 @@ export function runEvalCommand(
   databasePath: string | undefined,
 ): CliResult {
   const [sub, ...rest] = argv;
-  const worktreeRoot = worktreeRootFor(databasePath);
   try {
     if (sub === "list") {
       return { exitCode: 0, stdout: `${formatList(deps, loadCases(deps))}\n` };
     }
     if (sub === "validate") return validate(deps, rest);
     if (sub === "show") return show(deps, rest[0]);
-    if (sub === "run") return run(deps, rest, worktreeRoot);
+    if (sub === "run") return run(deps, rest, databasePath);
     const helpRequested = sub === undefined || sub === "--help" || sub === "-h";
     return helpRequested
       ? { exitCode: 0, stdout: `${USAGE}\n` }

@@ -62,4 +62,33 @@ describe("an unknown key fails load with its path", () => {
     expect(result.value).toBeNull();
     expect(result.error).toContain("duplicate key");
   });
+
+  // The refusals above must not fire on data. An invocation is free text, and
+  // `*`, `!`, `#` and `|` are ordinary characters in an English sentence — a
+  // loader that read them as YAML syntax would refuse valid cases.
+  it("treats YAML sigils inside a quoted scalar as data, not syntax", () => {
+    const yaml = caseYaml("sigils", fixture).replace(
+      '  text: "/deliver tracker:none do the thing"',
+      '  text: "/deliver tracker:none fix the *rounding* bug! see #12 | urgent"',
+    );
+    const result = load("sigils", yaml);
+    expect(result.error).toBeNull();
+    expect(result.value?.invocation.text).toBe(
+      "/deliver tracker:none fix the *rounding* bug! see #12 | urgent",
+    );
+  });
+
+  it("still refuses an actual alias or block scalar in value position", () => {
+    const alias = caseYaml("alias", fixture).replace(
+      '  text: "/deliver tracker:none do the thing"',
+      "  text: *shared",
+    );
+    expect(load("alias", alias).error).toContain("aliases are not supported");
+
+    const block = caseYaml("block", fixture).replace(
+      '  text: "/deliver tracker:none do the thing"',
+      "  text: |",
+    );
+    expect(load("block", block).error).toContain("block scalars are not supported");
+  });
 });
