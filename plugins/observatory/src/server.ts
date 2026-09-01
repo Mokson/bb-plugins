@@ -19,6 +19,14 @@ import { EventStore, type CoverageView } from "./core/store-events.js";
 import { createIngest, type Ingest, type IngestCounters } from "./core/ingest.js";
 import type { LogTurnSource, PriceTurnFn } from "./core/join.js";
 import { LocalHostClient } from "./core/host-client.js";
+import { LogStore } from "./core/store-logs.js";
+import { priceTurn } from "./core/pricing.js";
+import { loadCatalog, type PricingCatalog } from "./core/catalog.js";
+import {
+  createLogIndexer,
+  defaultLogRoots,
+  type LogIndexer,
+} from "./core/indexer.js";
 import {
   CORE_MODULE_ID,
   ModuleRegistry,
@@ -165,23 +173,30 @@ export interface CoreHandle {
  * turns, they just carry no cache split and no price. Loading it lazily is
  * what lets core come up on a machine with no provider logs at all, and what
  * keeps this seam honest about the one thing it cannot invent.
- *
- * MERGE NOTE: the four modules below are loaded through an unanalyzable
- * specifier ONLY because the sibling seat that owns them has not landed yet —
- * a static import of a missing file would break typecheck, the bundle and
- * every existing test. Once `store-logs`, `pricing`, `catalog` and `indexer`
- * exist, replace `loadLogStack`'s body with plain static imports: the bundler
- * inlines them and the runtime URL below will no longer resolve.
  */
 export interface LogStack {
   logs: LogTurnSource;
   priceTurn: PriceTurnFn;
-  catalog: unknown;
-  indexer: {
-    runOnce(args: { maxBytes?: number }): Promise<unknown>;
-    defaultRoots(): string[];
+  catalog: PricingCatalog;
+  indexer: LogIndexer;
+  refreshCatalog(): Promise<PricingCatalog>;
+}
+
+/**
+ * `store-logs` rows and the `join` ports describe the same table from two
+ * sides, so the two shapes are reconciled here rather than in either module.
+ * `provider_thread_id` is nullable in the row type and non-null in the port:
+ * the query filters on an exact non-null id, so the queried value is the
+ * exact value any returned row carries.
+ */
+function toLogTurnSource(store: LogStore): LogTurnSource {
+  return {
+    listLogTurns: (query) =>
+      store.listLogTurns(query).map((row) => ({
+        ...row,
+        provider_thread_id: row.provider_thread_id ?? query.providerThreadId,
+      })),
   };
-  refreshCatalog(): Promise<unknown>;
 }
 
 async function loadLogStack(
@@ -190,34 +205,45 @@ async function loadLogStack(
   options: { refreshHours: number; roots: readonly string[] },
 ): Promise<LogStack | null> {
   try {
-    const base = import.meta.url;
-    const [storeLogs, pricing, catalogModule, indexerModule] =
-      await Promise.all([
-        import(new URL("./core/store-logs.js", base).href),
-        import(new URL("./core/pricing.js", base).href),
-        import(new URL("./core/catalog.js", base).href),
-        import(new URL("./core/indexer.js", base).href),
-      ]);
-    const logs = new storeLogs.LogStore(db) as LogTurnSource;
-    const loadCatalog = catalogModule.loadCatalog as (
-      db: unknown,
-      args: { refreshHours: number },
-    ) => Promise<unknown>;
-    const catalog = await loadCatalog(db, {
+    const store = new LogStore(db);
+    let catalog = await loadCatalog(db, {
       refreshHours: options.refreshHours,
     });
-    const indexer = indexerModule.createLogIndexer({
-      store: logs,
+    /**
+     * The port hands pricing a catalog it types as `unknown`. The loaded
+     * catalog is read from this closure instead, so a refresh takes effect
+     * without re-threading it through every caller.
+     */
+    const priceTurnPort: PriceTurnFn = (input) =>
+      priceTurn(
+        {
+          provider: input.provider,
+          model: input.model,
+          inputTokens: input.inputTokens ?? 0,
+          cacheReadTokens: input.cacheReadTokens,
+          cacheWriteTokens: input.cacheWriteTokens,
+          cachedInputTokens: input.cachedInputTokens ?? 0,
+          outputTokens: input.outputTokens ?? 0,
+          reasoningTokens: input.reasoningTokens ?? 0,
+          loggedCostUsd: input.loggedCostUsd,
+        },
+        catalog,
+      );
+    const indexer = createLogIndexer({
+      store,
       host: new LocalHostClient(),
-      roots: options.roots,
+      roots: [...options.roots],
       log: bb.log,
-    }) as LogStack["indexer"];
+    });
     return {
-      logs,
-      priceTurn: pricing.priceTurn as PriceTurnFn,
+      logs: toLogTurnSource(store),
+      priceTurn: priceTurnPort,
       catalog,
       indexer,
-      refreshCatalog: () => loadCatalog(db, { refreshHours: 0 }),
+      refreshCatalog: async () => {
+        catalog = await loadCatalog(db, { refreshHours: 0 });
+        return catalog;
+      },
     };
   } catch (error) {
     bb.log.warn(
@@ -252,13 +278,11 @@ export function createCoreModule(
       const events = new EventStore(db);
       const values = await settings();
       const extraRoots = parseRoots(values["roots_extra"]);
+      const roots = [...defaultLogRoots(), ...extraRoots];
       const stack = await loadLogStack(bb, db, {
         refreshHours: parseHours(values["pricing_refreshHours"], 24),
-        roots: extraRoots,
+        roots,
       });
-      const roots = stack
-        ? [...stack.indexer.defaultRoots(), ...extraRoots]
-        : extraRoots;
 
       const ingest = createIngest({
         bb,
