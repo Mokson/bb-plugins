@@ -103,6 +103,13 @@ export const WATCH_SETTING_DESCRIPTORS = {
     label: "Watch: retrying provider errors within 10 minutes",
     default: "3",
   },
+  "watch_stallBanner_enabled": {
+    type: "boolean",
+    label: "Watch: stalled banner above the composer",
+    description:
+      "The one-line stalled notice with its open-trajectory link above the compose input.",
+    default: true,
+  },
   [PREMISE_REMINDER_KEY]: {
     type: "boolean",
     label: "Watch: post-compaction premise reminder",
