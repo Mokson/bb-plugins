@@ -65,6 +65,53 @@ export function resolveFilters(
   };
 }
 
+/**
+ * The filters written back over a query string, every other parameter kept.
+ *
+ * `resolveFilters` already gave the URL precedence, but nothing ever wrote the
+ * URL: selecting `1d` left `?range=7d` in the address bar, so the link a
+ * reader copied showed a different slice than the one on screen, and a reload
+ * snapped back. Round-tripping is what makes "the URL wins" (PRODUCT invariant
+ * 33) true rather than merely stated.
+ *
+ * A pure function over a search string, so the rule is testable without a
+ * browser.
+ */
+export function filterSearch(filters: Filters, current: string): string {
+  const params = new URLSearchParams(current);
+  params.set("range", filters.range);
+  params.set("group", filters.group);
+  // An empty filter means "every value", and `?provider=` reads as a filter
+  // that is on and matching nothing. Absent is the honest encoding.
+  for (const key of ["host", "provider"] as const) {
+    if (filters[key] === "") params.delete(key);
+    else params.set(key, filters[key]);
+  }
+  return params.toString();
+}
+
+/**
+ * Push the filters into the address bar without touching panel history.
+ *
+ * `replaceState`, not a navigation: the SDK's `toPluginPanel` carries a
+ * subPath and no query, so a filter change cannot push a new address without
+ * losing the panel's own history.
+ */
+export function syncFilterSearch(filters: Filters): void {
+  if (typeof window === "undefined") return;
+  try {
+    const search = filterSearch(filters, window.location.search);
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}?${search}${window.location.hash}`,
+    );
+  } catch {
+    // A sandboxed frame can refuse `replaceState`. The page still works from
+    // its in-memory state; only the copyable link is lost.
+  }
+}
+
 /** Read the persisted filters. A corrupt value is discarded, never thrown. */
 export function readStoredFilters(): Partial<Filters> | null {
   try {

@@ -36,15 +36,28 @@ export function formatUsd(
   );
 }
 
-/** A token count. Grouped, never abbreviated: 1.2M hides a 200k difference. */
+/** The marker appended to a total some of whose parts are unknown. */
+export const PARTIAL_MARK = "+";
+
+/**
+ * A token count. Grouped, never abbreviated: 1.2M hides a 200k difference.
+ *
+ * `partial` marks an aggregate summed over the rows that HAVE the measurement
+ * while at least one row under it does not: `353,000+` is a floor and reads as
+ * one. Bare, it would state a total nothing established; `--` (the old
+ * behaviour) threw away every proven read because one descendant lacked a
+ * split.
+ */
 export function formatTokens(
   value: number | null | undefined,
   estimated = false,
+  partial = false,
 ): string {
   if (value === null || value === undefined || !Number.isFinite(value)) {
     return UNKNOWN;
   }
-  return marked(Math.round(value).toLocaleString("en-US"), estimated);
+  const text = Math.round(value).toLocaleString("en-US");
+  return marked(partial ? `${text}${PARTIAL_MARK}` : text, estimated);
 }
 
 /** A plain count. Never estimated, so it takes no mark. */

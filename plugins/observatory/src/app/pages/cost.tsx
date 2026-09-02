@@ -4,7 +4,7 @@
 // returns already flattened and ordered, so folding is the only thing this
 // file decides about shape; the model and day tabs reuse the same table with
 // every row at depth 0 and nothing to fold.
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -25,6 +25,7 @@ import {
   overviewInput,
   readStoredFilters,
   resolveFilters,
+  syncFilterSearch,
   writeStoredFilters,
   type Filters,
 } from "@/lib/filters";
@@ -46,9 +47,16 @@ const GROUP_TITLES: Record<SpendGroup, string> = {
 
 /**
  * Filter state resolved once on mount from the URL over storage, then owned
- * by the page. Later edits persist but do not rewrite the URL: the SDK's
- * `toPluginPanel` carries a subPath and no query, so a filter change cannot
- * push a new address without losing the panel's own history.
+ * by the page and mirrored back into both.
+ *
+ * Both writes matter, and for different reasons. The URL write (by
+ * `replaceState`, since `toPluginPanel` carries a subPath and no query) is
+ * what makes the address bar describe the slice on screen and survive a
+ * reload. The storage write on MOUNT is what stops the sticky value from
+ * outranking a deep link elsewhere: a page opened at `?range=7d` used to
+ * leave `1d` in storage, and the cache drilldown - which the SDK navigates to
+ * without a query - then read that stale `1d` back and rendered a different
+ * range than the page it was opened from.
  */
 function useFilters(): [Filters, (next: Filters) => void] {
   const [filters, setFilters] = useState<Filters>(() =>
@@ -60,12 +68,12 @@ function useFilters(): [Filters, (next: Filters) => void] {
         ),
   );
 
-  const update = useCallback((next: Filters) => {
-    setFilters(next);
-    writeStoredFilters(next);
-  }, []);
+  useEffect(() => {
+    writeStoredFilters(filters);
+    syncFilterSearch(filters);
+  }, [filters]);
 
-  return [filters, update];
+  return [filters, setFilters];
 }
 
 function FilterBar({
@@ -96,15 +104,24 @@ function FilterBar({
           ))}
         </select>
       </label>
-      <label className="flex items-center gap-1">
+      {/*
+        Disabled on purpose. `obs_thread` carries no host id, so anything typed
+        here narrowed nothing while looking like it did - a filter that silently
+        ignores you is worse than one that says it is not ready. The field stays
+        on the wire, so enabling it is a one-line change once core writes a host.
+      */}
+      <label
+        className="flex items-center gap-1 opacity-50"
+        title="no host id in the ledger yet"
+      >
         host
         <input
           className={SELECT_CLASS}
           value={filters.host}
           placeholder="all"
-          onChange={(event) =>
-            onChange({ ...filters, host: event.target.value })
-          }
+          disabled
+          readOnly
+          title="no host id in the ledger yet"
         />
       </label>
       <label className="flex items-center gap-1">
@@ -142,11 +159,9 @@ function ExportActions({ filters }: { filters: Filters }) {
             method: "POST",
             headers: { "content-type": "application/json" },
             credentials: "same-origin",
-            body: JSON.stringify({
-              range: filters.range,
-              group: filters.group,
-              format,
-            }),
+            // The export covers the slice on screen, so it carries the same
+            // narrowing fields the overview query does.
+            body: JSON.stringify({ ...overviewInput(filters), format }),
           },
         );
         const payload = (await response.json()) as {
@@ -283,10 +298,20 @@ function OverviewTable({
               onOpen={() => onOpenThread(row.key)}
             />
             <Num>{formatCount(row.turns)}</Num>
-            <Num>{formatTokens(row.inputTokens, row.estimated)}</Num>
-            <Num>{formatTokens(row.cacheReadTokens, row.estimated)}</Num>
-            <Num>{formatTokens(row.cacheWriteTokens, row.estimated)}</Num>
-            <Num>{formatTokens(row.outputTokens, row.estimated)}</Num>
+            {/*
+              `estimated` says the COST was inferred from a price list, not
+              that the tokens were. Token counts come from the provider's own
+              usage numbers, so marking them estimated claimed a measurement
+              was a guess. Only the dollar column takes the mark.
+            */}
+            <Num>{formatTokens(row.inputTokens)}</Num>
+            <Num>
+              {formatTokens(row.cacheReadTokens, false, row.cacheReadPartial)}
+            </Num>
+            <Num>
+              {formatTokens(row.cacheWriteTokens, false, row.cacheWritePartial)}
+            </Num>
+            <Num>{formatTokens(row.outputTokens)}</Num>
             <Num>{formatUsd(row.costUsd, row.estimated)}</Num>
           </tr>
         ))}

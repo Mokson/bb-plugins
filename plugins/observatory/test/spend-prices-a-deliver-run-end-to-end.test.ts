@@ -237,6 +237,11 @@ describe("the ingest commit hook", () => {
       turn_id: "t2",
       started_at: "2026-08-30T10:01:00.000Z",
       cache_read_tokens: 1_000,
+      // The re-sent prefix and the bill for it. A miss costs only what the
+      // turn actually paid full input price for, so a turn with no input
+      // tokens and no cost leaves the estimate nothing to be a share of.
+      input_tokens: 119_000,
+      cost_usd: 0.5,
       model_reported: "test-model",
     });
 

@@ -70,10 +70,16 @@ export function HeroRow({ children }: { children: ReactNode }) {
   );
 }
 
-/** One 11px label above a 24px number. Never more than four in a row. */
+/**
+ * One 11px label above a 24px number. Never more than four in a row.
+ *
+ * The label may wrap onto a second line; the number may not. Keeping the two
+ * in a column means a wrapped label pushes its own number down rather than
+ * shifting the one beside it, so the row stays readable at any width.
+ */
 export function Hero({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex min-w-0 flex-col gap-0.5">
       <span className="text-[11px] text-muted-foreground">{label}</span>
       <span className="text-[24px] font-semibold tabular-nums leading-none">
         {value}

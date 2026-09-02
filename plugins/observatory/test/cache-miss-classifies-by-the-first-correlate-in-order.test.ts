@@ -53,6 +53,10 @@ function seedDrop(
     turn_id: "t2",
     started_at: SECOND,
     cache_read_tokens: 1_000,
+    // The prefix really was re-sent and really was billed: the estimate is a
+    // share of THIS turn's input and cost, never of the drop alone.
+    input_tokens: 119_000,
+    cost_usd: 0.5,
     model_reported: "test-model",
     compacted: options.compacted ? 1 : 0,
   });

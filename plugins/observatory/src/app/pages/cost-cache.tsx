@@ -5,6 +5,7 @@
 // turns in the order PRODUCT invariant 18 fixes. The classified cause is the
 // first of those correlates, so showing the whole list is what makes the
 // classification auditable rather than a verdict.
+import { useEffect, useState } from "react";
 import { Heading } from "@/components/spend-common";
 import { QueryFrame } from "@/components/spend-common";
 import {
@@ -16,7 +17,13 @@ import {
 } from "@/lib/format";
 import { useModuleQuery } from "@/lib/module-rpc";
 import { fixtureCacheMisses } from "@/fixtures/spend";
-import { readStoredFilters, resolveFilters } from "@/lib/filters";
+import {
+  DEFAULT_FILTERS,
+  readStoredFilters,
+  resolveFilters,
+  syncFilterSearch,
+  type Filters,
+} from "@/lib/filters";
 import type { CacheMissRow, SpendCacheMisses } from "../../spend/contract.js";
 
 function Field({ label, value }: { label: string; value: string }) {
@@ -65,7 +72,10 @@ function MissBlock({ row }: { row: CacheMissRow }) {
         <ol className="flex flex-col">
           {row.correlates.map((correlate, index) => (
             <li
-              key={`${correlate.kind}-${correlate.at}`}
+              // Two correlates of the same kind can share a timestamp - two
+              // skills injected in one turn is the common case - and the pair
+              // is not unique. The list is ordered evidence, so its index is.
+              key={`${index}-${correlate.kind}-${correlate.at}`}
               className="flex h-6 items-center gap-2"
             >
               <span className="w-4 text-[11px] tabular-nums text-muted-foreground">
@@ -92,13 +102,28 @@ function MissBlock({ row }: { row: CacheMissRow }) {
  * range.
  */
 export function CostCache({ threadId }: { threadId?: string }) {
-  const range =
+  // Same precedence as the overview: URL over storage over default. The
+  // overview reconciles those two on mount, so arriving here through
+  // `toPluginPanel` - which carries a subPath and drops the query - inherits
+  // the range that was on screen rather than a stale sticky one.
+  // Resolved once on mount, like the overview does it: reading storage on
+  // every render would re-parse the same JSON for a value that cannot change
+  // while this page is up.
+  const [filters] = useState<Filters>(() =>
     typeof window === "undefined"
-      ? "7d"
+      ? DEFAULT_FILTERS
       : resolveFilters(
           new URLSearchParams(window.location.search),
           readStoredFilters(),
-        ).range;
+        ),
+  );
+  const range = filters.range;
+
+  // The drilldown's own address states its range, so it survives a reload and
+  // can be copied.
+  useEffect(() => {
+    syncFilterSearch(filters);
+  }, [filters]);
 
   const query = useModuleQuery<SpendCacheMisses>(
     "observatory_spend_cache_misses",

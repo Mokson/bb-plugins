@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import type { Database } from "better-sqlite3";
 import type {
   BbPluginApi,
   PluginSettingDescriptor,
@@ -38,9 +39,11 @@ import {
   type CacheMissRow,
   type SpendGroup,
   type SpendRange,
+  type SpendRow,
   type SpendThreadView,
 } from "./spend/contract.js";
 import {
+  agentTotals,
   formatOverview,
   spendExport,
   spendOverview,
@@ -552,7 +555,13 @@ export function createSpendModule(
           catalog: spend.catalog,
           ttlMinutes: spend.ttlMinutes,
         };
-        detectCacheMisses(deps, { threadId });
+        // Bounded to the last day. This runs on EVERY commit of every thread,
+        // and the unbounded form rescanned the thread's whole history each
+        // time, so a long-lived thread paid more per commit the older it got.
+        // A day is safely wider than the gap between two commits, and the
+        // first-turn correlate no longer depends on the loaded slice, so the
+        // narrower window cannot mislabel a cause.
+        detectCacheMisses(deps, { threadId, range: "1d" });
         scanFingerprints(deps, { threadId });
       };
       commitHooks.push((threadId) => {
@@ -1109,15 +1118,66 @@ export const COST_TOOL = {
     "Cost, tokens and cache split for a bb thread, its subtree, or a deliver run folder. Returns compact JSON.",
 } as const;
 
+/**
+ * The tool result, never longer than the cap and always parseable JSON.
+ *
+ * The body is shrunk, never the serialization. Escaping means a body of N
+ * characters serializes to MORE than N, so a room figure computed once
+ * undershoots, and slicing the finished JSON to the cap cuts the closing
+ * brace off - handing the model a truncation notice it cannot parse, which is
+ * strictly worse than no result at all.
+ */
 export function clampToolResult(payload: unknown): string {
   const full = JSON.stringify(payload);
   if (full.length <= TOOL_RESULT_LIMIT) return full;
-  const notice = '{"truncated":true,"body":';
-  const room = TOOL_RESULT_LIMIT - notice.length - 2;
-  return `${notice}${JSON.stringify(full.slice(0, room))}}`.slice(
-    0,
-    TOOL_RESULT_LIMIT,
+  let body = full;
+  for (;;) {
+    const envelope = JSON.stringify({ truncated: true, body });
+    const over = envelope.length - TOOL_RESULT_LIMIT;
+    if (over <= 0) return envelope;
+    if (body.length === 0) return JSON.stringify({ truncated: true, body: "" });
+    body = body.slice(0, Math.max(0, body.length - over));
+  }
+}
+
+/** Every run folder the ledger attributes at least one thread to. */
+export function knownRunFolders(db: Database): Set<string> {
+  const rows = db
+    .prepare<[], { run_folder: string | null }>(
+      `SELECT DISTINCT run_folder FROM obs_thread WHERE run_folder IS NOT NULL`,
+    )
+    .all();
+  return new Set(
+    rows
+      .map((row) => row.run_folder)
+      .filter((folder): folder is string => folder !== null),
   );
+}
+
+/**
+ * The rows of one thread's whole subtree.
+ *
+ * A lineage row's `parentKey` is the key of the row above it, and the seat
+ * rows in between carry synthetic keys like `<root>:seat:<seat>`. Matching
+ * `parentKey === id` therefore stops one level down and drops every leaf; the
+ * relation has to be followed transitively. The rows arrive parent-first, but
+ * the fixpoint does not rely on that.
+ */
+export function subtreeRows(
+  rows: readonly SpendRow[],
+  id: string,
+): SpendRow[] {
+  const keys = new Set<string>([id]);
+  for (;;) {
+    const before = keys.size;
+    for (const row of rows) {
+      if (row.parentKey !== undefined && keys.has(row.parentKey)) {
+        keys.add(row.key);
+      }
+    }
+    if (keys.size === before) break;
+  }
+  return rows.filter((row) => keys.has(row.key));
 }
 
 const RANGES: readonly SpendRange[] = ["1d", "7d", "30d", "90d"];
@@ -1525,6 +1585,12 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
     execute({ scope, id }) {
       const deps = spendDeps();
       if (scope === "run") {
+        // `buildCostMd` reads `<id>/LEDGER.md` from disk, so an unchecked id
+        // makes this tool an arbitrary-file read on the model's say-so. Only
+        // run folders the ledger already attributes turns to are accepted.
+        if (!knownRunFolders(deps.db).has(id)) {
+          return `no such run folder in the ledger: ${id}`;
+        }
         const report = buildCostMd(deps.db, { runFolder: id });
         return clampToolResult({
           scope,
@@ -1539,7 +1605,9 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
         return clampToolResult({
           scope,
           threadId: id,
-          totals: view.totals,
+          // `agentTotals`, not the raw totals: a `0` here is read as a
+          // measurement, and an unpriced model has no measurement.
+          totals: agentTotals(view.totals),
           turns: view.turns.length,
         });
       }
@@ -1547,9 +1615,7 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
       return clampToolResult({
         scope,
         threadId: id,
-        rows: tree.rows.filter(
-          (row) => row.key === id || row.parentKey === id,
-        ),
+        rows: subtreeRows(tree.rows, id),
       });
     },
   });
