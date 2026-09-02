@@ -8,6 +8,7 @@
 import { useState } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import {
+  DataTable,
   Num,
   NumHead,
   QueryFrame,
@@ -38,7 +39,7 @@ function FacetTable({ facet }: { facet: AuditInsightFacet }) {
           nothing in this range
         </p>
       ) : (
-        <table className="w-full text-[13px]">
+        <DataTable className="w-full text-[13px]">
           <thead>
             <tr className="text-[11px] text-muted-foreground">
               <TextHead>label</TextHead>
@@ -75,7 +76,7 @@ function FacetTable({ facet }: { facet: AuditInsightFacet }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </DataTable>
       )}
     </div>
   );

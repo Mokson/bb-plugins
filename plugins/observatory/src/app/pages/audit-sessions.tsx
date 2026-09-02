@@ -9,6 +9,7 @@
 import { useCallback, useState } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import {
+  DataTable,
   Heading,
   Hero,
   HeroRow,
@@ -59,7 +60,7 @@ function SessionTable({
     );
   }
   return (
-    <table className="w-full text-[13px]">
+    <DataTable className="w-full text-[13px]">
       <thead>
         <tr className="text-[11px] text-muted-foreground">
           <TextHead>thread</TextHead>
@@ -96,7 +97,7 @@ function SessionTable({
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 
@@ -158,7 +159,7 @@ function ExportActions({ threadId }: { threadId: string }) {
 
 function MetricTable({ session }: { session: AuditSessionView }) {
   return (
-    <table className="w-full text-[13px]">
+    <DataTable className="w-full text-[13px]">
       <thead>
         <tr className="text-[11px] text-muted-foreground">
           <TextHead>metric</TextHead>
@@ -177,7 +178,7 @@ function MetricTable({ session }: { session: AuditSessionView }) {
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 
@@ -190,7 +191,7 @@ function UnverifiedEdits({ session }: { session: AuditSessionView }) {
     );
   }
   return (
-    <table className="w-full text-[13px]">
+    <DataTable className="w-full text-[13px]">
       <thead>
         <tr className="text-[11px] text-muted-foreground">
           <TextHead>unverified edit</TextHead>
@@ -212,7 +213,7 @@ function UnverifiedEdits({ session }: { session: AuditSessionView }) {
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 

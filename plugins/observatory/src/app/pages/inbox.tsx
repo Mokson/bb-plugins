@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBbNavigate, useRealtime } from "@get-bb/plugin-sdk/app";
 import {
+  DataTable,
   FilterBox,
   Heading,
   Hero,
@@ -67,7 +68,7 @@ function InboxTable({
     // Fixed layout, because the evidence line is the only column that may be
     // cut: in auto layout it wins the width fight and pushes the actions off
     // the right edge of a narrow panel, which hides the row's whole point.
-    <table className="w-full table-fixed text-[13px]">
+    <DataTable className="w-full table-fixed text-[13px]">
       <colgroup>
         <col className="w-[22%]" />
         <col className="w-[18%]" />
@@ -114,7 +115,7 @@ function InboxTable({
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 

@@ -127,7 +127,17 @@ export function ObservatoryPanel({ subPath }: PluginNavPanelProps) {
   const segments = subPath.split("/").filter((segment) => segment !== "");
   const route = segments[0] ?? "";
   return (
-    <div className="flex flex-col px-4 text-[13px]">
+    // The panel owns its scrolling. bb hands the plugin a bounded flex column
+    // that is `overflow-hidden`, so a root in normal flow is clipped at the
+    // container's height and everything below the fold becomes unreachable -
+    // which is what a phone sees. `min-h-0 flex-1` takes that bounded height
+    // and `overflow-y-auto` scrolls inside it. Horizontal scrolling belongs to
+    // the wide tables, not to the page, so `overflow-x-hidden` keeps the tab
+    // strip and the hero numbers from sliding out from under the reader.
+    <div
+      data-observatory-panel=""
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden overscroll-contain px-4 text-[13px]"
+    >
       <Tabs
         value={route}
         onValueChange={(next) =>

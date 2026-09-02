@@ -7,7 +7,15 @@
 // lands on that thread's cache drilldown.
 import { useCallback } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { Heading, Heroes, Num, NumHead, QueryFrame, TextHead } from "@/components/spend-common";
+import {
+  DataTable,
+  Heading,
+  Heroes,
+  Num,
+  NumHead,
+  QueryFrame,
+  TextHead,
+} from "@/components/spend-common";
 import {
   formatDuration,
   formatTime,
@@ -67,7 +75,7 @@ function Sparkline({
 
 function TurnTable({ turns }: { turns: readonly TurnRow[] }) {
   return (
-    <table className="w-full text-[13px]">
+    <DataTable className="w-full text-[13px]">
       <thead>
         <tr className="text-[11px] text-muted-foreground">
           <TextHead>started</TextHead>
@@ -106,7 +114,7 @@ function TurnTable({ turns }: { turns: readonly TurnRow[] }) {
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 

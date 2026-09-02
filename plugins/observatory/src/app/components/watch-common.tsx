@@ -6,18 +6,19 @@
 // most four hero numbers; weights 400 and 600; 24px rows; hairlines, never
 // boxes; radii at most 4px; no emojis; no colour carries meaning, so an
 // uppercase word is the only emphasis a marker gets.
-import { Heading, Hero, QueryFrame } from "@/components/spend-common";
+import { DataTable, Heading, Hero, QueryFrame } from "@/components/spend-common";
 import { KEY_HELP } from "@/lib/keys";
 import { LADDER_TOOLTIP, isActionEnabled } from "@/lib/inbox";
 import type { InboxAction } from "../../watch/contract.js";
 
-// The heading, the hero number and the pre-data frame are the density contract
-// itself, so they come from `spend-common` rather than being written again
-// here: two copies of "what a hero number looks like", or of what a page shows
-// before its data arrives, is exactly how a contract stops being one. The
-// frame's absent line is derived from the method's module name, so a watch-only
-// copy of it would be a second answer free to drift from the first.
-export { Heading, Hero, QueryFrame };
+// The heading, the hero number, the pre-data frame and the table that carries
+// its own sideways scroll are the density contract itself, so they come from
+// `spend-common` rather than being written again here: two copies of "what a
+// hero number looks like", or of what a page shows before its data arrives, is
+// exactly how a contract stops being one. The frame's absent line is derived
+// from the method's module name, so a watch-only copy of it would be a second
+// answer free to drift from the first.
+export { DataTable, Heading, Hero, QueryFrame };
 
 /**
  * One row's actions.

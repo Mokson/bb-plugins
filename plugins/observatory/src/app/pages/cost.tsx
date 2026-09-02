@@ -9,6 +9,7 @@ import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   EstimateFootnote,
+  DataTable,
   Heading,
   Heroes,
   Num,
@@ -273,7 +274,7 @@ function OverviewTable({
   const rows = visibleRows(overview.rows, collapsedKeys);
 
   return (
-    <table className="w-full text-[13px]">
+    <DataTable className="w-full text-[13px]">
       <thead>
         <tr className="text-[11px] text-muted-foreground">
           <TextHead>row</TextHead>
@@ -316,7 +317,7 @@ function OverviewTable({
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 

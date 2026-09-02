@@ -7,6 +7,7 @@
 // boxes; numerics right-aligned with tabular figures and the unit in the
 // header. Nothing here carries colour as meaning, so the same markup reads the
 // same in either theme and in a screenshot.
+import type * as React from "react";
 import type { ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ESTIMATE_MARK, formatUsd } from "@/lib/format";
@@ -184,6 +185,38 @@ export function EstimateFootnote({ show }: { show: boolean }) {
     <p className="text-[11px] text-muted-foreground">
       {ESTIMATE_MARK} estimated, calibrated against the first turn's cache write
     </p>
+  );
+}
+
+/**
+ * A panel table, inside the block it scrolls sideways in.
+ *
+ * Panel tables keep their cells on one line - a lineage row wrapped over three
+ * lines stops being a row - so a table's own width is its content's width, not
+ * its container's. Left in normal flow the surplus is simply clipped by the
+ * panel and the right-hand columns are unreachable at any narrow width, which
+ * is what a phone sees. Scrolling here rather than on the panel root means the
+ * sideways scroll belongs to the one table that needs it, and the page still
+ * scrolls down as a whole.
+ *
+ * The scroll block and the table are one component rather than a wrapper each
+ * caller remembers to add separately: a table that keeps its cells on one line
+ * and a block that lets them be reached are one decision, so they are one
+ * type. A table whose cells wrap - the two-column key/value pairs on the
+ * settings route, the `?` shortcut sheet - has no width to scroll and stays a
+ * plain `<table>`.
+ */
+export function DataTable({
+  className,
+  children,
+  ...props
+}: React.TableHTMLAttributes<HTMLTableElement>) {
+  return (
+    <div className="w-full max-w-full overflow-x-auto">
+      <table className={className} {...props}>
+        {children}
+      </table>
+    </div>
   );
 }
 

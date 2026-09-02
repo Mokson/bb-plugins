@@ -12,7 +12,14 @@
 // this module is built against.
 import { useCallback } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { Heading, Hero, Num, NumHead, TextHead } from "@/components/spend-common";
+import {
+  DataTable,
+  Heading,
+  Hero,
+  Num,
+  NumHead,
+  TextHead,
+} from "@/components/spend-common";
 import {
   Cell,
   EvalFrame,
@@ -170,7 +177,7 @@ function CasesTable({
     );
   }
   return (
-    <table className="w-full text-[13px]">
+    <DataTable className="w-full text-[13px]">
       <thead>
         <tr className="text-[11px] text-muted-foreground">
           <TextHead>case</TextHead>
@@ -189,7 +196,7 @@ function CasesTable({
           />
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 
@@ -204,7 +211,7 @@ function RunsTable({
     return <p className="text-[13px] text-muted-foreground">no runs recorded</p>;
   }
   return (
-    <table className="w-full text-[13px]">
+    <DataTable className="w-full text-[13px]">
       <thead>
         <tr className="text-[11px] text-muted-foreground">
           <TextHead>run</TextHead>
@@ -231,7 +238,7 @@ function RunsTable({
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 

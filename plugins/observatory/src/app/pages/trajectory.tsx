@@ -11,7 +11,7 @@
 // table already is.
 import { useCallback } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { Heading, QueryFrame } from "@/components/watch-common";
+import { DataTable, Heading, QueryFrame } from "@/components/watch-common";
 import { formatTime, formatUsd, UNKNOWN } from "@/lib/format";
 import {
   trajectoryTurns,
@@ -38,7 +38,7 @@ function TurnTable({
 }) {
   const rows = trajectoryTurns(thread.turns, explain.signals);
   return (
-    <table className="w-full text-[13px]">
+    <DataTable className="w-full text-[13px]">
       <thead>
         <tr className="text-[11px] text-muted-foreground">
           <th className="px-2 py-1 text-left font-normal">started</th>
@@ -73,7 +73,7 @@ function TurnTable({
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 
@@ -102,7 +102,7 @@ function WasteTable({
   }
   return (
     <>
-      <table className="w-full text-[13px]">
+      <DataTable className="w-full text-[13px]">
         <caption className="pb-1 text-left text-[11px] text-muted-foreground">
           waste attribution
         </caption>
@@ -130,7 +130,7 @@ function WasteTable({
             </tr>
           ))}
         </tbody>
-      </table>
+      </DataTable>
       <p className="text-[11px] text-muted-foreground">
         A turn under two rules counts under both, so this does not sum to the
         thread total.
@@ -142,7 +142,7 @@ function WasteTable({
 function ActionList({ explain }: { explain: WatchExplain }) {
   if (explain.actions.length === 0) return null;
   return (
-    <table className="w-full text-[13px]">
+    <DataTable className="w-full text-[13px]">
       <caption className="pb-1 text-left text-[11px] text-muted-foreground">
         ladder actions
       </caption>
@@ -159,7 +159,7 @@ function ActionList({ explain }: { explain: WatchExplain }) {
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 

@@ -11,6 +11,7 @@
 // footnote that names the calibration behind it.
 import type { ReactNode } from "react";
 import {
+  DataTable,
   EstimateFootnote,
   Heading,
   Hero,
@@ -99,7 +100,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 function BlockTable({ view }: { view: ContextView }) {
   return (
-    <table className="w-full text-[13px]">
+    <DataTable className="w-full text-[13px]">
       <thead>
         <tr className="text-[11px] text-muted-foreground">
           <TextHead>surface</TextHead>
@@ -141,7 +142,7 @@ function BlockTable({ view }: { view: ContextView }) {
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 
@@ -154,7 +155,7 @@ function DuplicateTable({ view }: { view: ContextView }) {
     );
   }
   return (
-    <table className="w-full text-[13px]">
+    <DataTable className="w-full text-[13px]">
       <thead>
         <tr className="text-[11px] text-muted-foreground">
           <TextHead>pair</TextHead>
@@ -173,7 +174,7 @@ function DuplicateTable({ view }: { view: ContextView }) {
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 
@@ -186,7 +187,7 @@ function DeadSkillTable({ view }: { view: ContextView }) {
     );
   }
   return (
-    <table className="w-full text-[13px]">
+    <DataTable className="w-full text-[13px]">
       <thead>
         <tr className="text-[11px] text-muted-foreground">
           <TextHead>skill</TextHead>
@@ -208,7 +209,7 @@ function DeadSkillTable({ view }: { view: ContextView }) {
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 
@@ -228,7 +229,7 @@ function ThreadWindow({ threadId }: { threadId: string }) {
     <QueryFrame query={query}>
       {(thread) => (
         <Section title={`Thread ${thread.threadId}`}>
-          <table className="w-full text-[13px]">
+          <DataTable className="w-full text-[13px]">
             <tbody>
               <tr className="border-t border-border">
                 <td className="h-6 px-2 py-0 text-muted-foreground">
@@ -252,7 +253,7 @@ function ThreadWindow({ threadId }: { threadId: string }) {
                 <td className="h-6 px-2 py-0" />
               </tr>
             </tbody>
-          </table>
+          </DataTable>
           <p className="text-[11px] text-muted-foreground">
             compaction would free about{" "}
             <span className="tabular-nums">

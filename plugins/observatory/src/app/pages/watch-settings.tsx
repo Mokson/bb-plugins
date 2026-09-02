@@ -7,7 +7,7 @@
 // the table redraws from the response rather than from what was typed, so a
 // value the server clamped or refused is visible immediately.
 import { useCallback, useEffect, useState } from "react";
-import { Heading, QueryFrame } from "@/components/watch-common";
+import { DataTable, Heading, QueryFrame } from "@/components/watch-common";
 import {
   changedThresholds,
   discardDraft,
@@ -128,7 +128,7 @@ function SettingsForm({ initial }: { initial: WatchSettings }) {
         <p className="text-[13px] text-muted-foreground">{failure}</p>
       )}
 
-      <table className="w-full text-[13px]">
+      <DataTable className="w-full text-[13px]">
         <caption className="pb-1 text-left text-[11px] text-muted-foreground">
           thresholds
         </caption>
@@ -180,7 +180,7 @@ function SettingsForm({ initial }: { initial: WatchSettings }) {
             </tr>
           ))}
         </tbody>
-      </table>
+      </DataTable>
 
       <div className="flex items-center gap-3">
         <button

@@ -6,6 +6,7 @@
 // on the page reading "muted until" rather than vanishing from it.
 import { useCallback, useState } from "react";
 import {
+  DataTable,
   Num,
   NumHead,
   QueryFrame,
@@ -79,7 +80,7 @@ function FailureDetail({ row }: { row: AuditFailureRow }) {
           ? `muted until ${formatTime(row.mutedUntil)}`
           : "not muted"}
       </p>
-      <table className="w-full text-[13px]">
+      <DataTable className="w-full text-[13px]">
         <thead>
           <tr className="text-[11px] text-muted-foreground">
             <TextHead>thread</TextHead>
@@ -92,7 +93,7 @@ function FailureDetail({ row }: { row: AuditFailureRow }) {
             </tr>
           ))}
         </tbody>
-      </table>
+      </DataTable>
       <MuteControl row={row} />
     </div>
   );
@@ -123,7 +124,7 @@ export function AuditFailures() {
                   no failures in this range
                 </p>
               ) : (
-                <table className="w-full text-[13px]">
+                <DataTable className="w-full text-[13px]">
                   <thead>
                     <tr className="text-[11px] text-muted-foreground">
                       <TextHead>signature</TextHead>
@@ -165,7 +166,7 @@ export function AuditFailures() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </DataTable>
               )}
               {row === null ? null : <FailureDetail row={row} />}
             </>

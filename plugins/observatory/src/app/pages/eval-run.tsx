@@ -14,6 +14,7 @@
 import { useCallback } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import {
+  DataTable,
   Heading,
   Hero,
   Num,
@@ -154,7 +155,7 @@ function ResultsTable({
     );
   }
   return (
-    <table className="w-full text-[13px]">
+    <DataTable className="w-full text-[13px]">
       <thead>
         <tr className="text-[11px] text-muted-foreground">
           <TextHead>case</TextHead>
@@ -170,7 +171,7 @@ function ResultsTable({
           <CaseBlock key={name} name={name} trials={byCase.get(name) ?? []} />
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 
@@ -219,7 +220,7 @@ function BaselineTable({
     }));
 
   return (
-    <table className="w-full text-[13px]">
+    <DataTable className="w-full text-[13px]">
       <thead>
         <tr className="text-[11px] text-muted-foreground">
           <TextHead>case</TextHead>
@@ -240,7 +241,7 @@ function BaselineTable({
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 

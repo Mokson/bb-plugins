@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBbNavigate, useRealtime } from "@get-bb/plugin-sdk/app";
 import {
+  DataTable,
   FilterBox,
   Heading,
   Hero,
@@ -94,7 +95,7 @@ function StallTable({
   return (
     // Fixed layout, so the diagnostic is the column that gets cut rather than
     // pushing the ones a reader scans first off the edge of a narrow panel.
-    <table className="w-full table-fixed text-[13px]">
+    <DataTable className="w-full table-fixed text-[13px]">
       <colgroup>
         <col className="w-[20%]" />
         <col className="w-[9ch]" />
@@ -186,7 +187,7 @@ function StallTable({
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 

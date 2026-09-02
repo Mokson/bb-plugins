@@ -14,7 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Heading } from "@/components/spend-common";
+import { DataTable, Heading } from "@/components/spend-common";
 import {
   ABSENT_MESSAGE,
   EMPTY_MESSAGE,
@@ -71,7 +71,7 @@ function CountsLine({ status }: { status: DistillStatus }) {
 function TopClusters({ status }: { status: DistillStatus }) {
   if (status.topClusters.length === 0) return null;
   return (
-    <table className="w-full text-[11px] text-muted-foreground">
+    <DataTable className="w-full text-[11px] text-muted-foreground">
       <tbody>
         {status.topClusters.map((cluster) => (
           <tr key={cluster.signature}>
@@ -95,13 +95,13 @@ function TopClusters({ status }: { status: DistillStatus }) {
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 
 function ShortcutSheet() {
   return (
-    <table className="w-full text-[11px] text-muted-foreground">
+    <DataTable className="w-full text-[11px] text-muted-foreground">
       <tbody>
         {SHORTCUTS.map(([key, meaning]) => (
           <tr key={key}>
@@ -110,7 +110,7 @@ function ShortcutSheet() {
           </tr>
         ))}
       </tbody>
-    </table>
+    </DataTable>
   );
 }
 
