@@ -228,6 +228,25 @@ export default function plugin(bb: BbPluginApi) {
         "The reasoning level after the dot. Off, the row names the model alone. Needs the model on.",
       default: false,
     },
+    showQuickPin: {
+      type: "boolean",
+      label: "Quick action: pin",
+      description: "The pin toggle in the row's hover actions.",
+      default: true,
+    },
+    showQuickMarkRead: {
+      type: "boolean",
+      label: "Quick action: mark read",
+      description:
+        "The read toggle in the row's hover actions. Off, it stays reachable from the context and overflow menus.",
+      default: false,
+    },
+    showQuickArchive: {
+      type: "boolean",
+      label: "Quick action: archive",
+      description: "The archive button in the row's hover actions.",
+      default: true,
+    },
   });
 
   // These handlers do not cache. The frontend already caches both methods at

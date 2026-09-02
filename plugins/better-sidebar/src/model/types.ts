@@ -35,6 +35,11 @@ export interface BetterSidebarSettings {
   showModel: boolean;
   /** B84: row 2's effort, the half of the model label after the dot. */
   showEffort: boolean;
+  /** B85: the row's hover quick actions. Pin replaces mark-read as the
+   * default first action; the read toggle stays reachable from the menus. */
+  showQuickPin: boolean;
+  showQuickMarkRead: boolean;
+  showQuickArchive: boolean;
 }
 
 export type DateBucketKey = "today" | "yesterday" | "last-7" | "last-30" | "older";

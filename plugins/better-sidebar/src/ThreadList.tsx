@@ -299,6 +299,11 @@ function ThreadListBody({
               showBranch={settings.showBranch}
               showEffort={settings.showEffort}
               showRelativeTime={settings.showRelativeTime}
+              quickActions={{
+                pin: settings.showQuickPin,
+                markRead: settings.showQuickMarkRead,
+                archive: settings.showQuickArchive,
+              }}
               showSignals={settings.density === "detailed"}
               isCompactViewport={isCompactViewport}
               // The route's own row, child rows included: they come through

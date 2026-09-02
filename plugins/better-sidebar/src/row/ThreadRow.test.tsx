@@ -384,24 +384,39 @@ describe("ThreadRow hover actions", () => {
     expect(cluster2.className).not.toContain("opacity-0");
   });
 
-  it("marks an unread thread read from the check button", () => {
-    const { container, inspection } = renderRow(
-      row({ thread: thread({ isUnread: true }) }),
-    );
-    fireEvent.click(within(actions(container)).getByLabelText("Mark read"));
+  it("pins an unpinned thread from the pin button (B85)", () => {
+    const { container, inspection } = renderRow(row());
+    fireEvent.click(within(actions(container)).getByLabelText("Pin"));
 
     expect(inspection.sidebarActionCalls).toEqual([
-      { method: "setRead", threadId: "t1", read: true },
+      { method: "setPinned", threadId: "t1", pinned: true },
     ]);
   });
 
-  it("marks a read thread unread from the same button", () => {
-    const { container, inspection } = renderRow(row());
-    fireEvent.click(within(actions(container)).getByLabelText("Mark unread"));
+  it("unpins a pinned thread from the same button", () => {
+    const { container, inspection } = renderRow(
+      row({ thread: thread({ isPinned: true }) }),
+    );
+    fireEvent.click(within(actions(container)).getByLabelText("Unpin"));
 
     expect(inspection.sidebarActionCalls).toEqual([
-      { method: "setRead", threadId: "t1", read: false },
+      { method: "setPinned", threadId: "t1", pinned: false },
     ]);
+  });
+
+  /** The read toggle is a setting now, not a fixture of the cluster. */
+  it("omits the read toggle unless showQuickMarkRead is on (B85)", () => {
+    const off = renderRow(row());
+    expect(
+      within(actions(off.container)).queryByLabelText(/Mark (un)?read/),
+    ).toBeNull();
+
+    const on = renderRow(row(), {}, {
+      quickActions: { pin: true, markRead: true, archive: true },
+    } as Record<string, unknown>);
+    expect(
+      within(actions(on.container)).getByLabelText("Mark unread"),
+    ).toBeTruthy();
   });
 
   it("archives from the archive button", () => {

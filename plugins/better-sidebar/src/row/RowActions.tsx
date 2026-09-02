@@ -32,6 +32,7 @@ export function RowActions({
   thread,
   title,
   pullRequest,
+  quickActions,
   onNavigate,
   onOpenPullRequest,
   renameEditor,
@@ -41,6 +42,8 @@ export function RowActions({
   /** The model's resolved title (B13), the same one the menu renames from. */
   title: string;
   pullRequest: PluginSidebarPullRequest | null;
+  /** B85: which quick actions the cluster draws, from the settings. */
+  quickActions: { pin: boolean; markRead: boolean; archive: boolean };
   onNavigate: () => void;
   onOpenPullRequest: () => void;
   renameEditor: RenameEditor;
@@ -87,17 +90,31 @@ export function RowActions({
       )}
     >
       {/* The same envelope the menu item draws: they are one action, and bb
-          draws read state as `Mail` / `MailOpen` rather than an eye. */}
-      <ActionButton
-        label={thread.isUnread ? "Mark read" : "Mark unread"}
-        glyph={thread.isUnread ? "mail" : "mail-open"}
-        onClick={() => void actions.setRead(thread.id, thread.isUnread)}
-      />
-      <ActionButton
-        label="Archive"
-        glyph="archive"
-        onClick={() => void actions.archive(thread.id)}
-      />
+          draws read state as `Mail` / `MailOpen` rather than an eye. Which
+          actions appear is the user's, through the quick-action settings
+          (B85); pin is the default first action and the read toggle remains
+          in both menus. */}
+      {quickActions.markRead ? (
+        <ActionButton
+          label={thread.isUnread ? "Mark read" : "Mark unread"}
+          glyph={thread.isUnread ? "mail" : "mail-open"}
+          onClick={() => void actions.setRead(thread.id, thread.isUnread)}
+        />
+      ) : null}
+      {quickActions.pin ? (
+        <ActionButton
+          label={thread.isPinned ? "Unpin" : "Pin"}
+          glyph={thread.isPinned ? "pin-off" : "pin"}
+          onClick={() => void actions.setPinned(thread.id, !thread.isPinned)}
+        />
+      ) : null}
+      {quickActions.archive ? (
+        <ActionButton
+          label="Archive"
+          glyph="archive"
+          onClick={() => void actions.archive(thread.id)}
+        />
+      ) : null}
       <DropdownMenu.Root
         onOpenChange={(open) => {
           // An open menu pins the cluster visible; it must also outlive the

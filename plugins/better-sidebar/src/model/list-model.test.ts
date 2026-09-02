@@ -102,6 +102,9 @@ const DEFAULT_SETTINGS: BetterSidebarSettings = {
   showBranch: true,
   showModel: true,
   showEffort: false,
+  showQuickPin: true,
+  showQuickMarkRead: false,
+  showQuickArchive: true,
 };
 
 /**
