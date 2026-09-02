@@ -38,10 +38,12 @@ const MARK_SIZES = {
  * Three cases, not two. Provider ids are plugin-contributed (`acp-*`), so no
  * hardcoded id map may exist (B24):
  *
- * 1. A logo plus `strings.iconTint` — masked and filled per theme.
+ * 1. A logo plus `strings.iconTint` — masked and filled with the vendor's own
+ *    tint, per theme, so every provider reads in its brand colour.
  * 2. A logo with no tint — masked and filled `bg-muted-foreground/70`, the
- *    tone every other monochrome glyph in the row uses (§7's B23 ruling;
- *    `strings` and `iconTint` are two independent optionals).
+ *    tone every other muted glyph in the row uses (`strings` and `iconTint`
+ *    are two independent optionals).
+ * 3. Monochrome (`monochrome` prop) — same as 2, ignoring any tint.
  * 3. No logo, or a provider absent from the directory — a neutral dot, never
  *    nothing and never a broken image, with `providerId` as the accessible
  *    name when there is no `displayName` to use (B25).
@@ -111,6 +113,7 @@ export function ProviderGlyph({
   return (
     <span role="img" aria-label={label} className={box}>
       {tint === undefined ? (
+        // No tint (or monochrome): the line's own muted tone.
         <span
           aria-hidden
           data-better-sidebar-provider="mask"
@@ -118,6 +121,7 @@ export function ProviderGlyph({
           style={maskStyle}
         />
       ) : (
+        // The vendor's own tint, one mask per theme.
         <>
           <span
             aria-hidden

@@ -99,7 +99,7 @@ export function SecondRow({
           // means one setting governs both.
           glyph={
             providerId === null ? null : (
-              <ProviderGlyph providerId={providerId} size="small" monochrome />
+              <ProviderGlyph providerId={providerId} size="small" />
             )
           }
         >
@@ -317,7 +317,7 @@ export function ChildSecondRow({
       {execution === null ? null : (
         <>
           {providerId === null ? null : (
-            <ProviderGlyph providerId={providerId} size="small" monochrome />
+            <ProviderGlyph providerId={providerId} size="small" />
           )}
           <span className="min-w-0 truncate">
             {showEffort

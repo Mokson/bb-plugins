@@ -209,7 +209,7 @@ function RowBody({
             `HTMLAnchorElement`; a `<div role="button">` carrying the same two
             attributes yields zero targets and all nine numbered / next /
             previous shortcuts silently do nothing. */}
-      <div data-better-sidebar-row={thread.id}>
+      <div data-better-sidebar-row={thread.id} className="mb-1">
         <RowHover
           row={row}
           isCompactViewport={isCompactViewport}
