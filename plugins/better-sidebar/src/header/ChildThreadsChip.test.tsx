@@ -376,11 +376,15 @@ describe("open popover (B58.6, B58.7, B58.8)", () => {
     ).toBeTruthy();
   });
 
-  it("opens a child and closes the popover", () => {
+  it("opens a child in split and closes the popover", () => {
     const rendered = openWith([thread("parent"), child("c1", "parent")]);
     fireEvent.click(within(screen.getByRole("list")).getByRole("button"));
     expect(rendered.inspection.sidebarActionCalls).toContainEqual(
-      expect.objectContaining({ method: "open", threadId: "c1" }),
+      expect.objectContaining({
+        method: "open",
+        threadId: "c1",
+        options: { split: true },
+      }),
     );
     expect(screen.queryByRole("list")).toBeNull();
   });
