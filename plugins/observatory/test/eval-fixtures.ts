@@ -154,13 +154,28 @@ export interface RunnerHostOptions {
   /** Threads `threads.list` serves, for the exactly-once lookup. */
   existing?: ReadonlyArray<{ id: string; title: string }>;
   spawnId?: string;
+  /**
+   * Projects `projects.list` serves. The runner reads the spawn's host off
+   * the project's default source, so a case's `fixture.project` must be in
+   * here for the spawn to name a machine at all.
+   */
+  projects?: ReadonlyArray<{
+    id: string;
+    sources: ReadonlyArray<{ hostId: string; isDefault: boolean }>;
+  }>;
 }
 
 export interface RunnerHost {
   stopped: string[];
   answered: Array<{ interactionId: string; value: unknown }>;
   spawns: number;
+  /** Every `threads.spawn` request, in order, exactly as the SDK saw it. */
+  spawnArgs: unknown[];
 }
+
+/** The project a fixture case names, on the one host that holds its checkout. */
+export const FIXTURE_PROJECT_ID = "proj_test";
+export const FIXTURE_HOST_ID = "host_fixture";
 
 /**
  * Stub every `bb.sdk.threads` surface the runner touches on an existing fake
@@ -171,15 +186,24 @@ export function stubRunnerThreads(
   harness: { sdk: { stub(path: string, implementation: (...args: never[]) => unknown): void } },
   options: RunnerHostOptions = {},
 ): RunnerHost {
-  const state: RunnerHost = { stopped: [], answered: [], spawns: 0 };
+  const state: RunnerHost = { stopped: [], answered: [], spawns: 0, spawnArgs: [] };
   const statuses = options.statuses ?? ["idle"];
   const interactions = options.interactions ?? [];
   let getCalls = 0;
   let listCalls = 0;
 
+  harness.sdk.stub("projects.list", () => [
+    ...(options.projects ?? [
+      {
+        id: FIXTURE_PROJECT_ID,
+        sources: [{ hostId: FIXTURE_HOST_ID, isDefault: true }],
+      },
+    ]),
+  ]);
   harness.sdk.stub("threads.list", () => [...(options.existing ?? [])]);
-  harness.sdk.stub("threads.spawn", () => {
+  harness.sdk.stub("threads.spawn", (args: never) => {
     state.spawns += 1;
+    state.spawnArgs.push(args);
     return { id: options.spawnId ?? "thr-eval" };
   });
   harness.sdk.stub("threads.get", () => {

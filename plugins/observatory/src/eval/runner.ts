@@ -194,7 +194,29 @@ async function findExistingThread(bb: BbPluginApi, plan: SpawnPlan): Promise<str
   return threads.find((thread) => thread.title === plan.title)?.id ?? null;
 }
 
+/**
+ * The machine that owns the project's checkout. A `host` environment carrying
+ * an unmanaged path is refused unless the request names its host — only a
+ * personal workspace may leave it out — and the worktree the runner cut lives
+ * on exactly one machine, so the host is resolved from the project's own
+ * default source rather than left to a server-side guess.
+ */
+async function resolveHostId(bb: BbPluginApi, projectId: string): Promise<string> {
+  const projects = await bb.sdk.projects.list({ includePersonal: true });
+  const project = projects.find((entry) => entry.id === projectId);
+  if (!project) {
+    throw new Error(`eval spawn: no project ${projectId} on this bb`);
+  }
+  const source =
+    project.sources.find((entry) => entry.isDefault) ?? project.sources[0];
+  if (!source) {
+    throw new Error(`eval spawn: project ${projectId} has no source to spawn on`);
+  }
+  return source.hostId;
+}
+
 async function spawnThread(bb: BbPluginApi, plan: SpawnPlan): Promise<string> {
+  const hostId = await resolveHostId(bb, plan.projectId);
   const thread = await bb.sdk.threads.spawn({
     projectId: plan.projectId,
     title: plan.title,
@@ -207,6 +229,7 @@ async function spawnThread(bb: BbPluginApi, plan: SpawnPlan): Promise<string> {
     reasoningLevel: plan.reasoningLevel as never,
     environment: {
       type: "host",
+      hostId,
       workspace: { type: "unmanaged", path: plan.environment.workspace.path },
     },
     prompt: plan.prompt,
