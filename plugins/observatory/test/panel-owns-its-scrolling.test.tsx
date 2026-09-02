@@ -21,7 +21,8 @@ import type { StatusView } from "../src/contract.js";
 
 const STATUS: StatusView = {
   pluginId: "observatory",
-  phase: "phase 0 scaffold",
+  version: "0.0.1",
+  installed: "/plugins/observatory/",
   modules: [],
   counts: { threads: 0, turns: 0, items: 0, openSignals: 0, actions: 0 },
   settings: [],

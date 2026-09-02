@@ -34,7 +34,9 @@ export const settingSummarySchema = z
 export const statusSchema = z
   .object({
     pluginId: z.string(),
-    phase: z.string(),
+    /** Build identity: the plugin version and the path it was installed from. */
+    version: z.string(),
+    installed: z.string(),
     modules: z.array(moduleStateSchema),
     counts: storeCountsSchema,
     settings: z.array(settingSummarySchema),

@@ -1,6 +1,7 @@
 // One status builder, two surfaces. The CLI text is a rendering of the same
 // object the rpc returns, so an operator reading `bb observatory status` and a
 // reader looking at the panel can never see different module states.
+import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { statusSchema } from "../src/contract.js";
 import {
@@ -51,6 +52,20 @@ describe("status", () => {
     expect(text.split("\n")[0]).toBe(`observatory ${VERSION}`);
     expect(text).toContain(`installed ${installedPath()}`);
     expect(text).not.toContain("scaffold");
+    // The rpc carries the same two facts, so the panel cannot show a phase
+    // label the CLI dropped.
+    expect(status).toMatchObject({ version: VERSION, installed: installedPath() });
+    expect(status).not.toHaveProperty("phase");
+  });
+
+  it("reports the version package.json declares", async () => {
+    // VERSION is hand-copied because the bundle cannot import package.json at
+    // runtime; this is the check that keeps the copy honest.
+    const manifest = JSON.parse(
+      await readFile(new URL("../package.json", import.meta.url), "utf8"),
+    ) as { version: string };
+
+    expect(VERSION).toBe(manifest.version);
   });
 
   it("shows a tripped module as tripped on both surfaces", async () => {

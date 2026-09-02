@@ -143,9 +143,12 @@ import {
   type DistilleryHandle,
 } from "./distillery/index.js";
 
-export const PHASE = "phase 0 scaffold";
-
-/** Kept in step with package.json; the bundle cannot import that at runtime. */
+/**
+ * Kept in step with package.json; the bundle cannot import that at runtime.
+ *
+ * A test asserts the two agree, so a release that bumps one and forgets the
+ * other fails in CI rather than in a support round.
+ */
 export const VERSION = "0.0.1";
 
 /**
@@ -1073,7 +1076,8 @@ export async function buildStatus(deps: StatusDeps): Promise<StatusView> {
     .map((key) => ({ key, value: String(values[key] ?? "") }));
   return {
     pluginId: deps.bb.pluginId,
-    phase: PHASE,
+    version: VERSION,
+    installed: installedPath(),
     modules,
     counts: deps.store.counts(),
     settings,
@@ -1086,8 +1090,8 @@ export function formatStatus(
   ingest?: IngestCounters | null,
 ): string {
   const lines = [
-    `observatory ${VERSION}`,
-    `installed ${installedPath()}`,
+    `observatory ${status.version}`,
+    `installed ${status.installed}`,
     "",
     "modules",
   ];
