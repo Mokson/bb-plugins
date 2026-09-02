@@ -265,7 +265,7 @@ function ThreadListBody({
       // container is what carries it. The rows, the section headers and the
       // project filter each carried their own inset before, which put chrome
       // at 8px and rows at 0 (B73.2).
-      className="flex h-full flex-col overflow-y-auto px-2 py-1"
+      className="flex h-full flex-col overflow-y-auto px-2 py-2"
       onKeyDown={onKeyDown}
     >
       {model.sections.map((section, index) => (

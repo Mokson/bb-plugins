@@ -39,10 +39,14 @@ function provider(overrides: Partial<Provider> & { id: string }): Provider {
   } as Provider;
 }
 
-function render(providerId: string, providers: Provider[]) {
+function render(
+  providerId: string,
+  providers: Provider[],
+  props: Record<string, unknown> = {},
+) {
   return renderSlot(
     { component: ProviderGlyph },
-    { providerId },
+    { providerId, ...props },
     { providers: { status: "ready", providers } },
   );
 }
@@ -57,6 +61,23 @@ describe("ProviderGlyph", () => {
       container.querySelector('[data-better-sidebar-provider="dot"]'),
     ).not.toBeNull();
     expect(getByRole("img").getAttribute("aria-label")).toBe("Claude Code");
+  });
+
+  it("masks a logo at bg-muted-foreground/70 when monochrome (B23, §7)", () => {
+    const { container } = render("acp-codex", [
+      provider({
+        id: "acp-codex",
+        displayName: "Codex",
+        logoUrl: "/api/v1/system/providers/acp-codex/logo",
+      }),
+    ], { monochrome: true });
+
+    const mask = container.querySelector('[data-better-sidebar-provider="mask"]');
+    expect(mask).not.toBeNull();
+    expect(mask?.getAttribute("class")).toContain("bg-muted-foreground/70");
+    expect(mask?.getAttribute("style")).toContain(
+      "/api/v1/system/providers/acp-codex/logo",
+    );
   });
 
   it("masks a logo without iconTint at bg-muted-foreground/70 (B23, §7)", () => {
@@ -76,7 +97,7 @@ describe("ProviderGlyph", () => {
     );
   });
 
-  it("fills a logo with iconTint per theme (B23)", () => {
+  it("fills a logo with the vendor's own iconTint per theme (B23)", () => {
     const { container } = render("acp-tinted", [
       provider({
         id: "acp-tinted",
@@ -255,12 +276,13 @@ describe("ProviderGlyph sizes", () => {
       );
 
       expect(getByRole("img").className).toContain(expected);
-      // `mask`, or the light/dark pair when the provider carries a tint.
-      const masks = container.querySelectorAll(
-        '[data-better-sidebar-provider^="mask"]',
+      // The coloured logo (`logo`) when drawing brand colours, the `mask`
+      // when monochrome — either way it fills the line's icon size.
+      const marks = container.querySelectorAll(
+        '[data-better-sidebar-provider="logo"], [data-better-sidebar-provider="mask"]',
       );
-      expect(masks.length).toBeGreaterThan(0);
-      for (const mask of masks) expect(mask.className).toContain(expected);
+      expect(marks.length).toBeGreaterThan(0);
+      for (const mark of marks) expect(mark.className).toContain(expected);
       cleanup();
     }
   });
@@ -271,7 +293,7 @@ describe("ProviderGlyph monochrome", () => {
    * Row 2 is a run of muted labels; a full-colour brand mark inside it is the
    * loudest thing on the row and pulls the eye off the words it sits among.
    */
-  it("ignores the provider's tint and draws one untinted mask", () => {
+  it("tints the logo by default and masks one untinted mark when monochrome", () => {
     const tinted = provider({
       id: "acp-claude-code",
       logoUrl: "/logo.svg",
@@ -288,6 +310,7 @@ describe("ProviderGlyph monochrome", () => {
       { providerId: "acp-claude-code" },
       { providers: { status: "ready", providers: [tinted] } },
     );
+    // The vendor's tint: one mask per theme.
     expect(
       colour.container.querySelectorAll('[data-better-sidebar-provider^="mask-"]'),
     ).toHaveLength(2);
