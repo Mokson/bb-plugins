@@ -1,0 +1,158 @@
+// The panel shell: a tab strip over one route each.
+//
+// Density rules (plan §UX): one font, sizes 11/13/16, weights 400 and 600,
+// hairlines not boxes, numerics right-aligned with tabular-nums, unknown
+// renders `--`. No colour carries hierarchy and there are no emojis, so the
+// same page reads the same in either theme and in a screenshot.
+import type { PluginNavPanelProps } from "@get-bb/plugin-sdk";
+import { useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ObservatorySettings } from "./settings.js";
+import { AUDIT_ROUTES, PANEL_PATH, ROUTES } from "./routes.js";
+import { CostOverview } from "./cost.js";
+import { CostCache } from "./cost-cache.js";
+import { ThreadCost } from "./thread-cost.js";
+import { InboxPage } from "./inbox.js";
+import { StallsPage } from "./stalls.js";
+import { Trajectory } from "./trajectory.js";
+import { WatchSettingsPage } from "./watch-settings.js";
+import { ContextAudit } from "./context.js";
+import { AuditSessions } from "./audit-sessions.js";
+import { AuditFailures } from "./audit-failures.js";
+import { AuditInsights } from "./audit-insights.js";
+import { EvalCases } from "./eval-cases.js";
+import { EvalRun } from "./eval-run.js";
+import { Distillery } from "./distillery.js";
+
+export { AUDIT_ROUTES, PANEL_PATH, ROUTES };
+
+function Heading({ title }: { title: string }) {
+  return <h2 className="text-[16px] font-semibold">{title}</h2>;
+}
+
+/**
+ * The body for an address the panel does not own.
+ *
+ * Every route in `ROUTES` is built, so the honest answer to an unknown first
+ * segment is that it is not a view - not a promise that one is coming.
+ */
+function NotFound({ route }: { route: string }) {
+  return (
+    <section className="flex flex-col gap-2 py-4">
+      <Heading title="Not found" />
+      <p className="text-[13px] text-muted-foreground">
+        No Observatory view at {route}.
+      </p>
+    </section>
+  );
+}
+
+/**
+ * The route body for one `subPath`.
+ *
+ * Segments, not a matcher: the panel owns a handful of addresses and a table
+ * of string comparisons is easier to audit than a pattern language. The tab
+ * strip highlights the first segment, so `cost/cache` keeps Cost selected.
+ */
+function Audit({
+  segments,
+}: {
+  segments: readonly string[];
+}) {
+  const navigate = useBbNavigate();
+  const [, second, third] = segments;
+  const route = AUDIT_ROUTES.some((entry) => entry.id === second)
+    ? (second as string)
+    : "sessions";
+
+  return (
+    <section className="flex flex-col gap-3 py-4">
+      <Heading title="Audit" />
+      <Tabs
+        value={route}
+        onValueChange={(next) =>
+          navigate.toPluginPanel(PANEL_PATH, { subPath: `audit/${next}` })
+        }
+      >
+        <TabsList>
+          {AUDIT_ROUTES.map((entry) => (
+            <TabsTrigger key={entry.id} value={entry.id}>
+              {entry.title}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+      {route === "failures" ? <AuditFailures /> : null}
+      {route === "insights" ? <AuditInsights /> : null}
+      {route === "sessions" ? <AuditSessions threadId={third} /> : null}
+    </section>
+  );
+}
+
+function Route({ segments }: { segments: readonly string[] }) {
+  const [head, second, third] = segments;
+
+  if (head === undefined || head === "") return <InboxPage />;
+  if (head === "settings") {
+    return (
+      <>
+        <WatchSettingsPage />
+        <ObservatorySettings />
+      </>
+    );
+  }
+  if (head === "stalls") return <StallsPage />;
+  if (head === "distillery") return <Distillery />;
+  if (head === "threads" && second !== undefined) {
+    if (third === "trajectory") return <Trajectory threadId={second} />;
+    return <ThreadCost threadId={second} />;
+  }
+  if (head === "context") return <ContextAudit />;
+  if (head === "audit") return <Audit segments={segments} />;
+  if (head === "cost") {
+    if (second === "cache") return <CostCache threadId={third} />;
+    return <CostOverview />;
+  }
+  if (head === "eval") {
+    if (second === "runs" && third !== undefined) return <EvalRun runId={third} />;
+    // `eval` and `eval/cases` are the same list; `eval/cases/<name>` is one
+    // case, so a reader can keep either address.
+    return <EvalCases caseName={second === "cases" ? third : undefined} />;
+  }
+  return <NotFound route={head} />;
+}
+
+export function ObservatoryPanel({ subPath }: PluginNavPanelProps) {
+  const navigate = useBbNavigate();
+  const segments = subPath.split("/").filter((segment) => segment !== "");
+  const route = segments[0] ?? "";
+  return (
+    // The panel owns its scrolling. bb hands the plugin a bounded flex column
+    // that is `overflow-hidden`, so a root in normal flow is clipped at the
+    // container's height and everything below the fold becomes unreachable -
+    // which is what a phone sees. `min-h-0 flex-1` takes that bounded height
+    // and `overflow-y-auto` scrolls inside it. Horizontal scrolling belongs to
+    // the wide tables, not to the page, so `overflow-x-hidden` keeps the tab
+    // strip and the hero numbers from sliding out from under the reader.
+    <div
+      data-observatory-panel=""
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden overscroll-contain px-4 text-[13px]"
+    >
+      <Tabs
+        value={route}
+        onValueChange={(next) =>
+          navigate.toPluginPanel(PANEL_PATH, { subPath: next })
+        }
+      >
+        <TabsList>
+          {ROUTES.map((entry) => (
+            <TabsTrigger key={entry.id || "inbox"} value={entry.id}>
+              {entry.title}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+      <Route segments={segments} />
+    </div>
+  );
+}

@@ -1,0 +1,94 @@
+// PRODUCT.md invariant 29: an unknown key fails the case. The PATH matters as
+// much as the failure — a typo three levels down inside `assert.trace` must
+// name itself, or the operator hunts a 50-line file by hand.
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
+import { loadCaseFile } from "../src/eval/cases.js";
+import { makeGitFixture, caseYaml } from "./eval-fixtures.js";
+
+const dir = mkdtempSync(join(tmpdir(), "observatory-eval-keys-"));
+const fixture = makeGitFixture();
+
+afterAll(() => {
+  rmSync(dir, { recursive: true, force: true });
+  fixture.dispose();
+});
+
+function load(name: string, yaml: string) {
+  const path = join(dir, `${name}.yaml`);
+  writeFileSync(path, yaml);
+  return loadCaseFile(path);
+}
+
+describe("an unknown key fails load with its path", () => {
+  it("names a stray key at the root", () => {
+    const result = load("root", `${caseYaml("root", fixture)}\nwhatever: 1\n`);
+    expect(result.value).toBeNull();
+    expect(result.error).toContain("unknown key");
+    expect(result.error).toContain("<root>.whatever");
+  });
+
+  it("names a stray key nested inside fixture", () => {
+    const yaml = caseYaml("nested", fixture).replace(
+      "  base_branch: fixture/base",
+      "  base_branch: fixture/base\n  branch: fixture/base",
+    );
+    const result = load("nested", yaml);
+    expect(result.value).toBeNull();
+    expect(result.error).toContain("fixture.branch");
+  });
+
+  it("names a stray key three levels down inside assert", () => {
+    const yaml = caseYaml("deep", fixture).replace(
+      "    sections_present: [runlog]",
+      "    sections_present: [runlog]\n    sections: [runlog]",
+    );
+    const result = load("deep", yaml);
+    expect(result.value).toBeNull();
+    expect(result.error).toContain("assert.ledger.sections");
+  });
+
+  it("accepts the same case once the stray key is gone", () => {
+    const result = load("clean", caseYaml("clean", fixture));
+    expect(result.error).toBeNull();
+    expect(result.value?.name).toBe("clean");
+  });
+
+  it("refuses a duplicate key rather than letting the last one win", () => {
+    const yaml = `${caseYaml("dupe", fixture)}\ntrials: 5\n`;
+    const result = load("dupe", yaml);
+    expect(result.value).toBeNull();
+    expect(result.error).toContain("duplicate key");
+  });
+
+  // The refusals above must not fire on data. An invocation is free text, and
+  // `*`, `!`, `#` and `|` are ordinary characters in an English sentence — a
+  // loader that read them as YAML syntax would refuse valid cases.
+  it("treats YAML sigils inside a quoted scalar as data, not syntax", () => {
+    const yaml = caseYaml("sigils", fixture).replace(
+      '  text: "/deliver tracker:none do the thing"',
+      '  text: "/deliver tracker:none fix the *rounding* bug! see #12 | urgent"',
+    );
+    const result = load("sigils", yaml);
+    expect(result.error).toBeNull();
+    expect(result.value?.invocation.text).toBe(
+      "/deliver tracker:none fix the *rounding* bug! see #12 | urgent",
+    );
+  });
+
+  it("still refuses an actual alias or block scalar in value position", () => {
+    const alias = caseYaml("alias", fixture).replace(
+      '  text: "/deliver tracker:none do the thing"',
+      "  text: *shared",
+    );
+    expect(load("alias", alias).error).toContain("aliases are not supported");
+
+    const block = caseYaml("block", fixture).replace(
+      '  text: "/deliver tracker:none do the thing"',
+      "  text: |",
+    );
+    expect(load("block", block).error).toContain("block scalars are not supported");
+  });
+});
