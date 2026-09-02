@@ -77,6 +77,15 @@ export const threadLastActivitySchema = z.object({
   at: z.number().nullable(),
 });
 
+/** B85: the t3-style work labels for one thread. Both fields degrade to null. */
+export const threadWorkStatSchema = z.object({
+  threadId: z.string(),
+  /** Cumulative total tokens from the newest usage event; null when none. */
+  tokens: z.number().nullable(),
+  /** Tool-call count from the timeline's work rows; null when the read failed. */
+  toolCalls: z.number().nullable(),
+});
+
 export const betterSidebarRpcContract = defineRpcContract({
   /** One hovered thread's dossier. B31 returns nulls, never throws. */
   threadDossier: {
@@ -111,6 +120,15 @@ export const betterSidebarRpcContract = defineRpcContract({
     output: z.object({ activity: z.array(threadLastActivitySchema) }),
   },
   /**
+   * B85: tokens and tool calls for every child in one open popover, in one
+   * round trip. Same fan-out shape as `threadExecutions`; same nulls-not-
+   * throws degradation per id.
+   */
+  threadWorkStats: {
+    input: z.object({ threadIds: z.array(threadIdSchema).max(60) }),
+    output: z.object({ stats: z.array(threadWorkStatSchema) }),
+  },
+  /**
    * The machine bb itself runs on, so a row can drop a host name that says
    * nothing. The app SDK exposes each thread's host but no identity for the
    * current one, so the answer has to come from the backend's
@@ -135,3 +153,5 @@ export type RowSignal = z.infer<typeof rowSignalSchema>;
 export type ThreadExecution = z.infer<typeof threadExecutionSchema>;
 /** One entry of the `lastActivity` result. */
 export type ThreadLastActivity = z.infer<typeof threadLastActivitySchema>;
+/** One entry of the `threadWorkStats` result. */
+export type ThreadWorkStat = z.infer<typeof threadWorkStatSchema>;

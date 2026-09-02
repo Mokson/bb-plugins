@@ -6,11 +6,13 @@ import {
   type RowSignal,
   type ThreadExecution,
   type ThreadLastActivity,
+  type ThreadWorkStat,
 } from "./server-contract";
 
 type ThreadsApi = BbPluginApi["sdk"]["threads"];
 type EventRow = Awaited<ReturnType<ThreadsApi["events"]["list"]>>[number];
 type EventType = EventRow["type"];
+type TimelineRow = Awaited<ReturnType<ThreadsApi["timeline"]>>["rows"][number];
 
 /**
  * The newest event row of the given types, or null when the thread has none.
@@ -43,6 +45,72 @@ function pressure(
   if (usedTokens === null || modelContextWindow === null) return null;
   if (modelContextWindow <= 0) return null;
   return usedTokens / modelContextWindow;
+}
+
+/**
+ * B85. One thread's work labels: cumulative tokens off the newest usage
+ * event, and the tool-call count off the timeline's work rows. A failure of
+ * either read degrades that field to null, never the whole entry.
+ *
+ * Tool calls are every timeline row that carries a `callId` - tool, command,
+ * file change, search and plan-steps rows alike - because that is the set a
+ * per-call counter counts. Rows without one (approvals, questions, turns)
+ * are not calls. The count covers the timeline window bb serves; a thread
+ * whose history is windowed can under-count, which a null never hides.
+ */
+async function loadWorkStats(
+  threads: ThreadsApi,
+  threadId: string,
+  log?: (message: string) => void,
+): Promise<ThreadWorkStat> {
+  try {
+    // Per-field degradation: a usage read that fails must not cost the tool
+    // count, and the reverse. B71.1's one-unreadable-child rule, finer grained.
+    let tokens: number | null = null;
+    let toolCalls: number | null = null;
+    try {
+      const usage = await newestEvent(threads, threadId, [
+        "thread/tokenUsage/updated",
+      ]);
+      tokens = usage?.data.tokenUsage.total.totalTokens ?? null;
+    } catch {
+      tokens = null;
+    }
+    try {
+      const timeline = await threads.timeline({ threadId, segmentLimit: "100" });
+      let calls = 0;
+      const walk = (rows: readonly unknown[] | null | undefined): void => {
+        for (const row of rows ?? []) {
+          if (
+            typeof row === "object" &&
+            row !== null &&
+            "kind" in row &&
+            row.kind === "work" &&
+            "callId" in row
+          ) {
+            calls += 1;
+          }
+          // Delegation rows nest their child's rows; turns nest their rows.
+          if (typeof row === "object" && row !== null) {
+            if ("children" in row && Array.isArray(row.children)) {
+              walk(row.children);
+            }
+            if ("childRows" in row && Array.isArray(row.childRows)) {
+              walk(row.childRows);
+            }
+          }
+        }
+      };
+      walk(timeline.rows as unknown as readonly unknown[]);
+      toolCalls = calls;
+    } catch (error) {
+      log?.(`threadWorkStats: timeline read failed for ${threadId}: ${String(error)}`);
+      toolCalls = null;
+    }
+    return { threadId, tokens, toolCalls };
+  } catch {
+    return { threadId, tokens: null, toolCalls: null };
+  }
 }
 
 /**
@@ -273,6 +341,16 @@ export default function plugin(bb: BbPluginApi) {
     lastActivity: async ({ threadIds }) => ({
       activity: await Promise.all(
         threadIds.map((threadId) => loadLastActivity(bb.sdk.threads, threadId)),
+      ),
+    }),
+    // B85: tokens and tool calls, fanned out like the executions above.
+    threadWorkStats: async ({ threadIds }) => ({
+      stats: await Promise.all(
+        threadIds.map((threadId) =>
+          loadWorkStats(bb.sdk.threads, threadId, (message) =>
+            bb.log.warn(message),
+          ),
+        ),
       ),
     }),
     // A row's host name is worth drawing only when the work runs somewhere

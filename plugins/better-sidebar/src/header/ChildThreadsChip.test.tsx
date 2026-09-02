@@ -18,6 +18,7 @@ installTestPluginRuntime();
 
 const { ChildThreadsChip } = await import("./ChildThreadsChip");
 const { resetThreadExecutionsCache } = await import("./useThreadExecutions");
+const { resetThreadWorkStatsCache } = await import("./useThreadWorkStats");
 const { betterSidebarRpcContract } = await import("../server-contract");
 
 type Contract = typeof betterSidebarRpcContract;
@@ -86,9 +87,10 @@ function chip() {
 }
 
 beforeEach(() => {
-  // The execution cache is module-level and outlives `cleanup()` (B71.4), so
+  // The execution caches are module-level and outlive `cleanup()` (B71.4), so
   // a call-count test would otherwise read the previous test's cache.
   resetThreadExecutionsCache();
+  resetThreadWorkStatsCache();
 });
 
 afterEach(() => {
@@ -123,7 +125,9 @@ describe("showHeaderChip (B59)", () => {
       {},
       { settings: { showHeaderChip: "true" } },
     );
-    expect(chip().textContent).toContain("1 children");
+    expect(
+      chip().querySelector("[data-better-sidebar-children='count']")?.textContent,
+    ).toBe("1");
   });
 });
 
@@ -143,19 +147,19 @@ describe("empty case (B58.2)", () => {
   });
 });
 
-describe("collapsed chip (B58.3, B58.4)", () => {
-  it("shows a count label and one glyph per child up to three", () => {
+describe("collapsed chip (B58.3, B81)", () => {
+  it("shows the count badge and one icon per vendor", () => {
     render([thread("parent"), child("c1", "parent"), child("c2", "parent")]);
-    expect(chip().textContent).toContain("2 children");
+    expect(chip().querySelector("[data-better-sidebar-children='count']")?.textContent).toBe("2");
     expect(within(chip()).getAllByRole("img", { name: "claude" })).toHaveLength(
-      2,
+      1,
     );
     expect(
       chip().querySelector("[data-better-sidebar-children='overflow']"),
     ).toBeNull();
   });
 
-  it("caps the cluster at three glyphs and adds an overflow marker", () => {
+  it("dedupes vendor icons across five children and still counts them all", () => {
     render([
       thread("parent"),
       child("c1", "parent"),
@@ -165,34 +169,43 @@ describe("collapsed chip (B58.3, B58.4)", () => {
       child("c5", "parent"),
     ]);
     expect(within(chip()).getAllByRole("img", { name: "claude" })).toHaveLength(
-      3,
+      1,
     );
-    expect(
-      chip().querySelector("[data-better-sidebar-children='overflow']")
-        ?.textContent,
-    ).toBe("+2");
-    expect(chip().textContent).toContain("5 children");
+    expect(chip().querySelector("[data-better-sidebar-children='count']")?.textContent).toBe("5");
   });
 
-  it("reads 'Needs you' when any child is blocked on the user", () => {
+  it("shows one icon per distinct vendor, capped at three", () => {
+    render([
+      thread("parent"),
+      child("c1", "parent", { providerId: "claude" }),
+      child("c2", "parent", { providerId: "codex" }),
+      child("c3", "parent", { providerId: "gemini" }),
+      child("c4", "parent", { providerId: "opencode" }),
+    ]);
+    expect(within(chip()).getAllByRole("img")).toHaveLength(3);
+    expect(chip().querySelector("[data-better-sidebar-children='count']")?.textContent).toBe("4");
+  });
+
+  it("turns the count badge amber and keeps the words out when a child is blocked on the user", () => {
     render([
       thread("parent"),
       child("c1", "parent"),
       child("c2", "parent", { hasPendingInteraction: true }),
     ]);
-    expect(chip().textContent).toContain("Needs you");
-    expect(chip().textContent).not.toContain("2 children");
+    const badge = chip().querySelector("[data-better-sidebar-children='count']");
+    expect(badge?.getAttribute("class")).toContain("text-amber-500");
+    expect(chip().textContent).not.toContain("Needs you");
   });
 
-  it("drops the label on a compact viewport but keeps the cluster (B58.4)", () => {
+  it("renders the same icons plus count on a compact viewport (B58.4)", () => {
     render([thread("parent"), child("c1", "parent")], {
       isCompactViewport: true,
     });
-    expect(chip().textContent).not.toContain("1 children");
     expect(within(chip()).getAllByRole("img", { name: "claude" })).toHaveLength(
       1,
     );
-    // The accessible name survives the dropped label.
+    expect(chip().querySelector("[data-better-sidebar-children='count']")?.textContent).toBe("1");
+    // The accessible name survives.
     expect(chip().getAttribute("aria-label")).toBe("1 child threads");
   });
 });
@@ -231,27 +244,27 @@ describe("working children (B75)", () => {
     expect(ringed()).toHaveLength(0);
   });
 
-  /** B75.2, both polarities: N counts the running children, not all of them. */
-  it("reads 'N children' when none is running (B75.2)", () => {
+  /** B81: the count badge counts all children; running shows as the ring. */
+  it("counts every child in the badge when none is running (B75.2)", () => {
     render([
       thread("parent"),
       child("c1", "parent"),
       child("c2", "parent"),
       child("c3", "parent"),
     ]);
-    expect(chip().textContent).toContain("3 children");
-    expect(chip().textContent).not.toContain("working");
+    expect(chip().querySelector("[data-better-sidebar-children='count']")?.textContent).toBe("3");
+    expect(ringed()).toHaveLength(0);
   });
 
-  it("reads 'N working' counting only the running children (B75.2)", () => {
+  it("rings the vendor whose child is running and counts all children (B75.2)", () => {
     render([
       thread("parent"),
       child("c1", "parent", { indicator: "runtime" }),
       child("c2", "parent", { indicator: "workflow" }),
       child("c3", "parent"),
     ]);
-    expect(chip().textContent).toContain("2 working");
-    expect(chip().textContent).not.toContain("3 children");
+    expect(chip().querySelector("[data-better-sidebar-children='count']")?.textContent).toBe("3");
+    expect(ringed()).toHaveLength(1);
   });
 
   /**
@@ -259,15 +272,17 @@ describe("working children (B75)", () => {
    * one state that costs the user something to miss. The rings still draw —
    * they mark a different child than the pending one does.
    */
-  it("gives the label and the amber to attention, and still rings (B75.4)", () => {
+  it("ambers the count badge for attention, and still rings (B75.4)", () => {
     render([
       thread("parent"),
       child("c1", "parent", { hasPendingInteraction: true }),
       child("c2", "parent", { indicator: "runtime" }),
     ]);
-    expect(chip().textContent).toContain("Needs you");
-    expect(chip().textContent).not.toContain("working");
-    expect(chip().getAttribute("class")).toContain("text-amber-500");
+    expect(
+      chip()
+        .querySelector("[data-better-sidebar-children='count']")
+        ?.getAttribute("class"),
+    ).toContain("text-amber-500");
     expect(ringed()).toHaveLength(1);
   });
 
@@ -275,12 +290,11 @@ describe("working children (B75)", () => {
    * B75.5. The rings are the only working signal the phone gets, which is the
    * reason the signal is a mark and not just a word.
    */
-  it("keeps the rings on a compact viewport, where the label is dropped (B75.5)", () => {
+  it("keeps the rings on a compact viewport, same as everywhere else (B75.5)", () => {
     render(
       [thread("parent"), child("c1", "parent", { indicator: "runtime" })],
       { isCompactViewport: true },
     );
-    expect(chip().textContent).not.toContain("working");
     expect(ringed()).toHaveLength(1);
   });
 
@@ -502,6 +516,13 @@ function handlers(
         execution: { model: "claude-opus-5", reasoningLevel: "high" },
       })),
     }),
+    threadWorkStats: ({ threadIds }) => ({
+      stats: threadIds.map((threadId) => ({
+        threadId,
+        tokens: 85700,
+        toolCalls: 11,
+      })),
+    }),
     lastActivity: () => ({ activity: [] }),
     localHost: () => ({ hostId: null }),
     ...overrides,
@@ -581,7 +602,7 @@ describe("batched executions call (B71)", () => {
     expect(rows()[0].textContent).toContain("claude-opus-5");
   });
 
-  it("keeps every title and both glyphs when the call rejects (B71.3)", async () => {
+  it("keeps every title and the status glyph when the call rejects (B71.3)", async () => {
     const slot = renderRich(
       [
         thread("parent"),
@@ -605,17 +626,18 @@ describe("batched executions call (B71)", () => {
     fireEvent.click(chip());
     await settle();
 
-    // The list is intact — a failed lookup never blanks the children.
+    // The list is intact — a failed lookup never blanks the children. The
+    // provider mark rides on the metadata line (B83), so it is absent too.
     expect(rows()).toHaveLength(2);
     for (const row of rows()) {
       expect(row.textContent).toMatch(/c[12]/);
-      expect(within(row).getByRole("img", { name: "claude" })).toBeTruthy();
       expect(
         within(row).getByRole("img", { name: "Thread needs user input" }),
       ).toBeTruthy();
     }
     // B71.3: the metadata line is simply absent, and no spinner replaces it.
     expect(screen.getByRole("list").textContent).not.toContain("·");
+    expect(screen.getByRole("list").textContent).not.toContain("claude");
     expect(executionCalls(slot)).toHaveLength(1);
   });
 
@@ -629,97 +651,93 @@ describe("batched executions call (B71)", () => {
   });
 });
 
-describe("child row metadata (B70)", () => {
-  it("renders model and effort verbatim (B70.2)", async () => {
+describe("child row metadata (B83/B85, sidebar-consistent)", () => {
+  it("renders model, effort, duration, tokens and tools on the second line (B85)", async () => {
+    const base = nowMinute();
+    renderRich(
+      [
+        thread("parent"),
+        child("c1", "parent", {
+          createdAt: base - 3 * MINUTE,
+          updatedAt: base - MINUTE,
+        }),
+      ],
+      {
+        rpc: {
+          threadExecutions: ({ threadIds }) => ({
+            executions: threadIds.map((threadId) => ({
+              threadId,
+              execution: {
+                model: "anthropic/claude-opus-5[1m]",
+                reasoningLevel: "xhigh",
+              },
+            })),
+          }),
+          threadWorkStats: ({ threadIds }) => ({
+            stats: threadIds.map((threadId) => ({
+              threadId,
+              tokens: 85_700,
+              toolCalls: 11,
+            })),
+          }),
+        },
+      },
+    );
+    fireEvent.click(chip());
+    await settle();
+    const text = rows()[0].textContent ?? "";
+    expect(text).toContain("anthropic/claude-opus-5[1m]");
+    expect(text).toContain("xhigh");
+    // Duration: 2m of work, created 3m ago, finished 1m ago.
+    expect(text).toContain("2m");
+    // t3's token compaction, not the raw integer.
+    expect(text).toContain("85.7k tok");
+    expect(text).toContain("11 tools");
+  });
+
+  it("drops a null stat's segment without leaving a doubled separator (B70.4)", async () => {
     renderRich([thread("parent"), child("c1", "parent")], {
       rpc: {
-        threadExecutions: ({ threadIds }) => ({
-          executions: threadIds.map((threadId) => ({
+        threadWorkStats: ({ threadIds }) => ({
+          stats: threadIds.map((threadId) => ({
             threadId,
-            execution: {
-              model: "anthropic/claude-opus-5[1m]",
-              reasoningLevel: "xhigh",
-            },
+            tokens: null,
+            toolCalls: null,
           })),
         }),
       },
     });
     fireEvent.click(chip());
     await settle();
-    expect(rows()[0].textContent).toContain("anthropic/claude-opus-5[1m]");
-    expect(rows()[0].textContent).toContain("xhigh");
+    const text = rows()[0].textContent ?? "";
+    expect(text).toContain("claude-opus-5 · high");
+    expect(text).not.toContain("tok");
+    expect(text).not.toContain("tools");
+    expect(text).not.toMatch(/· .*· .*·/);
   });
 
-  it("measures a running child from createdAt to now (B70.1)", async () => {
+  it("shows the sidebar's relative time in the trailing slot and work duration in the line", async () => {
     const base = nowMinute();
     renderRich([
       thread("parent"),
       child("c1", "parent", {
         indicator: "runtime",
         createdAt: base - 47 * MINUTE,
-        // Time-since-activity would read 7m; the duration must read 47m.
         updatedAt: base - 40 * MINUTE,
       }),
     ]);
     fireEvent.click(chip());
     await settle();
+    // The trailing slot is the sidebar's clock: age since last activity.
+    expect(rows()[0].textContent).toContain("40m");
+    // The metadata line carries the work duration, t3's label (B85).
     expect(rows()[0].textContent).toContain("47m");
-    expect(rows()[0].textContent).not.toContain("7m ·");
   });
 
-  it("measures a finished child from createdAt to updatedAt (B70.1)", async () => {
-    const base = nowMinute();
-    renderRich([
-      thread("parent"),
-      child("c1", "parent", {
-        indicator: "none",
-        createdAt: base - 30 * HOUR,
-        updatedAt: base - 27 * HOUR,
-      }),
-    ]);
-    fireEvent.click(chip());
-    await settle();
-    // 3h of work, not the 30h since it started.
-    expect(rows()[0].textContent).toContain("3h");
-    expect(rows()[0].textContent).not.toContain("30h");
-  });
-
-  it("says '<1m' for a child that finished inside a minute (B70.5)", async () => {
-    const base = nowMinute();
-    renderRich([
-      thread("parent"),
-      child("c1", "parent", { createdAt: base, updatedAt: base }),
-    ]);
-    fireEvent.click(chip());
-    await settle();
-    expect(rows()[0].textContent).toContain("<1m");
-    // "now" is an age, and reads as nonsense as a duration.
-    expect(rows()[0].textContent).not.toContain("now");
-  });
-
-  it("names a fork and never names a plain thread (B70.3)", async () => {
-    renderRich([
-      thread("parent"),
-      child("c1", "parent", { originKind: "fork" }),
-      child("c2", "parent", { originKind: null }),
-    ]);
-    fireEvent.click(chip());
-    await settle();
-    expect(rows()[0].textContent).toContain("fork");
-    expect(screen.getByRole("list").textContent).not.toContain("thread");
-  });
-
-  it("drops the model and effort, and their separators, on a null execution (B70.4)", async () => {
+  it("drops the whole metadata line on a null execution (B70.4)", async () => {
     const base = nowMinute();
     renderRich(
-      [
-        thread("parent"),
-        child("c1", "parent", {
-          originKind: null,
-          createdAt: base - 5 * MINUTE,
-          updatedAt: base - 5 * MINUTE,
-        }),
-      ],
+      [thread("parent"), child("c1", "parent")],
       {
         rpc: {
           threadExecutions: ({ threadIds }) => ({
@@ -734,12 +752,10 @@ describe("child row metadata (B70)", () => {
     fireEvent.click(chip());
     await settle();
 
-    const text = rows()[0].textContent ?? "";
-    // The one surviving part stands alone: no leading, trailing or doubled
-    // separator, and no placeholder dash in the missing parts' place.
-    expect(text).toContain("<1m");
-    expect(text).not.toContain("·");
-    expect(text).not.toContain("claude-opus-5");
+    // The sidebar's child row drops the line entirely; no mark with nothing
+    // to qualify, no placeholder.
+    expect(rows()[0].textContent).not.toContain("·");
+    expect(rows()[0].textContent).not.toContain("claude-opus-5");
   });
 });
 
@@ -758,15 +774,17 @@ describe("settings gate (B72)", () => {
     fireEvent.click(chip());
     await settle();
 
-    // B60.1: compact performs no backend RPC of any kind.
+    // B60.1: compact performs no backend RPC of any kind — neither lookup.
     expect(executionCalls(slot)).toHaveLength(0);
-    // The row is still a row: title, provider and status.
+    expect(slot.inspection.rpcCalls.filter((c) => c.method === "threadWorkStats")).toHaveLength(0);
+    // The row is still a row: title, status, and the trailing time.
     const row = rows()[0];
     expect(row.textContent).toContain("c1");
-    expect(within(row).getByRole("img", { name: "claude" })).toBeTruthy();
     expect(
       within(row).getByRole("img", { name: "Thread needs user input" }),
     ).toBeTruthy();
+    // The provider mark rides the metadata line (B83); without it, no mark.
+    expect(within(row).queryByRole("img", { name: "claude" })).toBeNull();
     expect(row.textContent).not.toContain("claude-opus-5");
   });
 
