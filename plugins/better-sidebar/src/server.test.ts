@@ -90,6 +90,8 @@ const goalCleared = (seq: number) =>
 function hostWith(options: {
   events?: Record<string, StoredEvent[]>;
   execution?: unknown;
+  /** B85: per-thread timeline rows the fake `threads.timeline` returns. */
+  timeline?: Record<string, unknown[]>;
 }): FakePluginHost {
   const byThread = options.events ?? {};
   const sdk: CreateFakePluginHostOptions["sdk"] = {
@@ -117,6 +119,13 @@ function hostWith(options: {
             }));
           return limit ? rows.slice(0, Number(limit)) : rows;
         },
+      },
+      timeline: async (args) => {
+        const { threadId } = args as { threadId: string };
+        if (options.timeline && threadId in options.timeline) {
+          return { rows: options.timeline[threadId] } as never;
+        }
+        throw new Error("no timeline staged");
       },
     },
   };
@@ -520,8 +529,51 @@ describe("handler failure (ruling 10)", () => {
   });
 });
 
+describe("threadWorkStats (B85)", () => {
+  const toolRow = (seq: number) => ({
+    kind: "work",
+    workKind: "tool",
+    callId: `call_${seq}`,
+    id: `w${seq}`,
+    createdAt: seq,
+    startedAt: seq,
+    sourceSeqStart: seq,
+    sourceSeqEnd: seq,
+    status: "completed",
+    threadId: "t1",
+    turnId: null,
+    toolName: "Bash",
+  });
+
+  it("reads cumulative tokens and counts only rows that carry a callId", async () => {
+    const host = hostWith({
+      events: { t1: [tokenUsage(85_700)] },
+      timeline: { t1: [toolRow(1), { kind: "conversation", role: "user" }, { kind: "work", workKind: "approval" }] },
+    });
+    await plugin(host.bb);
+
+    const stat = (await host.harness.callRpc("threadWorkStats", {
+      threadIds: ["t1"],
+    })) as { stats: { threadId: string; tokens: number | null; toolCalls: number | null }[] };
+
+    expect(stat.stats[0]).toEqual({ threadId: "t1", tokens: 85_700, toolCalls: 1 });
+  });
+
+  it("degrades to nulls, never throws, when the timeline read fails", async () => {
+    const host = hostWith({ events: { t1: [tokenUsage(85_700)] } });
+    await plugin(host.bb);
+
+    const stat = (await host.harness.callRpc("threadWorkStats", {
+      threadIds: ["t1"],
+    })) as { stats: { tokens: number | null; toolCalls: number | null }[] };
+
+    expect(stat.stats[0].tokens).toBe(85_700);
+    expect(stat.stats[0].toolCalls).toBeNull();
+  });
+});
+
 describe("registration", () => {
-  it("registers all five contract methods and the fourteen settings descriptors (B59, B85)", async () => {
+  it("registers all six contract methods and the fourteen settings descriptors (B59, B85)", async () => {
     const host = hostWith({});
     await plugin(host.bb);
 
@@ -530,6 +582,7 @@ describe("registration", () => {
       "rowSignals",
       "threadExecutions",
       "lastActivity",
+      "threadWorkStats",
       "localHost",
     ]);
 
