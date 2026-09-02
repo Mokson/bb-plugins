@@ -64,14 +64,26 @@ describe("rejoining a session", () => {
     }
   });
 
-  it("is a no-op through the pending queue once every turn is matched", () => {
+  it("is a no-op through the pending queue once every turn is EXACT", () => {
     const harness = new JoinHarness(TURNS);
     try {
       const deps = harness.deps(ROWS);
       joinPendingTurns(deps);
-      const first = dump(harness);
+      // t2 is the zero-token turn: its first pass compares the slice against
+      // bb totals of zero, so it lands `log-window` and stays in the queue.
+      // The pass that adopted the log sums is what makes the NEXT comparison
+      // agree, which is the whole reason a `log-window` verdict is retried.
+      expect(harness.turnRow("t2")["split_source"]).toBe("log-window");
+      expect(joinPendingTurns(deps)).toMatchObject({
+        considered: 1,
+        logExact: 1,
+      });
+      expect(harness.turnRow("t2")["split_source"]).toBe("log-exact");
+
+      // Both turns are exact now, so the queue is empty and the rows settle.
+      const settled = dump(harness);
       expect(joinPendingTurns(deps)).toMatchObject({ considered: 0 });
-      expect(dump(harness)).toEqual(first);
+      expect(dump(harness)).toEqual(settled);
     } finally {
       harness.dispose();
     }

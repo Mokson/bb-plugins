@@ -347,6 +347,21 @@ function price(
   );
 }
 
+function writeCost(
+  deps: JoinDeps,
+  turn: PendingSplitTurn,
+  cost: PriceTurnResult,
+): void {
+  deps.events.updateTurnCost({
+    thread_id: turn.thread_id,
+    turn_id: turn.turn_id,
+    cost_usd: cost.costUsd,
+    cost_source: cost.costSource,
+    pricing_status: cost.pricingStatus,
+    cache_savings_usd: cost.cacheSavingsUsd,
+  });
+}
+
 /** Per-turn provenance, kept out of the schema: obs_match has no detail column. */
 interface TurnDetail {
   rows: number;
@@ -504,15 +519,7 @@ export function joinSession(
       else summary.logWindow += 1;
     }
 
-    const cost = price(deps, turn, sums);
-    deps.events.updateTurnCost({
-      thread_id: turn.thread_id,
-      turn_id: turn.turn_id,
-      cost_usd: cost.costUsd,
-      cost_source: cost.costSource,
-      pricing_status: cost.pricingStatus,
-      cache_savings_usd: cost.cacheSavingsUsd,
-    });
+    writeCost(deps, turn, price(deps, turn, sums));
   });
 
   summary.sidechain = joinSidechains(
@@ -612,9 +619,42 @@ function joinSidechains(
   return created;
 }
 
-/** Join every turn still missing a split, newest sessions included. */
-export function joinPendingTurns(deps: JoinDeps, limit = 500): JoinSummary {
-  const pending = deps.events.listTurnsPendingSplit(limit);
+/**
+ * Price turns from bb's own totals, with no log rows and no join.
+ *
+ * A turn is born `unavailable` with a NULL price, and until this existed the
+ * only code that ever priced one was `joinSession` - so a freshly completed
+ * turn stayed costless until a join pass reached it, and a turn whose
+ * provider session never resolves stayed costless forever. bb already
+ * reports the tokens and the requested model, which is a bill; the join only
+ * ever refines HOW that bill splits. The cache split is unknown here, so
+ * `cachedInputTokens` prices at the read rate and `cacheSavingsUsd` stays
+ * NULL rather than inventing a saving - the same honesty the split columns
+ * keep.
+ */
+export function priceUnpricedTurns(
+  deps: JoinDeps,
+  turns: readonly PendingSplitTurn[],
+): number {
+  let priced = 0;
+  for (const turn of turns) {
+    const cost = price(deps, turn, null);
+    // A status of null would mean the pricer said nothing at all; writing it
+    // back would leave the turn indistinguishable from never-priced.
+    if (cost.pricingStatus === null) continue;
+    writeCost(deps, turn, cost);
+    priced += 1;
+  }
+  return priced;
+}
+
+/** Join every turn still missing a proven split, newest sessions included. */
+export function joinPendingTurns(
+  deps: JoinDeps,
+  limit = 500,
+  cutoff = "",
+): JoinSummary {
+  const pending = deps.events.listTurnsPendingSplit(limit, cutoff);
   const groups = new Map<string, PendingSplitTurn[]>();
   for (const turn of pending) {
     const key = groupKey(turn);

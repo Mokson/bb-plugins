@@ -69,6 +69,10 @@ Later migrations append `obs_ctx_snapshot`, `obs_ctx_block` (phase 4), `eval_run
 
 Join rule: rows by `(provider, provider_thread_id)`, where `provider` walks an alias table because bb names the provider it drives while the indexer names the parser that read the file (`pi` -> `bb-pi-bridge`, `pi`; `acp-omp` -> `omp`; `acp-opencode` -> `opencode`; others identity), first id with rows wins. The session's main-chain rows are then PARTITIONED over every turn of the thread, matched ones included: each row goes to the latest turn whose `started_at - 2s` is at or before its `ts`, consumed exactly once, and a turn's tokens are the SUM over its slice. Rows before the first turn, and rows past the last turn's `completed_at + 10s`, stay unattributed. Method `log-exact` when `cache_read + cache_write == cachedInputTokens` and `output == outputTokens`, `log-window` otherwise, `unavailable` when the slice is empty and both split columns stay NULL. A turn bb reported zero tokens for adopts the log sums. Sidechain rows partition the same way per `agent_id`, each agent becoming one synthetic child turn per parent turn with `seat` from the subagent tag.
 
+`log-window` is PROVISIONAL, not terminal. A turn is joined within a minute of completing, while bb's own usage totals are still catching up with requests the log already recorded, so the first comparison routinely fails on a partition that is already correct. Only `log-exact` and `sidechain` leave the pending queue; a `log-window` turn is re-joined on every scheduled pass while it is younger than 24h, and `backfill` re-joins the whole history regardless of age. The re-join loop therefore runs to a fixpoint - it stops when a pass moves the same turns the pass before it did - rather than on an empty queue, and turns with no split yet sort ahead of retries so a backlog can never starve them.
+
+Pricing does NOT depend on the join. Every drained turn with bb token counts and a `model_requested` is priced from bb's own totals at ingest; the cache split is unknown there, so `cachedInputTokens` prices at the cache-read rate and `cache_savings_usd` stays NULL. The join later re-prices from the finer log split. A turn whose provider session never resolves still carries a cost and a `pricing_status`.
+
 Model resolution: `model_reported` from the log row, `model_requested` from the newest `client/turn/requested.data.execution.model`. Disagreement sets the `COST.md` `mismatch` flag.
 
 Cost precedence: `logged_cost_usd`, then catalog price, then `unpriceable`, then `unknown`.
@@ -169,7 +173,7 @@ pricing catalog ---------------------------------- priceTurn
 | eval smoke suite | cron | nightly, skipped when neither the stack repo nor the cases changed | eval |
 | retention prune | cron | daily | core |
 
-`bb observatory backfill --since <date>` re-runs the indexer and join over a date range and reports coverage as the share of turns with `log-exact`.
+`bb observatory backfill --since <date>` re-runs the indexer and join over a date range and reports coverage as the share of turns with `log-exact`. `bb observatory index` runs the same join after its passes, because rows nobody has claimed answer nothing. `bb observatory coverage [--provider <id>]` prints the ledger total and a per-provider block: the exactness bar is a per-provider bar, and a provider with no log parser otherwise drags a healthy one under it.
 
 ### Reuse map
 

@@ -11,7 +11,7 @@
 // reconcile pass, never a lost row, and a duplicated signal costs nothing.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { ObservatoryStore } from "./store.js";
-import type { EventStore } from "./store-events.js";
+import { EventStore } from "./store-events.js";
 import {
   emptyCarry,
   normalizeEvents,
@@ -20,6 +20,8 @@ import {
 import { ThreadRegistry } from "./threads.js";
 import {
   joinPendingTurns,
+  priceUnpricedTurns,
+  type JoinDeps,
   type JoinSummary,
   type LogTurnSource,
   type PriceTurnFn,
@@ -38,6 +40,19 @@ export const STALE_AFTER_MS = 5 * 60 * 1_000;
  * is authoritative, so this is purely a read cache and evicting is free.
  */
 export const CARRY_CACHE_LIMIT = 256;
+/** Hard ceiling on join passes per `rejoinPending`, above the fixpoint test. */
+export const MAX_REJOIN_PASSES = 50;
+
+/** What a join pass MOVED, ignoring how much it re-read to move it. */
+function passFingerprint(summary: JoinSummary): string {
+  return [
+    summary.logExact,
+    summary.logWindow,
+    summary.sidechain,
+    summary.unavailable,
+    summary.rows,
+  ].join(":");
+}
 
 /** Event types that mean "this thread has ledger-relevant new rows". */
 const INGEST_EVENT_TYPES = new Set([
@@ -110,7 +125,8 @@ export interface Ingest {
   /** Forget how far these threads were drained; the next drain re-reads all. */
   reset(threadIds: readonly string[]): void;
   reconcileStale(): Promise<number>;
-  rejoinPending(): JoinSummary | null;
+  /** `all` retries the whole history, not just turns still settling. */
+  rejoinPending(all?: boolean): JoinSummary | null;
   counters(): IngestCounters;
 }
 
@@ -300,6 +316,11 @@ export function createIngest(options: IngestOptions): Ingest {
     // resident copy is redundant and an idle thread stops holding memory.
     if (ingested === 0) carries.delete(threadId);
     else rememberCarry(threadId, carry);
+    // Price what just landed from bb's own totals. The join runs on a
+    // five-minute schedule and needs a resolved provider session; neither is
+    // a precondition for a bill, so waiting for it left every fresh turn
+    // showing no cost at all.
+    if (ingested > 0) priceDrained(threadId);
     counters.drains += 1;
     counters.lastDrainAt = new Date(now()).toISOString();
     if (ingested > 0 && options.onThreadCommitted) {
@@ -377,7 +398,42 @@ export function createIngest(options: IngestOptions): Ingest {
   }
 
   /**
-   * Re-run the log join over every turn still without a proven split.
+   * The join's dependency bundle, or null with no pricer to build it around.
+   *
+   * `logs` falls back to an empty source rather than blocking: the pricing
+   * path never reads a log row, and the join path checks for the real log
+   * stack itself before it asks for these.
+   */
+  function joinDeps(): JoinDeps | null {
+    if (!options.priceTurn) return null;
+    return {
+      store,
+      events,
+      logs: options.logs ?? { listLogTurns: () => [] },
+      priceTurn: options.priceTurn,
+      catalog: options.catalog,
+    };
+  }
+
+  /** Give this thread's just-committed turns a price from bb's own totals. */
+  function priceDrained(threadId: string): void {
+    const deps = joinDeps();
+    if (!deps) return;
+    try {
+      priceUnpricedTurns(deps, events.listTurnsPendingPrice(threadId));
+    } catch (error) {
+      // A pricing failure must never cost the ledger its rows: the tokens are
+      // already committed and the next pass re-reads whatever stayed NULL.
+      bb.log.warn(
+        `[core] pricing ${threadId} failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  /**
+   * Re-run the log join over every turn still without a PROVEN split.
    *
    * DRAINED, not one page. The pending queue is capped per call and ordered
    * oldest first, so a single pass over a ledger with more than that many
@@ -385,34 +441,39 @@ export function createIngest(options: IngestOptions): Ingest {
    * at - permanently unattributed. A backfill of 802 turns matched 73% on one
    * pass and 97% once drained.
    *
-   * Turns that stay `unavailable` are re-read on every pass and never clear,
-   * so the loop stops on a pass that proved nothing new rather than on an
-   * empty queue. `considered` accumulates work done across passes and so
+   * Turns that stay `unavailable`, and young `log-window` turns hoping for a
+   * settled comparison, are both re-read on every pass and may never clear.
+   * So the loop runs to a FIXPOINT - it stops when a pass moves the same
+   * turns the pass before it did - rather than on an empty queue or on
+   * "proved something", either of which spins forever now that a re-read turn
+   * counts as proof. `considered` accumulates work done across passes and so
    * counts a re-read turn once per pass; the split counters do not.
+   *
+   * `all` widens the retry from young turns to the whole history. The
+   * scheduled pass stays narrow because an old `log-window` turn has nothing
+   * left to learn; a backfill was asked for explicitly and re-proves
+   * everything.
    */
-  function rejoinPending(): JoinSummary | null {
+  function rejoinPending(all = false): JoinSummary | null {
     counters.lastLogsPassAt = new Date(now()).toISOString();
-    if (!options.logs || !options.priceTurn) return null;
-    const deps = {
-      store,
-      events,
-      logs: options.logs,
-      priceTurn: options.priceTurn,
-      catalog: options.catalog,
-    };
-    const total = joinPendingTurns(deps);
-    let proved = total.logExact + total.logWindow + total.sidechain;
-    while (proved > 0) {
-      const pass = joinPendingTurns(deps);
-      proved = pass.logExact + pass.logWindow + pass.sidechain;
-      total.considered += pass.considered;
-      total.logExact += pass.logExact;
-      total.logWindow += pass.logWindow;
-      total.sidechain += pass.sidechain;
-      total.unavailable = pass.unavailable;
-      total.rows += pass.rows;
-      total.unattributedBefore += pass.unattributedBefore;
-      total.unattributedAfter += pass.unattributedAfter;
+    const deps = options.logs ? joinDeps() : null;
+    if (!deps) return null;
+    const cutoff = all ? "" : EventStore.rejoinCutoff(now());
+    const total = joinPendingTurns(deps, undefined, cutoff);
+    let previous = passFingerprint(total);
+    for (let pass = 1; pass < MAX_REJOIN_PASSES; pass += 1) {
+      const next = joinPendingTurns(deps, undefined, cutoff);
+      total.considered += next.considered;
+      total.logExact += next.logExact;
+      total.logWindow += next.logWindow;
+      total.sidechain += next.sidechain;
+      total.unavailable = next.unavailable;
+      total.rows += next.rows;
+      total.unattributedBefore += next.unattributedBefore;
+      total.unattributedAfter += next.unattributedAfter;
+      const fingerprint = passFingerprint(next);
+      if (fingerprint === previous) break;
+      previous = fingerprint;
     }
     counters.lastJoin = total;
     return total;
