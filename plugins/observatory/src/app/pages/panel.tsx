@@ -15,6 +15,7 @@ import { useStatus } from "./status.js";
 import { CostOverview } from "./cost.js";
 import { CostCache } from "./cost-cache.js";
 import { ThreadCost } from "./thread-cost.js";
+import { Distillery } from "./distillery.js";
 
 export { PANEL_PATH, PLACEHOLDERS, ROUTES };
 
@@ -102,6 +103,7 @@ function Route({ segments }: { segments: readonly string[] }) {
 
   if (head === undefined || head === "") return <Inbox />;
   if (head === "settings") return <ObservatorySettings />;
+  if (head === "distillery") return <Distillery />;
   if (head === "threads" && second !== undefined) {
     return <ThreadCost threadId={second} />;
   }

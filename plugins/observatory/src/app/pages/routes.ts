@@ -21,13 +21,13 @@ export const ROUTES = [
 ] as const;
 
 /**
- * What each not-yet-built route will hold, one line each. `cost` is absent:
- * it is built, so a placeholder for it would be a second, wrong answer.
+ * What each not-yet-built route will hold, one line each. `cost` and
+ * `distillery` are absent: they are built, so a placeholder for either would
+ * be a second, wrong answer.
  */
 export const PLACEHOLDERS: Record<string, string> = {
   stalls: "Stall rules, the steer ladder and tree budget. Phases 2 and 3.",
   context: "Instruction, skill and MCP composition audit. Phase 4.",
   audit: "Session metrics, failure ledger and the audit pack. Phase 4.",
   eval: "Deliver-stack regression cases and baselines. Phase 5.",
-  distillery: "Correction mining and the draft review queue. Phase 6.",
 };
