@@ -171,3 +171,89 @@ Run ids: eval-2026-09-02T06-59-00-337 (interaction defect),
 eval-2026-09-02T07-04-53-131 (post-fix). Thread ids: thr_w7pdaadq5h,
 thr_9rcwvqqmzn. Cost: 0.00 usd reported (see observation above). Wall: 43s.
 Gate exit code: not run.
+
+---
+
+## Follow-up 2026-09-02 (second pass): ingest gap closed, case still not driving the harness
+
+Packet items 5, 6 and 7 from `qa/phase346/QA.md` follow-up. Commits `989661f`
+(drain), `f02d283` (question text), `d30756b` (refine pass). Case files are
+outside this repo: `~/.agents/eval/cases/*.yaml`.
+
+### Item 5 - metrics read before ingest drained: FIXED
+
+`obs_turn` for `thr_9rcwvqqmzn` holds `output_tokens 1738, cost_usd 0.2272413`
+today, so the zeros were a read-ordering race, not a missing attribution. The
+runner now awaits core's `drainThread` for its own thread before the harvest
+read (`src/eval/runner.ts:445`), wired from core's ingest through
+`EvalLiveDeps.drainThread`. A drain failure leaves the metrics stale rather
+than failing the trial.
+
+Regression test `test/eval-metrics-are-read-after-ingest-drains.test.ts`, proven
+red against the defect (`await input.drainThread?.(...)` disabled: 1 failed,
+1 passed) and green with it (2 passed).
+
+Live confirmation across the three runs of this case:
+
+| run | tool calls | tokens | usd |
+| --- | --- | --- | --- |
+| eval-2026-09-02T07-04-53-131 (before) | 8 | 0 | 0.00 |
+| eval-2026-09-02T07-36-58-556 (after) | 6 | 453,034 | 0.11 |
+| eval-2026-09-02T07-38-33-883 (after) | 12 | 908,839 | 0.21 |
+
+The cost and token assertions no longer pass vacuously.
+
+### Item 6 - text_regex could not match a provider question: FIXED
+
+`interactionText` now includes `payload.questions[].prompt`
+(`src/eval/runner.ts:118`). Test
+`test/eval-answer-rules-match-the-question-text.test.ts`, red-first proven
+(2 failed against the defect, 2 passed with the fix).
+
+### Item 7 - case invocation shaping: DONE; the run still FAILS its ledger assertion
+
+All five cases in `~/.agents/eval/cases/` were reshaped consistently. The
+loader's YAML subset rejects block scalars (`yaml line N: block scalars are not
+supported`), so each `invocation.text` is a single quoted line.
+
+Shape now used, after two runs showed weaker forms do not work:
+
+> First, read the file ~/.agents/skills/deliver/SKILL.md in full and follow it -
+> it is the harness this task runs under, and skipping it fails the task. Do the
+> same for ~/.agents/skills/delegate/SKILL.md before your first delegation. Then
+> work autonomously per those two skills. Route: <route>. tracker:none.
+> Task: <task>.
+
+- `/deliver tracker:none ...` (original) resolves to no command; the agent read
+  it as prose.
+- Naming the skill the way the factory does (`prompts/deliver/deliver.md`:
+  "Work autonomously per the `deliver` skill ... invoke both natively") also
+  left it unloaded - run `eval-2026-09-02T07-36-58-556`, thread
+  `thr_87q4wq9f5w`, 1 turn / 6 tool calls / 48s, ending in prose about a
+  one-line revert. The fixture project mounts no skill root, so there is no
+  `deliver` for a Skill tool to resolve; the path read has to be the first
+  instruction.
+- With the absolute-path read as step 1: run `eval-2026-09-02T07-38-33-883`,
+  thread `thr_ky4fcxqhuw`, 1 turn / 12 tool calls / 82s / 0.21 usd.
+
+```
+FAIL    bug-route-smoke trial 1  thread thr_ky4fcxqhuw
+  reason    assertions
+  FAIL ledger.exists: no docs/specs/*/LEDGER.md was produced
+  ok   exit_codes: npx vitest run exited 0
+  ok   trace.* (turns, tool calls, tokens, cost, wall, no provider errors)
+```
+
+Exit code 1. `eval baseline promote` and `eval run --gate` were therefore NOT
+run: both are gated on a passing run, and promoting this one would baseline a
+failure.
+
+### Residual: the case's target, not its invocation
+
+The seeded defect is a one-line revert (`Math.floor` back to `roundCents`). The
+agent fixes it in a single turn and reports in prose; the deliver skill's own
+route selection sends work that small down its fastest path, which produces no
+`docs/specs/*/LEDGER.md`. Three runs now agree on that. Closing this needs
+either a fixture defect large enough to earn the full route, or a `ledger.exists`
+assertion the fast path can satisfy - a change to the fixture or the assertion,
+outside the invocation-text scope of this packet.
