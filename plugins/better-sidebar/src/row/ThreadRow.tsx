@@ -83,6 +83,8 @@ export interface ThreadRowProps {
   execution?: { model: string; reasoningLevel: string } | null;
   /** B61.1: `false` skips `experimental_useSidebarThreadPullRequest` entirely. */
   showPrChip?: boolean;
+  /** B85: which quick actions the hover cluster draws. */
+  quickActions?: { pin: boolean; markRead: boolean; archive: boolean };
   /** B59: row 2's project name and branch. */
   showProjectName?: boolean;
   showBranch?: boolean;
@@ -150,6 +152,7 @@ function RowBody({
   showEffort = true,
   showRelativeTime = true,
   showSignals = true,
+  quickActions = { pin: true, markRead: false, archive: true },
   isCompactViewport,
   onNavigate,
   isActive = false,
@@ -395,6 +398,7 @@ function RowBody({
                 thread={thread}
                 title={row.title}
                 pullRequest={pullRequest}
+                quickActions={quickActions}
                 onNavigate={onNavigate}
                 onOpenPullRequest={openPullRequest}
                 renameEditor={renameEditor}

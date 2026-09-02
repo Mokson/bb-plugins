@@ -521,7 +521,7 @@ describe("handler failure (ruling 10)", () => {
 });
 
 describe("registration", () => {
-  it("registers all five contract methods and the eleven settings descriptors (B59)", async () => {
+  it("registers all five contract methods and the fourteen settings descriptors (B59, B85)", async () => {
     const host = hostWith({});
     await plugin(host.bb);
 
@@ -546,6 +546,9 @@ describe("registration", () => {
       "showBranch",
       "showModel",
       "showEffort",
+      "showQuickPin",
+      "showQuickMarkRead",
+      "showQuickArchive",
     ]);
     expect(descriptors.groupBy?.default).toBe("date");
     expect(descriptors.density?.default).toBe("default");
@@ -565,6 +568,13 @@ describe("registration", () => {
     // B84: effort ships off.
     expect(descriptors.showEffort?.type).toBe("boolean");
     expect(descriptors.showEffort?.default).toBe(false);
+    // B85: pin replaces mark-read as the first quick action.
+    for (const key of ["showQuickPin", "showQuickArchive"] as const) {
+      expect(descriptors[key]?.type).toBe("boolean");
+      expect(descriptors[key]?.default).toBe(true);
+    }
+    expect(descriptors.showQuickMarkRead?.type).toBe("boolean");
+    expect(descriptors.showQuickMarkRead?.default).toBe(false);
   });
 
   it("offers every B65 group mode as a select option", async () => {

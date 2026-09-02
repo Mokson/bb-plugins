@@ -24,6 +24,11 @@ export const SETTINGS_DEFAULTS: BetterSidebarSettings = {
   showModel: true,
   /** B84: effort off by default - the model alone is the common need. */
   showEffort: false,
+  /** B85: pin replaces mark-read as the first quick action; the read toggle
+   * remains in both menus. */
+  showQuickPin: true,
+  showQuickMarkRead: false,
+  showQuickArchive: true,
 };
 
 /**
@@ -60,6 +65,15 @@ export function parseSettings(
     showBranch: flag(values?.showBranch, SETTINGS_DEFAULTS.showBranch),
     showModel: flag(values?.showModel, SETTINGS_DEFAULTS.showModel),
     showEffort: flag(values?.showEffort, SETTINGS_DEFAULTS.showEffort),
+    showQuickPin: flag(values?.showQuickPin, SETTINGS_DEFAULTS.showQuickPin),
+    showQuickMarkRead: flag(
+      values?.showQuickMarkRead,
+      SETTINGS_DEFAULTS.showQuickMarkRead,
+    ),
+    showQuickArchive: flag(
+      values?.showQuickArchive,
+      SETTINGS_DEFAULTS.showQuickArchive,
+    ),
   };
 }
 
