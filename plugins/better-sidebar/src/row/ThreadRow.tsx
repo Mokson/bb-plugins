@@ -96,6 +96,11 @@ export interface ThreadRowProps {
   isCompactViewport: boolean;
   /** B47: called after every thread open, so the drawer closes and search clears. */
   onNavigate: () => void;
+  /**
+   * The row is the thread the route currently shows. The list decides it from
+   * its own `activeThreadId` slot prop; on a non-thread route no row is active.
+   */
+  isActive?: boolean;
   /** B10; supplied by the list, which owns the persisted collapse state. */
   isSubtreeCollapsed?: boolean;
   onToggleSubtree?: () => void;
@@ -147,6 +152,7 @@ function RowBody({
   showSignals = true,
   isCompactViewport,
   onNavigate,
+  isActive = false,
   isSubtreeCollapsed = false,
   onToggleSubtree,
   pullRequest,
@@ -214,6 +220,11 @@ function RowBody({
             // trailing indicator both key off.
             "group/row relative w-full min-w-0 rounded-md text-left text-[13px]",
             "hover:bg-accent/60 focus-within:ring-1 focus-within:ring-ring",
+            // The route's own row keeps a full-strength accent, so it stays
+            // distinct from the 60% wash hover paints. `hover:bg-accent` holds
+            // it there while the pointer is over it: twMerge keeps the later
+            // class of a group, so hovering an active row does not dim it.
+            isActive && "bg-accent hover:bg-accent",
           )}
           // The base inset is symmetric (`ROW_INSET_PX`); the per-depth indent
           // adds to the left only, because B9 needs a child to read as sitting
@@ -231,6 +242,7 @@ function RowBody({
             data-sidebar-thread-shortcut-target=""
             data-sidebar-thread-id={thread.id}
             aria-label={row.title}
+            aria-current={isActive ? "true" : undefined}
             className="absolute inset-0 cursor-pointer rounded-md focus-visible:outline-none"
             onClick={(event) => {
               event.preventDefault();

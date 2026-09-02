@@ -53,6 +53,7 @@ export function ThreadList(props: PluginThreadListProps) {
 }
 
 function ThreadListBody({
+  activeThreadId,
   isCompactViewport,
   onNavigate,
   searchQuery,
@@ -300,6 +301,9 @@ function ThreadListBody({
               showRelativeTime={settings.showRelativeTime}
               showSignals={settings.density === "detailed"}
               isCompactViewport={isCompactViewport}
+              // The route's own row, child rows included: they come through
+              // the same `section.rows` and so through this one call site.
+              isActive={row.thread.id === activeThreadId}
               // B47: the host clears its search field and closes the mobile
               // drawer here, so every open path goes through it.
               onNavigate={onNavigate}

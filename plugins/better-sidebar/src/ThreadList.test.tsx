@@ -1272,3 +1272,25 @@ describe("ThreadList — the panel controls", () => {
     expect(toggle.querySelector("[aria-label='New thread']")).toBeNull();
   });
 });
+
+describe("ThreadList — the active thread", () => {
+  /** The route's own row, read the way a screen reader reads it. */
+  function activeIds(): string[] {
+    return Array.from(document.querySelectorAll("[data-sidebar-thread-id][aria-current]")).map(
+      (node) => node.getAttribute("data-sidebar-thread-id") ?? "",
+    );
+  }
+
+  it("marks only the row the route currently shows", () => {
+    threadsState = ready([thread({ id: "a" }), thread({ id: "b" })]);
+    renderList({ activeThreadId: "a" });
+    expect(renderedIds()).toEqual(["a", "b"]);
+    expect(activeIds()).toEqual(["a"]);
+  });
+
+  it("marks no row on a non-thread route", () => {
+    threadsState = ready([thread({ id: "a" }), thread({ id: "b" })]);
+    renderList({ activeThreadId: null });
+    expect(activeIds()).toEqual([]);
+  });
+});
