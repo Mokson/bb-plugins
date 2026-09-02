@@ -172,6 +172,7 @@ Default log roots, checked by `doctor`: `~/.claude/projects` (claude-code),
 | `watch_activeNoTurnMinutes` | `10` | Active with no turn started, in minutes. |
 | `watch_burnTokens` | `150000` | Tokens burned since the last file change. |
 | `watch_retryCount` | `3` | Retrying provider errors within 10 minutes. |
+| `watch_stallBanner_enabled` | `true` | The stalled banner above the compose input. |
 | premise reminder | off | After a compaction, queue one message listing the run ledger's done-when rows and open decisions. Needs watch mode `steer`. |
 | quiet hours | `22-07` | Local-time window that suppresses notifications, `22-07` style. Signals are still recorded. Empty disables it. |
 

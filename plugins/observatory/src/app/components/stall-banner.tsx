@@ -13,6 +13,7 @@ import {
   useBbNavigate,
   useComposerView,
   useRealtime,
+  useSettings,
 } from "@get-bb/plugin-sdk/app";
 import { formatSilence } from "@/lib/format";
 import { useWatchQuery } from "@/lib/watch-rpc";
@@ -37,6 +38,9 @@ function composerThreadId(scope: ReturnType<typeof useComposerView>["scope"]): s
 }
 
 export function StallBanner() {
+  // The banner's own kill switch, read before every early return so hook order
+  // never depends on the setting. Anything but an explicit false keeps it on.
+  const bannerEnabled = useSettings().values["watch_stallBanner_enabled"] !== false;
   const view = useComposerView();
   const navigate = useBbNavigate();
   const threadId = composerThreadId(view.scope);
@@ -60,7 +64,7 @@ export function StallBanner() {
     });
   }, [navigate, threadId]);
 
-  if (threadId === null || list.kind !== "ready") return null;
+  if (!bannerEnabled || threadId === null || list.kind !== "ready") return null;
   const row = list.data.rows.find(
     (candidate) =>
       candidate.threadId === threadId && candidate.state === "stalled",
