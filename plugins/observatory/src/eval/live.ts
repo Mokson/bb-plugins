@@ -39,6 +39,8 @@ export interface LiveRunOptions {
   /** Overrides each case's own `trials`. */
   trials?: number;
   gate?: boolean;
+  /** See `EvalLiveDeps.drainThread`. */
+  drainThread?(threadId: string): Promise<number>;
   checkLedgerScript?: string;
   runId?: string;
   now?: () => Date;
@@ -214,6 +216,9 @@ async function runTrial(
       ...(options.checkLedgerScript === undefined
         ? {}
         : { checkLedgerScript: options.checkLedgerScript }),
+      ...(options.drainThread === undefined
+        ? {}
+        : { drainThread: options.drainThread }),
       ...(options.pollMs === undefined ? {} : { pollMs: options.pollMs }),
       ...(options.run === undefined ? {} : { run: options.run }),
       git,

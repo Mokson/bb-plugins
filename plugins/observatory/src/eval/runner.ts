@@ -62,6 +62,8 @@ export interface RunCaseInput {
   artifactsRoot: string;
   stackShaAtStart: string | null;
   checkLedgerScript?: string;
+  /** See `EvalLiveDeps.drainThread`: awaited before the metrics are harvested. */
+  drainThread?(threadId: string): Promise<number>;
   /** Milliseconds between budget sweeps. `events.wait` is the sleep. */
   pollMs?: number;
   now?: () => number;
@@ -440,6 +442,16 @@ export async function runCase(input: RunCaseInput): Promise<RunCaseResult> {
     await waitForActivity(input.bb, threadId, Math.min(pollMs, remaining));
   }
 
+  // Drain BEFORE the final read. The turn that ends a trial is still in
+  // core's dirty set when the loop breaks, so an undrained read reports the
+  // tool calls (written on the item events that already landed) with zero
+  // tokens and zero cost. A drain failure is not a trial failure: the metrics
+  // are then simply as stale as they were before.
+  try {
+    await input.drainThread?.(threadId);
+  } catch {
+    // Deliberately swallowed; see above.
+  }
   metrics = treeMetrics(input.db, threadId, now() - started);
 
   // Harvest ALWAYS, including after a kill: a budget breach is exactly when

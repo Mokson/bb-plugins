@@ -196,6 +196,9 @@ async function run(
     ...(live.checkLedgerScript === undefined
       ? {}
       : { checkLedgerScript: live.checkLedgerScript }),
+    ...(live.drainThread === undefined
+      ? {}
+      : { drainThread: (threadId: string) => live.drainThread!(threadId) }),
   });
   const stdout = `${formatLiveRun(report)}\n`;
   if (report.gate !== null) {

@@ -659,6 +659,12 @@ export function createEvalModule(
   db: () => Database,
   handle: EvalHandle,
   settings: () => Promise<Record<string, string | boolean | undefined>>,
+  /**
+   * Core's ingest, read late the way the watch module reads it: eval registers
+   * after core, but core can be disabled or restarted under it, so the drain
+   * is resolved per call rather than captured at setup.
+   */
+  ingest: () => Ingest | null = () => null,
 ): ObservatoryModule {
   return defineModule({
     id: "eval",
@@ -672,7 +678,12 @@ export function createEvalModule(
       const database = db();
       const runtime: EvalRuntime = {
         deps: { store: new EvalStore(database), casesDir },
-        live: { bb: ctx.bb, db: database },
+        live: {
+          bb: ctx.bb,
+          db: database,
+          drainThread: async (threadId) =>
+            (await ingest()?.drainThread(threadId)) ?? 0,
+        },
         databasePath: database.name,
       };
       handle.current = runtime;
@@ -987,7 +998,9 @@ export function buildModules(
     if (id === "context") return createContextModule(handle, context);
     if (id === "audit") return createAuditModule(handle, audit);
     if (id === "eval" && evalModule !== undefined) {
-      return createEvalModule(evalModule.db, evalModule.handle, settings);
+      return createEvalModule(evalModule.db, evalModule.handle, settings, () =>
+        handle.current?.ingest ?? null,
+      );
     }
     if (id === "distillery") {
       return createDistilleryModule({ handle: distillery, settings });

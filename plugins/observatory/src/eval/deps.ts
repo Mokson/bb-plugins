@@ -11,6 +11,16 @@ export interface EvalLiveDeps {
   bb: BbPluginApi;
   /** The plugin database, for the ledger the budget checks read. */
   db: Database;
+  /**
+   * Flush core's pending events for one thread into the ledger.
+   *
+   * Ingest drains on a background loop, so a trial that finishes and reads its
+   * metrics in the same tick sees turn rows without their usage: one run
+   * reported 8 tool calls, 0 tokens and 0.00 usd while the ledger picked the
+   * real numbers up seconds later. The runner awaits this before the harvest
+   * read. Optional, so a test can run with no core module behind it.
+   */
+  drainThread?(threadId: string): Promise<number>;
   /** Overrides `~/.agents/skills/deliver/scripts/check-ledger.sh`. */
   checkLedgerScript?: string;
   judgeFixturesDir?: string;
