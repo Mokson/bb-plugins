@@ -17,6 +17,7 @@ import { ProviderGlyph } from "../row/ProviderGlyph";
 import { StatusGlyph } from "../row/StatusGlyph";
 import { relativeTimeLabel } from "../row/relative-time";
 import { useNow } from "../useNow";
+import { useLastActivity } from "../row/useLastActivity";
 import { useThreadExecutions } from "./useThreadExecutions";
 import { useThreadWorkStats } from "./useThreadWorkStats";
 import type { ThreadExecution } from "../server-contract";
@@ -106,6 +107,13 @@ function ChipBody({ threadId }: PluginThreadHeaderActionProps) {
   const stats = useThreadWorkStats(
     children.map((child) => child.id),
     open && wantsMetadata,
+  );
+  // B89: the trailing time reads the same clock as the sidebar rows - the
+  // newest event, not the record-write `updatedAt` that lags a running agent
+  // and jumps in bursts. The lookup is gated like the others: the empty id
+  // list at compact density (B72.1) and while closed issues no call.
+  const lastActivity = useLastActivity(
+    open && wantsMetadata ? children.map((child) => child.id) : [],
   );
 
   // B58.2: most threads have no children, and an empty chip is chrome tax on
@@ -199,7 +207,11 @@ function ChipBody({ threadId }: PluginThreadHeaderActionProps) {
                     type="button"
                     onClick={() => {
                       setOpen(false);
-                      actions.open(child.id);
+                      // B90: open in split — the chip lives on the parent's
+                      // header, so the parent is already the main pane and a
+                      // child belongs in the split pane beside it, not over
+                      // the thread being read.
+                      actions.open(child.id, { split: true });
                     }}
                     // B86: the native tooltip carries the full title the row
                     // truncates - the same fallback the browser applies to
@@ -221,8 +233,15 @@ function ChipBody({ threadId }: PluginThreadHeaderActionProps) {
                       </span>
                       {/* The sidebar's trailing slot: the same 11px muted
                           column, fed by the same clock. */}
-                      <span className="w-7 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground/70">
-                        {relativeTimeLabel(child.updatedAt, now)}
+                      {/* B91: `ml-auto` pins the column to the row's right
+                          end the way the sidebar's trailing cluster does —
+                          not dependent on the title's `flex-1` filling the
+                          line first. */}
+                      <span className="ml-auto w-7 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground/70">
+                        {relativeTimeLabel(
+                          lastActivity.get(child.id) ?? child.updatedAt,
+                          now,
+                        )}
                       </span>
                     </span>
                     {/* Row 2 — the child line, with the work labels t3's list
@@ -230,25 +249,25 @@ function ChipBody({ threadId }: PluginThreadHeaderActionProps) {
                         duration · tokens · tools. B84: no left margin — the
                         sidebar's child second row starts at the row's left
                         edge, so this one does too. B71.3/B72.1: loading,
-                        error and compact all render the row without this
-                        line, and a missing stat contributes no segment. */}
-                    {execution === null ? null : (
-                      // B88: the sidebar's second row is pulled up 4px with
-                      // `-mt-1` to close the gap row 1's fixed 28px box
-                      // leaves under a 13px title; this line matches that
-                      // rhythm, flush left per B84.
-                      <span className="-mt-1 flex min-w-0 items-center gap-0.5 pb-1 text-2xs text-muted-foreground/70">
-                        <ProviderGlyph providerId={child.providerId} size="small" />
-                        <span className="min-w-0 truncate">
-                          {metadataParts({
-                            execution,
-                            duration: durationOf(child, now),
-                            tokens: stat?.tokens ?? null,
-                            toolCalls: stat?.toolCalls ?? null,
-                          }).join(" · ")}
-                        </span>
-                      </span>
-                    )}
+                        error and compact all render the row without content,
+                        never a spinner — but the LINE's height stays reserved
+                        (B89), so rows keep one fixed height and the time
+                        column does not jump when the batch lands. */}
+                    <span className="-mt-1 flex min-h-[16px] items-center gap-0.5 pb-1 text-2xs text-muted-foreground/70">
+                      {execution === null ? null : (
+                        <>
+                          <ProviderGlyph providerId={child.providerId} size="small" />
+                          <span className="min-w-0 truncate">
+                            {metadataParts({
+                              execution,
+                              duration: durationOf(child, now),
+                              tokens: stat?.tokens ?? null,
+                              toolCalls: stat?.toolCalls ?? null,
+                            }).join(" · ")}
+                          </span>
+                        </>
+                      )}
+                    </span>
                   </button>
                 </li>
               );
