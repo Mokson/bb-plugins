@@ -10,21 +10,23 @@
 // the method belongs to, so a reader of the context page is not told about
 // spend.
 //
-// This file is module-agnostic on purpose: spend, watch, context and audit all
-// call it, so the absent rule cannot drift between modules.
+// This file is module-agnostic on purpose: every module's pages call it, so
+// the absent rule cannot drift between modules.
 import { useEffect, useMemo, useState } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import type { spendContract } from "../../spend/contract.js";
 import type { watchContract } from "../../watch/contract.js";
 import type { contextContract } from "../../context/contract.js";
 import type { auditContract } from "../../audit/contract.js";
+import type { evalContract } from "../../eval/contract.js";
 
-/** Every method the four contracts declare, so no page can invent a name. */
+/** Every method the contracts declare, so no page can invent a name. */
 export type ModuleMethod = Extract<
   | keyof typeof spendContract
   | keyof typeof watchContract
   | keyof typeof contextContract
-  | keyof typeof auditContract,
+  | keyof typeof auditContract
+  | keyof typeof evalContract,
   string
 >;
 
@@ -35,7 +37,7 @@ export type ModuleQuery<T> =
   | { kind: "ready"; data: T };
 
 /** The modules a method name may name in its second segment. */
-const MODULES = new Set(["spend", "watch", "context", "audit"]);
+const MODULES = new Set(["spend", "watch", "context", "audit", "eval"]);
 
 /**
  * The methods whose wire name predates the `observatory_<module>_<verb>`

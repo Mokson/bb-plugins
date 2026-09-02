@@ -20,6 +20,8 @@ import { ContextAudit } from "./context.js";
 import { AuditSessions } from "./audit-sessions.js";
 import { AuditFailures } from "./audit-failures.js";
 import { AuditInsights } from "./audit-insights.js";
+import { EvalCases } from "./eval-cases.js";
+import { EvalRun } from "./eval-run.js";
 
 export { AUDIT_ROUTES, PANEL_PATH, PLACEHOLDERS, ROUTES };
 
@@ -103,6 +105,12 @@ function Route({ segments }: { segments: readonly string[] }) {
   if (head === "cost") {
     if (second === "cache") return <CostCache threadId={third} />;
     return <CostOverview />;
+  }
+  if (head === "eval") {
+    if (second === "runs" && third !== undefined) return <EvalRun runId={third} />;
+    // `eval` and `eval/cases` are the same list; `eval/cases/<name>` is one
+    // case, so a reader can keep either address.
+    return <EvalCases caseName={second === "cases" ? third : undefined} />;
   }
   return <Placeholder route={head} />;
 }
