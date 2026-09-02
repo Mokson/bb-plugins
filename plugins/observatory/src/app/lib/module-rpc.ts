@@ -19,6 +19,7 @@ import type { watchContract } from "../../watch/contract.js";
 import type { contextContract } from "../../context/contract.js";
 import type { auditContract } from "../../audit/contract.js";
 import type { evalContract } from "../../eval/contract.js";
+import type { distilleryContract } from "../../distillery/contract.js";
 
 /** Every method the contracts declare, so no page can invent a name. */
 export type ModuleMethod = Extract<
@@ -26,7 +27,8 @@ export type ModuleMethod = Extract<
   | keyof typeof watchContract
   | keyof typeof contextContract
   | keyof typeof auditContract
-  | keyof typeof evalContract,
+  | keyof typeof evalContract
+  | keyof typeof distilleryContract,
   string
 >;
 
@@ -36,8 +38,20 @@ export type ModuleQuery<T> =
   | { kind: "error"; message: string }
   | { kind: "ready"; data: T };
 
-/** The modules a method name may name in its second segment. */
-const MODULES = new Set(["spend", "watch", "context", "audit", "eval"]);
+/**
+ * The modules a method name may name in its second segment, mapped to the name
+ * a reader knows the module by. The two differ only where the wire segment is
+ * an abbreviation (`distill` for the distillery), so the absent line never
+ * announces a module the nav bar does not list.
+ */
+const MODULES: Record<string, string> = {
+  spend: "spend",
+  watch: "watch",
+  context: "context",
+  audit: "audit",
+  eval: "eval",
+  distill: "distillery",
+};
 
 /**
  * The methods whose wire name predates the `observatory_<module>_<verb>`
@@ -57,9 +71,8 @@ const FLAT_METHOD_MODULES: Record<string, string> = {
  */
 export function absentMessage(method: string): string {
   const segment = method.split("_")[1] ?? "";
-  const module = MODULES.has(segment)
-    ? segment
-    : (FLAT_METHOD_MODULES[method] ?? "observatory");
+  const module =
+    MODULES[segment] ?? FLAT_METHOD_MODULES[method] ?? "observatory";
   return `${module} module not running`;
 }
 

@@ -27,11 +27,6 @@ export const AUDIT_ROUTES = [
   { id: "insights", title: "Insights" },
 ] as const;
 
-/**
- * What each not-yet-built route will hold, one line each. Every other route
- * is absent: it is built, so a placeholder for one of them would be a second,
- * wrong answer.
- */
-export const PLACEHOLDERS: Record<string, string> = {
-  distillery: "Correction mining and the draft review queue. Phase 6.",
-};
+// Every route in `ROUTES` is built, so there is no placeholder table here.
+// An address outside the table is a bad address, and `panel.tsx` says so
+// rather than promising a page that is on its way.

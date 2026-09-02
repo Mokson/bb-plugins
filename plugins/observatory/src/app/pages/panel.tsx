@@ -8,7 +8,7 @@ import type { PluginNavPanelProps } from "@get-bb/plugin-sdk";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ObservatorySettings } from "./settings.js";
-import { AUDIT_ROUTES, PANEL_PATH, PLACEHOLDERS, ROUTES } from "./routes.js";
+import { AUDIT_ROUTES, PANEL_PATH, ROUTES } from "./routes.js";
 import { CostOverview } from "./cost.js";
 import { CostCache } from "./cost-cache.js";
 import { ThreadCost } from "./thread-cost.js";
@@ -22,20 +22,26 @@ import { AuditFailures } from "./audit-failures.js";
 import { AuditInsights } from "./audit-insights.js";
 import { EvalCases } from "./eval-cases.js";
 import { EvalRun } from "./eval-run.js";
+import { Distillery } from "./distillery.js";
 
-export { AUDIT_ROUTES, PANEL_PATH, PLACEHOLDERS, ROUTES };
+export { AUDIT_ROUTES, PANEL_PATH, ROUTES };
 
 function Heading({ title }: { title: string }) {
   return <h2 className="text-[16px] font-semibold">{title}</h2>;
 }
 
-function Placeholder({ route }: { route: string }) {
-  const title = ROUTES.find((entry) => entry.id === route)?.title ?? route;
+/**
+ * The body for an address the panel does not own.
+ *
+ * Every route in `ROUTES` is built, so the honest answer to an unknown first
+ * segment is that it is not a view - not a promise that one is coming.
+ */
+function NotFound({ route }: { route: string }) {
   return (
     <section className="flex flex-col gap-2 py-4">
-      <Heading title={title} />
+      <Heading title="Not found" />
       <p className="text-[13px] text-muted-foreground">
-        {PLACEHOLDERS[route] ?? "Not built yet."}
+        No Observatory view at {route}.
       </p>
     </section>
   );
@@ -96,6 +102,7 @@ function Route({ segments }: { segments: readonly string[] }) {
     );
   }
   if (head === "stalls") return <StallsPage />;
+  if (head === "distillery") return <Distillery />;
   if (head === "threads" && second !== undefined) {
     if (third === "trajectory") return <Trajectory threadId={second} />;
     return <ThreadCost threadId={second} />;
@@ -112,7 +119,7 @@ function Route({ segments }: { segments: readonly string[] }) {
     // case, so a reader can keep either address.
     return <EvalCases caseName={second === "cases" ? third : undefined} />;
   }
-  return <Placeholder route={head} />;
+  return <NotFound route={head} />;
 }
 
 export function ObservatoryPanel({ subPath }: PluginNavPanelProps) {
