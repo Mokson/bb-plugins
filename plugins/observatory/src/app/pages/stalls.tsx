@@ -18,7 +18,7 @@ import {
   WatchFrame,
 } from "@/components/watch-common";
 import { formatSilence, silenceRatio, UNKNOWN } from "@/lib/format";
-import { useWatchQuery } from "@/lib/watch-rpc";
+import { useWatchQuery, useWatchSteer } from "@/lib/watch-rpc";
 import { usePanelKeys } from "@/lib/use-panel-keys";
 import { fixtureWatchList, fixtureWatchSettings } from "@/fixtures/watch";
 import { PANEL_PATH } from "./routes.js";
@@ -80,6 +80,7 @@ function StallTable({
   selected,
   onSelect,
   onOpen,
+  onAct,
   caption,
 }: {
   rows: readonly WatchRow[];
@@ -87,6 +88,7 @@ function StallTable({
   selected: number;
   onSelect: (index: number) => void;
   onOpen: (row: WatchRow) => void;
+  onAct: (action: "steer" | "escalate", row: WatchRow) => void;
   caption: string;
 }) {
   return (
@@ -101,6 +103,7 @@ function StallTable({
         <col className="w-[18%]" />
         <col className="w-[10ch]" />
         <col />
+        <col className="w-[16ch]" />
       </colgroup>
       <caption className="pb-1 text-left text-[11px] text-muted-foreground">
         {caption}
@@ -116,6 +119,7 @@ function StallTable({
           <th className="px-2 py-1 text-left font-normal">in flight</th>
           <th className="px-2 py-1 text-left font-normal">stage</th>
           <th className="px-2 py-1 text-left font-normal">last diagnostic</th>
+          <th className="px-2 py-1 text-left font-normal">act</th>
         </tr>
       </thead>
       <tbody>
@@ -159,6 +163,26 @@ function StallTable({
             <td className="h-6 truncate px-2 py-0 text-muted-foreground">
               {row.diagnostic ?? UNKNOWN}
             </td>
+            {/* Text, not icons: invariant 34 rules out a colour-coded or
+                pictographic hierarchy, and two words are unambiguous where two
+                glyphs would need a legend. There is deliberately no stop. */}
+            <td className="h-6 whitespace-nowrap px-2 py-0">
+              <button
+                type="button"
+                className="underline underline-offset-2"
+                onClick={() => onAct("steer", row)}
+              >
+                steer
+              </button>
+              {" · "}
+              <button
+                type="button"
+                className="underline underline-offset-2"
+                onClick={() => onAct("escalate", row)}
+              >
+                escalate
+              </button>
+            </td>
           </tr>
         ))}
       </tbody>
@@ -173,6 +197,8 @@ export function StallsPage() {
   const [selected, setSelected] = useState(0);
   const [showAll, setShowAll] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [confirmation, setConfirmation] = useState<string | null>(null);
+  const steer = useWatchSteer();
   const filterRef = useRef<HTMLInputElement | null>(null);
 
   useRealtime(WATCH_SIGNAL_CHANNEL, () => setNonce((value) => value + 1));
@@ -230,6 +256,22 @@ export function StallsPage() {
   const open = useCallback(
     (row: WatchRow) => navigate.toThread(row.threadId),
     [navigate],
+  );
+
+  // One line, from the server's own vocabulary. A refusal ("watch mode is
+  // observe; set it to steer first") is as much a result as a success, and
+  // both land in the same place so a click always answers.
+  const act = useCallback(
+    (action: "steer" | "escalate", row: WatchRow) => {
+      setConfirmation(`${action}ing ${row.threadId}...`);
+      void steer(action, row.threadId).then((message) => {
+        setConfirmation(message);
+        // A steer writes an action row and may close or open a signal, so the
+        // list is re-read rather than left showing the state before the click.
+        setNonce((value) => value + 1);
+      });
+    },
+    [steer],
   );
 
   usePanelKeys(
@@ -296,6 +338,7 @@ export function StallsPage() {
                 selected={selected}
                 onSelect={setSelected}
                 onOpen={open}
+                onAct={act}
                 caption="stalled"
               />
             )}
@@ -313,9 +356,18 @@ export function StallsPage() {
                 selected={selected - stalled.length}
                 onSelect={(index) => setSelected(index + stalled.length)}
                 onOpen={open}
+                onAct={act}
                 caption="healthy"
               />
             ) : null}
+            {confirmation === null ? null : (
+              <p
+                role="status"
+                className="text-[11px] text-muted-foreground"
+              >
+                {confirmation}
+              </p>
+            )}
             <KeyHelp open={helpOpen} />
           </>
         )}

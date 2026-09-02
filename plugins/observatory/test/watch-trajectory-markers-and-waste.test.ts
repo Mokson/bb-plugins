@@ -7,6 +7,7 @@ import {
   markerForKind,
   trajectoryTurns,
   wasteByRule,
+  wasteEmptyMessage,
 } from "../src/app/lib/trajectory.js";
 import type { WatchSignal } from "../src/watch/contract.js";
 import type { TurnRow } from "../src/spend/contract.js";
@@ -143,5 +144,24 @@ describe("waste attribution", () => {
 
   it("returns nothing when no rule fired", () => {
     expect(wasteByRule(turns, [])).toEqual([]);
+  });
+});
+
+describe("the waste table's empty state", () => {
+  // QA F3: the page printed "No rule fired on this thread." above a turn table
+  // that was showing markers for the rules that had. Two different empties -
+  // no signals at all, and signals whose windows no turn started inside - and
+  // only the first of them is the absence of a rule.
+  it("says no rule fired only when none did", () => {
+    expect(wasteEmptyMessage(0)).toBe("No rule fired on this thread.");
+  });
+
+  it("says why there is nothing to attribute when rules did fire", () => {
+    const one = wasteEmptyMessage(1);
+    expect(one).not.toContain("No rule fired");
+    expect(one).toContain("1 rule signal fired");
+    expect(one).toContain("no turn started inside");
+
+    expect(wasteEmptyMessage(3)).toContain("3 rule signals fired");
   });
 });

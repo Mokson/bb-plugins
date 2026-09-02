@@ -13,7 +13,11 @@ import { useCallback } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { Heading, WatchFrame } from "@/components/watch-common";
 import { formatTime, formatUsd, UNKNOWN } from "@/lib/format";
-import { trajectoryTurns, wasteByRule } from "@/lib/trajectory";
+import {
+  trajectoryTurns,
+  wasteByRule,
+  wasteEmptyMessage,
+} from "@/lib/trajectory";
 import { useSpendQuery } from "@/lib/spend-rpc";
 import { useWatchQuery } from "@/lib/watch-rpc";
 import { fixtureThread } from "@/fixtures/spend";
@@ -86,10 +90,13 @@ function WasteTable({
   explain: WatchExplain;
 }) {
   const rows = wasteByRule(thread.turns, explain.signals);
+  // The copy lives in `lib/trajectory.ts` beside the function whose emptiness
+  // it explains, so the two cannot drift and the branch is testable without a
+  // render.
   if (rows.length === 0) {
     return (
       <p className="text-[13px] text-muted-foreground">
-        No rule fired on this thread.
+        {wasteEmptyMessage(explain.signals.length)}
       </p>
     );
   }

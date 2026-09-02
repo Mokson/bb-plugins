@@ -100,6 +100,22 @@ export interface WasteRow {
 }
 
 /**
+ * What the waste table says when it has no rows.
+ *
+ * Two different empties, and the page conflated them: an attribution row
+ * exists only where a turn's start falls inside a signal's open window, so a
+ * thread with several fired rules produces no rows at all when its turns began
+ * before the first signal opened. The turn table directly above is meanwhile
+ * showing those rules as markers, which is how "No rule fired on this thread."
+ * came to sit on top of the evidence that it had.
+ */
+export function wasteEmptyMessage(firedSignals: number): string {
+  if (firedSignals === 0) return "No rule fired on this thread.";
+  const plural = firedSignals === 1 ? "signal" : "signals";
+  return `${firedSignals} rule ${plural} fired, but no turn started inside one of their windows, so there is nothing to attribute.`;
+}
+
+/**
  * What each rule cost, by attributing every turn a signal covered to that
  * signal's rule.
  *

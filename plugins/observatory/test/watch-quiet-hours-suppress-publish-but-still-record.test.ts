@@ -11,7 +11,12 @@ import {
   type LadderOutcome,
 } from "../src/watch/ladder.js";
 import { inQuietHours, parseQuietHours } from "../src/watch/settings.js";
-import { makeWatchFixture, T0, type WatchFixture } from "./fakes.js";
+import {
+  ladderDeps,
+  makeWatchFixture,
+  T0,
+  type WatchFixture,
+} from "./fakes.js";
 
 let fixture: WatchFixture;
 
@@ -209,13 +214,11 @@ describe("the notification caps", () => {
     expect(before.filter((outcome) => outcome === "sent")).toHaveLength(4);
 
     // A brand new ladder over the same database: the reload.
-    const reloaded = createLadder({
-      store: fixture.store,
-      publish: (_channel, payload) => publishedAfterReload.push(payload),
-      config: () => ({ mode: "observe", quietHours: null }),
-      now: () => clock.now,
-      log: fixture.host.bb.log,
-    });
+    const reloaded = createLadder(
+      ladderDeps(fixture, () => clock.now, {
+        publish: (_channel, payload) => publishedAfterReload.push(payload),
+      }),
+    );
 
     const after = transitionsThrough(reloaded, 4, 100);
     // Two left in the hour, then the cap binds again.

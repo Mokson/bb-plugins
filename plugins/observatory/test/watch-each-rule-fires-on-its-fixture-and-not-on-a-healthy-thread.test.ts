@@ -3,7 +3,7 @@
 // phase-3 steer ladder is gated on the precision this phase measures, so a
 // false positive here becomes a wrong steer later.
 import { afterEach, describe, expect, it } from "vitest";
-import { evaluate } from "../src/watch/rules.js";
+import { evaluate, UNFINGERPRINTED } from "../src/watch/rules.js";
 import { readWatchConfig } from "../src/watch/settings.js";
 import { WatchQueries } from "../src/watch/queries.js";
 import {
@@ -172,7 +172,7 @@ describe("each watch rule", () => {
     );
   });
 
-  it("burn-no-change fires past 150k tokens with no file change", async () => {
+  it("burn-no-change fires past 150k tokens since the last file change", async () => {
     fixture = makeWatchFixture();
     const thread = fixture.seedThread({ threadId: "thr-burn" });
     fixture.seedTurns(thread, [
@@ -185,6 +185,13 @@ describe("each watch rule", () => {
       },
     ]);
     fixture.seedItems(thread, [
+      {
+        seq: 1,
+        kind: "fileChange",
+        path: "src/a.ts",
+        startedAt: -55_000,
+        completedAt: -54_000,
+      },
       { seq: 2, kind: "toolCall", fingerprint: "a", startedAt: -30_000, completedAt: -29_000 },
     ]);
 
@@ -192,6 +199,118 @@ describe("each watch rule", () => {
     expect(await rulesFor(seedHealthyThread(fixture))).not.toContain(
       "burn-no-change",
     );
+  });
+
+  it("burn-no-change stays quiet on a thread that has never changed a file", async () => {
+    // The tightening the precision measurement forced. 13 of 15 sampled false
+    // positives had no anchor at all, so "tokens since the last file change"
+    // was really "tokens this thread has ever spent" — which a research,
+    // review or QA seat crosses on its first substantial turn and can never
+    // clear, because clearing it would mean doing a job that is not its job.
+    fixture = makeWatchFixture();
+    const thread = fixture.seedThread({ threadId: "thr-reader" });
+    fixture.seedTurns(thread, [
+      {
+        turnId: "turn-1",
+        seqStarted: 1,
+        startedAt: -60_000,
+        inputTokens: 2_000_000,
+        outputTokens: 300_000,
+      },
+    ]);
+    fixture.seedItems(thread, [
+      { seq: 2, kind: "toolCall", fingerprint: "a", startedAt: -30_000, completedAt: -29_000 },
+    ]);
+
+    expect(await rulesFor(thread)).not.toContain("burn-no-change");
+  });
+
+  it("burn-no-change and the loop rule ignore a thread that is not running", async () => {
+    // Every sampled false positive of both rules fired against an idle thread
+    // during the first sweep of an already-finished ledger. A thread that is
+    // not running cannot be stalling.
+    fixture = makeWatchFixture();
+    const thread = fixture.seedThread({
+      threadId: "thr-finished",
+      status: "idle",
+    });
+    fixture.seedTurns(thread, [
+      {
+        turnId: "turn-1",
+        seqStarted: 1,
+        startedAt: -60_000,
+        inputTokens: 400_000,
+        outputTokens: 60_000,
+      },
+    ]);
+    fixture.seedItems(thread, [
+      {
+        seq: 1,
+        kind: "fileChange",
+        path: "src/a.ts",
+        startedAt: -55_000,
+        completedAt: -54_000,
+      },
+      ...[2, 3, 4, 5].map((seq) => ({
+        seq,
+        kind: "toolCall",
+        name: "Bash",
+        fingerprint: "fp-ls",
+        startedAt: -50_000 + seq * 1_000,
+        completedAt: -49_000 + seq * 1_000,
+      })),
+    ]);
+
+    const rules = await rulesFor(thread);
+    expect(rules).not.toContain("burn-no-change");
+    expect(rules).not.toContain("repeated-identical-tool");
+  });
+
+  it("repeated-identical-tool ignores calls whose arguments were never captured", async () => {
+    // sha256("{}") is a real fingerprint that core writes for every arg-less
+    // tool call, so it grouped 1016 different searches into one "loop". It is
+    // the single defect behind every sampled false positive of this rule.
+    fixture = makeWatchFixture();
+    const thread = fixture.seedThread({ threadId: "thr-blank" });
+    fixture.seedTurns(thread, [
+      { turnId: "turn-1", seqStarted: 1, startedAt: -60_000 },
+    ]);
+    fixture.seedItems(
+      thread,
+      [2, 3, 4, 5].map((seq) => ({
+        seq,
+        kind: "toolCall",
+        name: "search",
+        fingerprint: UNFINGERPRINTED,
+        startedAt: -50_000 + seq * 1_000,
+        completedAt: -49_000 + seq * 1_000,
+      })),
+    );
+
+    expect(await rulesFor(thread)).not.toContain("repeated-identical-tool");
+  });
+
+  it("repeated-identical-tool does not group two different tools that hash alike", async () => {
+    fixture = makeWatchFixture();
+    const thread = fixture.seedThread({ threadId: "thr-two-tools" });
+    fixture.seedTurns(thread, [
+      { turnId: "turn-1", seqStarted: 1, startedAt: -60_000 },
+    ]);
+    fixture.seedItems(
+      thread,
+      ["read", "write", "read", "write"].map((name, index) => ({
+        seq: index + 2,
+        kind: "toolCall",
+        name,
+        fingerprint: "fp-same-args",
+        startedAt: -50_000 + index * 1_000,
+        completedAt: -49_000 + index * 1_000,
+      })),
+    );
+
+    // Two of each, and the threshold is three. Grouped on the fingerprint
+    // alone this would have been four.
+    expect(await rulesFor(thread)).not.toContain("repeated-identical-tool");
   });
 
   it("retry-storm fires on three retrying errors inside the window", async () => {

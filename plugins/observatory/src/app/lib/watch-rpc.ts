@@ -7,7 +7,11 @@
 import { useCallback } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import { useModuleQuery, type ModuleQuery } from "./module-rpc.js";
-import type { WatchSettings, watchContract } from "../../watch/contract.js";
+import type {
+  SteerResult,
+  WatchSettings,
+  watchContract,
+} from "../../watch/contract.js";
 
 export { isFixtureMode } from "./module-rpc.js";
 
@@ -29,6 +33,39 @@ export function useWatchQuery<T>(
   nonce = 0,
 ): WatchQuery<T> {
   return useModuleQuery<T>(method, input, fixture, nonce);
+}
+
+/**
+ * Steer or escalate one thread from the panel.
+ *
+ * Same shape as the settings write and for the same reason: both callers are
+ * click handlers, and an unhandled rejection in one would leave the page
+ * claiming an action the server refused. The confirmation line is the server's
+ * `message`, never composed here — the CLI prints that same string, and two
+ * surfaces inventing their own wording is how they start disagreeing about
+ * what a refusal means.
+ */
+export function useWatchSteer(): (
+  action: "steer" | "escalate",
+  threadId: string,
+) => Promise<string> {
+  const rpc = useRpc();
+  return useCallback(
+    async (action, threadId) => {
+      try {
+        const result = (await (
+          rpc.call as (
+            method: string,
+            input: Record<string, unknown>,
+          ) => Promise<unknown>
+        )(`observatory_watch_${action}`, { threadId })) as SteerResult;
+        return result.message;
+      } catch (error) {
+        return error instanceof Error ? error.message : WATCH_ABSENT_MESSAGE;
+      }
+    },
+    [rpc],
+  );
 }
 
 /** What a settings write reports back to the page. */
