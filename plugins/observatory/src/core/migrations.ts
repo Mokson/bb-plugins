@@ -257,4 +257,73 @@ export const MIGRATIONS: string[] = [
      ON obs_signal (thread_id, turn_id)`,
   `CREATE INDEX IF NOT EXISTS obs_thread_parent
      ON obs_thread (parent_thread_id)`,
+  // ---------------------------------------------------------------------
+  // Distillery (phase 6): mined corrections, their clusters, and the drafts
+  // a hidden thread writes from them.
+  //
+  // `preview_redacted` is named for the only thing that may ever be in it.
+  // The column carries text that came from ledgers and transcripts, so the
+  // name is the last reminder at the schema layer that `redact()` is the
+  // only legal constructor for its value.
+  `CREATE TABLE IF NOT EXISTS corrections (
+     id                INTEGER PRIMARY KEY AUTOINCREMENT,
+     source            TEXT NOT NULL,
+     signature         TEXT NOT NULL,
+     cause_class       TEXT,
+     preview_redacted  TEXT NOT NULL,
+     redaction_counts  TEXT,
+     run_folder        TEXT,
+     thread_id         TEXT,
+     at                TEXT NOT NULL,
+     confidence        REAL NOT NULL DEFAULT 0,
+     cluster_id        TEXT
+   )`,
+  // Re-scanning the same ledger is the normal case (a scan runs on a cron and
+  // over folders that keep growing), so identity has to live in the schema
+  // rather than in a caller-side existence check. Source plus signature plus
+  // run folder plus timestamp is one observed correction.
+  `CREATE UNIQUE INDEX IF NOT EXISTS corrections_identity
+     ON corrections (source, signature, IFNULL(run_folder, ''), at)`,
+  `CREATE INDEX IF NOT EXISTS corrections_cluster ON corrections (cluster_id)`,
+  `CREATE INDEX IF NOT EXISTS corrections_signature ON corrections (signature)`,
+  `CREATE TABLE IF NOT EXISTS correction_clusters (
+     id          TEXT PRIMARY KEY,
+     signature   TEXT NOT NULL,
+     cause_class TEXT,
+     size        INTEGER NOT NULL DEFAULT 0,
+     runs        INTEGER NOT NULL DEFAULT 0,
+     first_at    TEXT,
+     last_at     TEXT,
+     status      TEXT NOT NULL DEFAULT 'open'
+   )`,
+  // The state set is CHECKed rather than trusted: `applied` is the value that
+  // means a file was written under ~/.agents, so an unrecognised state must
+  // not be able to reach a surface that treats "not pending" as "done".
+  `CREATE TABLE IF NOT EXISTS drafts (
+     id                 TEXT PRIMARY KEY,
+     cluster_id         TEXT NOT NULL,
+     state              TEXT NOT NULL
+       CHECK (state IN ('pending','accepted','rejected','edited','applied')),
+     home_file          TEXT,
+     rung               INTEGER,
+     patch_unified_diff TEXT,
+     rule_text          TEXT,
+     success_signal     TEXT,
+     rationale          TEXT,
+     evidence_ids       TEXT,
+     recurrence         INTEGER NOT NULL DEFAULT 0,
+     created_at         TEXT NOT NULL,
+     updated_at         TEXT NOT NULL,
+     applied_path       TEXT,
+     thread_id          TEXT
+   )`,
+  `CREATE INDEX IF NOT EXISTS drafts_state ON drafts (state)`,
+  `CREATE INDEX IF NOT EXISTS drafts_cluster ON drafts (cluster_id)`,
+  // Snooze is queue state, not draft state: a snoozed draft is still pending,
+  // it is only hidden until its date. Keeping it out of `drafts.state` is what
+  // stops `pending` from having to mean two different things.
+  `CREATE TABLE IF NOT EXISTS draft_snoozes (
+     draft_id TEXT PRIMARY KEY,
+     until    TEXT NOT NULL
+   )`,
 ];
