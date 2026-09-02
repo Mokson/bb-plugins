@@ -58,9 +58,17 @@ export function overlapRatio(a: Set<string>, b: Set<string>): number {
 }
 
 export interface DuplicateCandidate {
+  /** Identity within one scan. Names collide across surfaces; keys do not. */
+  key: string;
   name: string;
   text: string;
   estTokens: number;
+}
+
+/** A pair carrying both what a person reads and what the caller indexes on. */
+export interface DuplicatePair extends ContextDuplicate {
+  aKey: string;
+  bKey: string;
 }
 
 /**
@@ -70,9 +78,9 @@ export interface DuplicateCandidate {
  */
 export function findDuplicates(
   blocks: readonly DuplicateCandidate[],
-): ContextDuplicate[] {
+): DuplicatePair[] {
   const sets = blocks.map((block) => shingles(block.text));
-  const out: ContextDuplicate[] = [];
+  const out: DuplicatePair[] = [];
   for (let i = 0; i < blocks.length; i += 1) {
     for (let j = i + 1; j < blocks.length; j += 1) {
       const a = blocks[i] as DuplicateCandidate;
@@ -87,7 +95,14 @@ export function findDuplicates(
       const recoverableTokens = Math.round(
         Math.min(a.estTokens, b.estTokens) * overlap,
       );
-      out.push({ a: a.name, b: b.name, overlap, recoverableTokens });
+      out.push({
+        a: a.name,
+        b: b.name,
+        aKey: a.key,
+        bKey: b.key,
+        overlap,
+        recoverableTokens,
+      });
     }
   }
   return out.sort((x, y) => y.recoverableTokens - x.recoverableTokens);
@@ -106,18 +121,41 @@ function parseNames(value: string | null): string[] {
 }
 
 /**
- * Every skill name any indexed session used, lower-cased.
+ * One comparable form for a skill name.
+ *
+ * Claude's logs record the namespaced id a plugin mounts under (`core:core-pr`)
+ * while a catalog entry carries only the frontmatter `name` (`core-pr`). The
+ * suffix after the last colon is the part both sides always agree on.
+ */
+export function normalizeSkillName(name: string): string {
+  const suffix = name.slice(name.lastIndexOf(":") + 1);
+  return suffix.trim().toLowerCase();
+}
+
+/**
+ * The skill names indexed sessions used, and whether anything named one at all.
  *
  * Two sources, because two providers record it differently: the ledger's own
  * `Skill` items, and the skill names the log parsers lifted off provider
  * transcripts. One mention in either is enough to prove a skill is alive.
+ *
+ * `sourced` is the difference between "nothing used this skill" and "nothing
+ * in this window could have told us either way". `obs_item` only ever carries
+ * the literal name `skill`, and the non-Claude parsers write an empty
+ * `skill_names` list, so a window holding only those is silence, not evidence.
  */
+export interface SkillUsage {
+  names: Set<string>;
+  sourced: boolean;
+}
+
 export function usedSkillNames(
   db: Database,
   sinceIso: string,
   sinceMs: number,
-): Set<string> {
-  const used = new Set<string>();
+): SkillUsage {
+  const names = new Set<string>();
+  let sourced = false;
   const items = db
     .prepare<[string], { name: string | null }>(
       `SELECT DISTINCT name FROM obs_item
@@ -126,7 +164,11 @@ export function usedSkillNames(
           AND COALESCE(completed_at, started_at, '') >= ?`,
     )
     .all(sinceIso);
-  for (const row of items) if (row.name) used.add(row.name.toLowerCase());
+  for (const row of items) {
+    if (!row.name) continue;
+    sourced = true;
+    names.add(normalizeSkillName(row.name));
+  }
   const logged = db
     .prepare<[number], { skill_names: string | null }>(
       `SELECT DISTINCT skill_names FROM obs_log_turn
@@ -135,8 +177,10 @@ export function usedSkillNames(
     .all(sinceMs);
   for (const row of logged) {
     for (const name of parseNames(row.skill_names)) {
-      used.add(name.toLowerCase());
+      if (name.length === 0) continue;
+      sourced = true;
+      names.add(normalizeSkillName(name));
     }
   }
-  return used;
+  return { names, sourced };
 }

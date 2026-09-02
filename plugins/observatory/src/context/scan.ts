@@ -8,7 +8,7 @@
 // touches those keys — that is the module's hardest invariant, because the
 // config it opens is the one file on the machine most likely to hold a token.
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { ContextSurface } from "./contract.js";
@@ -40,6 +40,18 @@ const IMPORT_DEPTH_CAP = 5;
 
 /** `@./path`, `@~/path` or `@path` on its own line, the CLAUDE.md import. */
 const IMPORT_LINE = /^\s*@([^\s`]+)\s*$/u;
+
+/** A prefix file this large is a data dump, not instructions. Reading it would
+ *  cost more than the answer is worth, so the scan notes it and moves on. */
+export const MAX_INSTRUCTION_BYTES = 1_048_576;
+
+function sizeOf(path: string): number | null {
+  try {
+    return statSync(path).size;
+  } catch {
+    return null;
+  }
+}
 
 function readText(path: string): string | null {
   try {
@@ -85,6 +97,19 @@ function collectInstruction(
 ): void {
   const absolute = resolve(path);
   if (seen.has(absolute) || depth > IMPORT_DEPTH_CAP) return;
+  const size = sizeOf(absolute);
+  if (size !== null && size > MAX_INSTRUCTION_BYTES) {
+    // Recorded as a block rather than dropped: an unread file is a hole in the
+    // composition bar, and a hole nobody is told about reads as a zero.
+    seen.add(absolute);
+    out.push({
+      surface: "instruction",
+      path: absolute,
+      name: absolute,
+      text: `(not scanned: ${size} bytes exceeds the ${MAX_INSTRUCTION_BYTES} byte cap)`,
+    });
+    return;
+  }
   const text = readText(absolute);
   if (text === null) return;
   seen.add(absolute);
@@ -128,11 +153,30 @@ export function parseSkillFrontmatter(
   return { name, description: description ?? "" };
 }
 
-function collectSkills(root: string, out: ScannedBlock[]): void {
+/**
+ * Every skill under one root, each skill counted once.
+ *
+ * Roots overlap by design on this machine: `~/.claude/skills` is commonly a
+ * symlink to `~/.agents/skills`, and a skill reached through both paths is one
+ * mounted skill billed once, so identity is the resolved realpath.
+ */
+function collectSkills(
+  root: string,
+  seen: Set<string>,
+  out: ScannedBlock[],
+): void {
   for (const entry of listDir(root)) {
     const dir = join(root, entry);
     if (!isDirectory(dir)) continue;
     const path = join(dir, "SKILL.md");
+    let real: string;
+    try {
+      real = realpathSync(path);
+    } catch {
+      continue;
+    }
+    if (seen.has(real)) continue;
+    seen.add(real);
     const text = readText(path);
     if (text === null) continue;
     const parsed = parseSkillFrontmatter(text);
@@ -217,12 +261,14 @@ export function scanSurfaces(input: ScanInput): ScannedBlock[] {
     collectInstruction(join(rules, entry), home, seen, blocks);
   }
 
+  const skillsSeen = new Set<string>();
   for (const root of [
     join(home, ".agents", "skills"),
+    join(home, ".claude", "skills"),
     join(cwd, ".claude", "skills"),
     join(cwd, ".agents", "skills"),
   ]) {
-    collectSkills(root, blocks);
+    collectSkills(root, skillsSeen, blocks);
   }
 
   for (const path of [join(home, ".claude.json"), join(cwd, ".mcp.json")]) {

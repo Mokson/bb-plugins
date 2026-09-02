@@ -73,7 +73,7 @@ function FailureDetail({ row }: { row: AuditFailureRow }) {
   return (
     <div className="flex flex-col gap-2 border-t border-border pt-2">
       <h3 className="text-[13px] font-semibold">{row.signature}</h3>
-      <p className="text-[13px] text-muted-foreground">{row.message}</p>
+      <p className="text-[13px] text-muted-foreground">{row.subject}</p>
       <p className="text-[11px] text-muted-foreground">
         {row.muted
           ? `muted until ${formatTime(row.mutedUntil)}`

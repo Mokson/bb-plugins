@@ -6,9 +6,11 @@ function item(
   kind: string,
   name: string | null = null,
   path: string | null = null,
+  threadId = "t1",
 ) {
   return {
-    item_id: `i${seq}`,
+    thread_id: threadId,
+    item_id: `${threadId}-i${seq}`,
     kind,
     name,
     path,

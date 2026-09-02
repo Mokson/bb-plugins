@@ -93,7 +93,7 @@ describe("the audit failures page", () => {
       name: "fixture-provider-overloaded",
     });
     row.click();
-    await slot.findByText(/fixture provider returned 529 overloaded/);
+    await slot.findByText(/fixture-model-sonnet/);
     await slot.findByText("not muted");
     await slot.findByRole("button", { name: "mute" });
     await slot.findByText(/mute for/);

@@ -46,8 +46,34 @@ test("calibration reads the first turn's cache_write, not a later cached read", 
     setMeta: (key, value) => store.setMeta(key, value),
   });
 
+  // The factor fitted here is for the NEXT scan; this one had no prior, so it
+  // is priced at 1. Applying the fresh fit would make the total equal the
+  // observed prefix by construction.
   expect(result.factor).toBe(2);
+  expect(result.prior).toBeNull();
+  expect(result.applied).toBe(1);
   expect(result.samples).toBe(2);
+});
+
+test("a scan is priced with the prior factor, never with the one it just fitted", () => {
+  const store = temp.open();
+  const db = store.db;
+  logTurn(db, { key: "a1", session: "s1", ts: 1_000, cacheWrite: 1000, cacheRead: 0 });
+  const args = {
+    db,
+    provider: "claude-code",
+    rawEstimate: 500,
+    sinceMs: 0,
+    getMeta: (key: string) => store.getMeta(key),
+    setMeta: (key: string, value: string) => store.setMeta(key, value),
+  };
+
+  const first = calibrate(args);
+  const second = calibrate(args);
+
+  expect(first.applied).toBe(1);
+  expect(second.prior).toBe(2);
+  expect(second.applied).toBe(2);
 });
 
 test("the reported error judges the stored factor before it is refitted", () => {

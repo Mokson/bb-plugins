@@ -368,4 +368,9 @@ export const MIGRATIONS: string[] = [
      metrics_json TEXT,
      promoted_at  TEXT
    )`,
+  // Appended at the TAIL, never inserted: migrations are keyed by index and
+  // replayed on every boot, so an insertion mid-list renumbers every statement
+  // after it. Audit resolves a run folder's threads on every pack build.
+  `CREATE INDEX IF NOT EXISTS obs_thread_run_folder
+     ON obs_thread (run_folder)`,
 ];

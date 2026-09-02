@@ -46,7 +46,7 @@ export function fixtureContextView(): ContextView {
         estTokens: 12_400,
         hash: "f1",
         duplicateOf: null,
-        dead: false,
+        dead: "alive",
       },
       {
         surface: "instruction",
@@ -56,7 +56,7 @@ export function fixtureContextView(): ContextView {
         estTokens: 7_400,
         hash: "f2",
         duplicateOf: "fixture CLAUDE.md",
-        dead: false,
+        dead: "alive",
       },
       {
         surface: "skill",
@@ -66,7 +66,7 @@ export function fixtureContextView(): ContextView {
         estTokens: 9_600,
         hash: "f3",
         duplicateOf: null,
-        dead: false,
+        dead: "alive",
       },
       {
         surface: "skill",
@@ -76,7 +76,7 @@ export function fixtureContextView(): ContextView {
         estTokens: 5_800,
         hash: "f4",
         duplicateOf: null,
-        dead: true,
+        dead: "dead",
       },
       {
         surface: "mcp",
@@ -86,7 +86,7 @@ export function fixtureContextView(): ContextView {
         estTokens: 9_100,
         hash: "f5",
         duplicateOf: null,
-        dead: false,
+        dead: "alive",
       },
       {
         surface: "plugin-tool",
@@ -96,7 +96,7 @@ export function fixtureContextView(): ContextView {
         estTokens: 3_900,
         hash: "f6",
         duplicateOf: null,
-        dead: false,
+        dead: "alive",
       },
     ],
     duplicates: [
@@ -201,7 +201,7 @@ export function fixtureAuditFailures(): { rows: AuditFailureRow[] } {
       {
         signature: "fixture-provider-overloaded",
         category: "provider",
-        message: "fixture provider returned 529 overloaded",
+        subject: "fixture-model-sonnet",
         count: 14,
         firstSeen: "2026-08-28T08:00:00.000Z",
         lastSeen: "2026-09-01T07:40:00.000Z",
@@ -212,7 +212,7 @@ export function fixtureAuditFailures(): { rows: AuditFailureRow[] } {
       {
         signature: "fixture-tool-timeout",
         category: "tool",
-        message: "fixture bash call exceeded its timeout",
+        subject: "tool:bash",
         count: 3,
         firstSeen: "2026-08-30T11:20:00.000Z",
         lastSeen: "2026-08-31T16:05:00.000Z",

@@ -64,7 +64,9 @@ const METRIC_KEYS = [
 
 type MetricKey = (typeof METRIC_KEYS)[number];
 
-const SESSION_ROWS = `
+// The thread filter belongs in WHERE, not HAVING: filtering after the group by
+// makes SQLite aggregate every session in range to keep one.
+const SESSION_ROWS_HEAD = `
   SELECT th.thread_id AS threadId, th.title AS title, th.seat AS seat,
          th.run_folder AS runFolder,
          COUNT(t.turn_id) AS turns,
@@ -78,8 +80,16 @@ const SESSION_ROWS = `
          SUM(COALESCE(t.compacted, 0)) AS compactions
     FROM obs_turn AS t
     JOIN obs_thread AS th ON th.thread_id = t.thread_id
-   WHERE COALESCE(t.completed_at, t.started_at, '') >= ?
-   GROUP BY th.thread_id`;
+   WHERE COALESCE(t.completed_at, t.started_at, '') >= ?`;
+
+function sessionRowsSql(threadHoles = 0): string {
+  const filter =
+    threadHoles === 0
+      ? ""
+      : ` AND th.thread_id IN (${Array.from({ length: threadHoles }, () => "?").join(", ")})`;
+  return `${SESSION_ROWS_HEAD}${filter}\n   GROUP BY th.thread_id`;
+}
+
 
 export function auditSessions(
   deps: AuditDeps,
@@ -87,7 +97,7 @@ export function auditSessions(
 ): AuditSessionRow[] {
   const now = deps.now?.() ?? new Date();
   return deps.db
-    .prepare<[string], AuditSessionRow>(`${SESSION_ROWS} ORDER BY costUsd DESC`)
+    .prepare<[string], AuditSessionRow>(`${sessionRowsSql()} ORDER BY costUsd DESC`)
     .all(rangeStart(range, now.getTime()));
 }
 
@@ -119,6 +129,7 @@ function threadsFor(deps: AuditDeps, target: AuditTarget): string[] {
 }
 
 interface ThreadItem {
+  thread_id: string;
   item_id: string;
   kind: string | null;
   name: string | null;
@@ -132,11 +143,14 @@ function threadItems(db: Database, threadIds: readonly string[]): ThreadItem[] {
   const holes = threadIds.map(() => "?").join(", ");
   return db
     .prepare<string[], ThreadItem>(
-      `SELECT item_id, kind, name, path, seq,
+      // Ordered by thread first: `seq` counts within one thread, so a mixed
+      // order interleaves two runs and lets one thread's test command verify
+      // another thread's edit.
+      `SELECT thread_id, item_id, kind, name, path, seq,
               COALESCE(completed_at, started_at) AS at
          FROM obs_item
         WHERE thread_id IN (${holes})
-        ORDER BY COALESCE(seq, 0), item_id`,
+        ORDER BY thread_id, COALESCE(seq, 0), item_id`,
     )
     .all(...threadIds);
 }
@@ -199,6 +213,49 @@ export function detectVerification(items: readonly ThreadItem[]): VerificationRe
   };
 }
 
+/**
+ * The same detection per thread, merged.
+ *
+ * Verification never crosses a thread boundary: one seat's `npm test` says
+ * nothing about what another seat edited, so each thread is walked alone and
+ * only the counts are added up.
+ */
+export function detectVerificationByThread(
+  items: readonly ThreadItem[],
+): VerificationResult {
+  const byThread = new Map<string, ThreadItem[]>();
+  for (const item of items) {
+    const bucket = byThread.get(item.thread_id);
+    if (bucket) bucket.push(item);
+    else byThread.set(item.thread_id, [item]);
+  }
+  let commands = 0;
+  let verificationCommands = 0;
+  let lastVerifiedAt: string | null = null;
+  const unverifiedEdits: AuditUnverifiedEdit[] = [];
+  for (const bucket of byThread.values()) {
+    const result = detectVerification(bucket);
+    commands += result.verification.commands;
+    verificationCommands += result.verification.verificationCommands;
+    const at = result.verification.lastVerifiedAt;
+    if (at !== null && (lastVerifiedAt === null || at > lastVerifiedAt)) {
+      lastVerifiedAt = at;
+    }
+    unverifiedEdits.push(...result.unverifiedEdits);
+  }
+  return {
+    verification: {
+      commands,
+      verificationCommands,
+      lastVerifiedAt,
+      // True when any thread stored command text: the finding it drives is
+      // about the ledger, which is one store across all of them.
+      textAvailable: verificationCommands > 0,
+    },
+    unverifiedEdits,
+  };
+}
+
 function metricDelta(
   value: number | null,
   medianValue: number | null,
@@ -221,11 +278,7 @@ export function auditSession(
     threads.length === 0
       ? []
       : deps.db
-          .prepare<string[], AuditSessionRow>(
-            `${SESSION_ROWS} HAVING th.thread_id IN (${threads
-              .map(() => "?")
-              .join(", ")})`,
-          )
+          .prepare<string[], AuditSessionRow>(sessionRowsSql(threads.length))
           .all("", ...threads);
   const totals = {} as Record<MetricKey, number | null>;
   for (const key of METRIC_KEYS) {
@@ -242,7 +295,7 @@ export function auditSession(
     delta: metricDelta(totals[key], medians[key]),
   }));
 
-  const { verification, unverifiedEdits } = detectVerification(
+  const { verification, unverifiedEdits } = detectVerificationByThread(
     threadItems(deps.db, threads),
   );
   const findings: AuditFinding[] = [];
@@ -301,7 +354,7 @@ const PACK_FINDINGS = 5;
  * finding has to cite. Bounded by construction rather than truncated, because
  * a pack that loses its tail mid-JSON is a pack the skill cannot parse.
  */
-export function buildAuditPack(deps: AuditDeps, target: AuditTarget): unknown {
+export function buildAuditPack(deps: AuditDeps, target: AuditTarget) {
   const session = auditSession(deps, target);
   const failures = failureRows(deps, { range: "7d" }).slice(0, PACK_FAILURES);
   const facets = auditInsights(deps, "7d").map((facet) => ({
@@ -444,6 +497,24 @@ export function writeAuditPack(
   writeFileSync(costPath, cost.content, "utf8");
   written.push(costPath);
   return written;
+}
+
+/**
+ * The pack, plus the files it left behind.
+ *
+ * The agent-facing tool and the retro seat read the same audit; when the
+ * target names a run folder the tool writes the three artifacts there so the
+ * two never disagree about which run was measured. With no run folder there is
+ * nowhere to write, and `written` is empty rather than a guessed location.
+ */
+export function auditPackWithExport(
+  deps: AuditDeps,
+  target: AuditTarget,
+) {
+  const pack = buildAuditPack(deps, target);
+  const written =
+    pack.runFolder === null ? [] : writeAuditPack(deps, pack.runFolder);
+  return { ...pack, written };
 }
 
 export function formatSessions(rows: readonly AuditSessionRow[]): string {

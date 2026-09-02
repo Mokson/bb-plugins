@@ -32,7 +32,15 @@ export function normalizeMessage(message: string): string {
     .slice(0, MESSAGE_CAP);
 }
 
-/** Category plus normalized message. Stable across ids, paths and counts. */
+/**
+ * Category plus normalized subject. Stable across ids, paths and counts.
+ *
+ * The subject is NOT the provider's error text: the ledger has no column for
+ * one. It is the model for a turn failure and `kind:name` for an item failure,
+ * which is the most specific thing available until an `error_message` column
+ * exists. `normalizeMessage` still does the stripping, because whatever text
+ * lands here carries the same varying ids and paths.
+ */
 export function failureSignature(category: string, message: string): string {
   return `${category}|${normalizeMessage(message)}`;
 }
@@ -78,7 +86,7 @@ export interface FailuresDeps {
 
 interface RawFailure {
   category: string | null;
-  message: string | null;
+  subject: string | null;
   thread_id: string;
   at: string | null;
 }
@@ -98,7 +106,7 @@ function rawFailures(
   const turns = db
     .prepare<unknown[], RawFailure>(
       `SELECT error_category AS category,
-              COALESCE(model_reported, model_requested, '') AS message,
+              COALESCE(model_reported, model_requested, '') AS subject,
               thread_id, COALESCE(completed_at, started_at) AS at
          FROM obs_turn
         WHERE error_category IS NOT NULL
@@ -108,7 +116,7 @@ function rawFailures(
   const items = db
     .prepare<unknown[], RawFailure>(
       `SELECT COALESCE(error, 'item-error') AS category,
-              COALESCE(kind, '') || ':' || COALESCE(name, '') AS message,
+              COALESCE(kind, '') || ':' || COALESCE(name, '') AS subject,
               thread_id, COALESCE(completed_at, started_at) AS at
          FROM obs_item
         WHERE error IS NOT NULL
@@ -129,7 +137,7 @@ export function failureRows(
     string,
     {
       category: string;
-      message: string;
+      subject: string;
       count: number;
       firstSeen: string;
       lastSeen: string;
@@ -138,8 +146,8 @@ export function failureRows(
   >();
   for (const row of rawFailures(deps.db, since, query.threadId)) {
     const category = row.category ?? "unknown";
-    const message = normalizeMessage(row.message ?? "");
-    const signature = failureSignature(category, row.message ?? "");
+    const subject = normalizeMessage(row.subject ?? "");
+    const signature = failureSignature(category, row.subject ?? "");
     const at = row.at ?? nowIso;
     const existing = grouped.get(signature);
     if (existing) {
@@ -151,7 +159,7 @@ export function failureRows(
     }
     grouped.set(signature, {
       category,
-      message,
+      subject,
       count: 1,
       firstSeen: at,
       lastSeen: at,
@@ -165,7 +173,7 @@ export function failureRows(
     rows.push({
       signature,
       category: entry.category,
-      message: entry.message,
+      subject: entry.subject,
       count: entry.count,
       firstSeen: entry.firstSeen,
       lastSeen: entry.lastSeen,

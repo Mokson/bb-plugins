@@ -70,7 +70,7 @@ bb reports per-thread token usage but no cost, no model on the usage event, and 
 
 ### Context
 
-26. The context scan covers project and global instruction files with their imports, the skills catalog frontmatter, the MCP configuration, and this plugin's own tools. It reports duplicates by shingle hash with recoverable tokens, dead skills (mounted descriptions never matched by a Skill item in any indexed session) with bytes saved, and a compaction estimate.
+26. The context scan covers project and global instruction files with their imports, the skills catalog frontmatter, the MCP configuration, and this plugin's own tools. It reports duplicates by shingle hash with recoverable tokens, dead skills (mounted descriptions never named by any indexed session, compared on the id's last colon-separated segment) with bytes saved, and a compaction estimate. A skill is reported `unknown` rather than dead when nothing in the window named any skill at all. The prefix is priced with the factor the previous scan learned, never with the one this scan just fitted.
 
 27. Token estimates are calibrated per provider against the first turn's `cache_write`, which is the ground-truth prefix size. Estimated numbers render with a superscript `e` and a footnote; unknown numbers render `--`.
 

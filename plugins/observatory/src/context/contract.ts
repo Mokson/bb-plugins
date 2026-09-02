@@ -30,7 +30,12 @@ export const contextBlockSchema = z
     hash: z.string(),
     /** The block name this one overlaps past the duplicate threshold. */
     duplicateOf: z.string().nullable(),
-    dead: z.boolean(),
+    /**
+     * `dead` only when some source in the window named skills and none named
+     * this one; `unknown` when nothing named a skill at all, which is silence
+     * rather than evidence. Non-skill surfaces are always `alive`.
+     */
+    dead: z.enum(["alive", "dead", "unknown"]),
   })
   .strict();
 
@@ -109,7 +114,11 @@ export const contextContract = defineRpcContract({
       .object({
         cwd: z.string().min(1).optional(),
         projectId: z.string().min(1).optional(),
-        /** Rescan the filesystem instead of serving the newest snapshot. */
+        /**
+         * Force a new snapshot ROW. The filesystem is scanned either way;
+         * without this a scan inside the reuse window rewrites the newest row
+         * instead of adding one.
+         */
         refresh: z.boolean().optional(),
       })
       .strict(),

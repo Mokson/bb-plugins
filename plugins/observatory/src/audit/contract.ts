@@ -78,7 +78,12 @@ export const auditFailureRowSchema = z
   .object({
     signature: z.string(),
     category: z.string(),
-    message: z.string(),
+    /**
+     * The normalized text the signature is built from: the model for a turn
+     * failure, `kind:name` for an item failure. Not the provider's error
+     * message — the ledger keeps no column for one.
+     */
+    subject: z.string(),
     count: z.number(),
     firstSeen: z.string(),
     lastSeen: z.string(),

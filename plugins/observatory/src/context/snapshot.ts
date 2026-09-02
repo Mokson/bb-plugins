@@ -15,7 +15,12 @@ import type {
   ContextThreadView,
   ContextView,
 } from "./contract.js";
-import { findDuplicates, usedSkillNames } from "./duplicates.js";
+import {
+  findDuplicates,
+  normalizeSkillName,
+  usedSkillNames,
+  type SkillUsage,
+} from "./duplicates.js";
 import { calibrate, estimateTokens, newestProvider } from "./estimate.js";
 import {
   blockHash,
@@ -65,6 +70,28 @@ export interface SnapshotInput {
 interface AnalyzedBlock extends ScannedBlock {
   estTokens: number;
   hash: string;
+  /** Identity within one scan: two surfaces may mount the same name. */
+  key: string;
+}
+
+/**
+ * Whether a block is a skill nothing used.
+ *
+ * With no source naming a skill anywhere in the window there is nothing for
+ * this skill to be absent from, so the honest verdict is `unknown`, not `dead`.
+ */
+function deadVerdict(
+  block: ScannedBlock,
+  used: SkillUsage,
+): ContextBlock["dead"] {
+  if (block.surface !== "skill") return "alive";
+  if (!used.sourced) return "unknown";
+  return used.names.has(normalizeSkillName(block.name)) ? "alive" : "dead";
+}
+
+/** Surface plus path, or surface plus name for a block with no file. */
+function blockKey(block: ScannedBlock): string {
+  return `${block.surface}:${block.path ?? block.name}`;
 }
 
 function composition(blocks: readonly AnalyzedBlock[]): ContextComposition[] {
@@ -142,19 +169,27 @@ export function takeSnapshot(
     getMeta: (key) => store.getMeta(key),
     setMeta: (key, value) => store.setMeta(key, value),
   });
-  const factor = calibration.factor ?? 1;
+  // The PRIOR factor prices this scan; the one just fitted is persisted for
+  // the next. See `calibrate`.
   const analyzed: AnalyzedBlock[] = scanned.map((block) => ({
     ...block,
-    estTokens: estimateTokens(block.text, factor),
+    estTokens: estimateTokens(block.text, calibration.applied),
     hash: blockHash(block.text),
+    key: blockKey(block),
   }));
 
-  const duplicates = findDuplicates(analyzed);
+  const pairs = findDuplicates(analyzed);
   const duplicateOf = new Map<string, string>();
-  for (const pair of duplicates) {
-    if (!duplicateOf.has(pair.a)) duplicateOf.set(pair.a, pair.b);
-    if (!duplicateOf.has(pair.b)) duplicateOf.set(pair.b, pair.a);
+  for (const pair of pairs) {
+    if (!duplicateOf.has(pair.aKey)) duplicateOf.set(pair.aKey, pair.b);
+    if (!duplicateOf.has(pair.bKey)) duplicateOf.set(pair.bKey, pair.a);
   }
+  const duplicates = pairs.map(({ a, b, overlap, recoverableTokens }) => ({
+    a,
+    b,
+    overlap,
+    recoverableTokens,
+  }));
 
   const used = usedSkillNames(db, sinceIso, sinceMs);
   const blocks: ContextBlock[] = analyzed.map((block) => ({
@@ -164,8 +199,8 @@ export function takeSnapshot(
     bytes: Buffer.byteLength(block.text, "utf8"),
     estTokens: block.estTokens,
     hash: block.hash,
-    duplicateOf: duplicateOf.get(block.name) ?? null,
-    dead: block.surface === "skill" && !used.has(block.name.toLowerCase()),
+    duplicateOf: duplicateOf.get(block.key) ?? null,
+    dead: deadVerdict(block, used),
   }));
   const totalEstTokens = blocks.reduce((sum, block) => sum + block.estTokens, 0);
 
@@ -190,7 +225,7 @@ export function takeSnapshot(
         takenAt,
         provider,
         totalEstTokens,
-        calibration.factor,
+        calibration.prior,
         calibration.error,
       );
     id = Number(result.lastInsertRowid);
@@ -205,7 +240,7 @@ export function takeSnapshot(
       takenAt,
       provider,
       totalEstTokens,
-      calibration.factor,
+      calibration.prior,
       calibration.error,
       id,
     );
@@ -228,7 +263,7 @@ export function takeSnapshot(
         block.estTokens,
         block.hash,
         block.duplicateOf,
-        block.dead ? 1 : 0,
+        block.dead === "dead" ? 1 : 0,
       );
     }
   })();
@@ -240,7 +275,7 @@ export function takeSnapshot(
     takenAt,
     provider,
     totalEstTokens,
-    calibrationFactor: calibration.factor,
+    calibrationFactor: calibration.prior,
     calibrationError: calibration.error,
   };
   return {
@@ -248,7 +283,7 @@ export function takeSnapshot(
     blocks,
     duplicates,
     dead: blocks
-      .filter((block) => block.dead)
+      .filter((block) => block.dead === "dead")
       .map((block) => ({
         name: block.name,
         path: block.path,
@@ -381,7 +416,10 @@ export function formatSurfaces(view: ContextView): string {
   for (const block of [...view.blocks].sort(
     (a, b) => b.estTokens - a.estTokens,
   )) {
-    const flags = [block.duplicateOf ? "dup" : "", block.dead ? "dead" : ""]
+    const flags = [
+      block.duplicateOf ? "dup" : "",
+      block.dead === "alive" ? "" : block.dead,
+    ]
       .filter(Boolean)
       .join(",");
     lines.push(
