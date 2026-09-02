@@ -78,7 +78,7 @@ function SessionTable({
             <td className="h-6 max-w-[260px] truncate px-2 py-0">
               <button
                 type="button"
-                className="truncate text-left underline underline-offset-2"
+                className="block w-full truncate text-left underline underline-offset-2"
                 onClick={() => onOpen(row.threadId)}
               >
                 {row.title ?? row.threadId}

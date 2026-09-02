@@ -143,7 +143,7 @@ export function AuditFailures() {
                         <td className="h-6 max-w-[280px] truncate px-2 py-0">
                           <button
                             type="button"
-                            className="truncate text-left underline underline-offset-2"
+                            className="block w-full truncate text-left underline underline-offset-2"
                             onClick={() => setSelected(entry.signature)}
                           >
                             {entry.signature}
