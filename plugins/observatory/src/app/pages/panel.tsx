@@ -15,6 +15,8 @@ import { useStatus } from "./status.js";
 import { CostOverview } from "./cost.js";
 import { CostCache } from "./cost-cache.js";
 import { ThreadCost } from "./thread-cost.js";
+import { EvalCases } from "./eval-cases.js";
+import { EvalRun } from "./eval-run.js";
 
 export { PANEL_PATH, PLACEHOLDERS, ROUTES };
 
@@ -108,6 +110,12 @@ function Route({ segments }: { segments: readonly string[] }) {
   if (head === "cost") {
     if (second === "cache") return <CostCache threadId={third} />;
     return <CostOverview />;
+  }
+  if (head === "eval") {
+    if (second === "runs" && third !== undefined) return <EvalRun runId={third} />;
+    // `eval` and `eval/cases` are the same list; `eval/cases/<name>` is one
+    // case, so a reader can keep either address.
+    return <EvalCases caseName={second === "cases" ? third : undefined} />;
   }
   return <Placeholder route={head} />;
 }

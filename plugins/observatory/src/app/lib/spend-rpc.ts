@@ -43,13 +43,17 @@ export function isFixtureMode(): boolean {
 }
 
 /**
- * Call one spend method and track its state.
+ * Call one plugin rpc method and track its state.
  *
  * `input` is re-serialised into the dependency key rather than compared by
  * reference, so a caller may build it inline without spinning the effect.
+ *
+ * `M` defaults to the spend contract's methods. Another module's hook narrows
+ * it to its own method names (see `lib/eval-rpc.ts`) rather than copying this
+ * state machine and letting the two drift.
  */
-export function useSpendQuery<T>(
-  method: SpendMethod,
+export function useSpendQuery<T, M extends string = SpendMethod>(
+  method: M,
   input: Record<string, unknown>,
   fixture: () => T,
 ): SpendQuery<T> {
