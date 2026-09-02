@@ -75,11 +75,23 @@ function TopClusters({ status }: { status: DistillStatus }) {
       <tbody>
         {status.topClusters.map((cluster) => (
           <tr key={cluster.signature}>
-            <td className="h-6 py-0 tabular-nums">
+            {/* The two fixed columns never wrap: `w-full` on the signature
+                starves them otherwise, and a count broken over three lines
+                takes the row off the 24px grid. */}
+            <td className="h-6 whitespace-nowrap py-0 pr-3 text-right tabular-nums">
               {cluster.size}x / {cluster.runs} runs
             </td>
-            <td className="h-6 py-0">{cluster.cause_class ?? "untagged"}</td>
-            <td className="h-6 w-full py-0">{cluster.signature}</td>
+            <td className="h-6 whitespace-nowrap py-0 pr-3">
+              {cluster.cause_class ?? "untagged"}
+            </td>
+            {/* The signature absorbs the remaining width and truncates, so one
+                long one cannot reflow the whole strip. */}
+            <td
+              className="h-6 w-full max-w-0 truncate py-0"
+              title={cluster.signature}
+            >
+              {cluster.signature}
+            </td>
           </tr>
         ))}
       </tbody>

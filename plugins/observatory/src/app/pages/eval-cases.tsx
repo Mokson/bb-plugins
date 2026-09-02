@@ -12,7 +12,7 @@
 // this module is built against.
 import { useCallback } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { Heading, Hero, NumHead, TextHead } from "@/components/spend-common";
+import { Heading, Hero, Num, NumHead, TextHead } from "@/components/spend-common";
 import {
   Cell,
   EvalFrame,
@@ -138,9 +138,9 @@ function CaseRow({
         <Cell title={entry.tags.join(", ")}>
           {entry.tags.length === 0 ? UNKNOWN : entry.tags.join(" ")}
         </Cell>
-        <td className="h-6 whitespace-nowrap px-2 py-0 text-right tabular-nums">
-          {UNKNOWN}
-        </td>
+        <Num>
+          {entry.body === null ? UNKNOWN : formatCount(entry.body.trials)}
+        </Num>
         <Cell>{entry.lastResult?.runId ?? UNKNOWN}</Cell>
         <Verdict>{verdictWord(entry.lastResult?.status)}</Verdict>
       </tr>

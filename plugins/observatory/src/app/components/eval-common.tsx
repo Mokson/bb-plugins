@@ -8,7 +8,7 @@
 // screenshot as it does on screen.
 import type { ReactNode } from "react";
 import { PageSkeleton } from "@/components/spend-common";
-import { EVAL_ABSENT_MESSAGE, type EvalQuery } from "@/lib/eval-rpc";
+import { type EvalQuery } from "@/lib/eval-rpc";
 
 /**
  * The hero row. Wraps by width rather than by a fixed column count, so four
@@ -44,9 +44,9 @@ export function EvalFrame<T>({
     return (
       <div className="flex flex-col gap-3">
         <PageSkeleton />
-        <p className="text-[11px] text-muted-foreground">
-          {EVAL_ABSENT_MESSAGE}
-        </p>
+        {/* The hook derives this line from the method's own module, so the
+            frame does not keep a second copy of the sentence. */}
+        <p className="text-[11px] text-muted-foreground">{query.message}</p>
       </div>
     );
   }

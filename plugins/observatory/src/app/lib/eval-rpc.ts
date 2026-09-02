@@ -8,9 +8,6 @@
 import { useModuleQuery, type ModuleQuery } from "./module-rpc.js";
 import type { evalContract } from "../../eval/contract.js";
 
-/** The line every eval page shows when the module's rpc is not registered. */
-export const EVAL_ABSENT_MESSAGE = "eval module not running";
-
 /** The four states an eval read can be in. Same shape as any module read. */
 export type EvalQuery<T> = ModuleQuery<T>;
 
