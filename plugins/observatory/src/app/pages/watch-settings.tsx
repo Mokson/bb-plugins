@@ -26,11 +26,17 @@ import type { WatchMode, WatchSettings } from "../../watch/contract.js";
 
 const MODES: readonly WatchMode[] = ["off", "observe", "steer"];
 
-/** What each mode does, in one line, so the radio is self-explanatory. */
+/**
+ * What each mode does, in one line, so the radio is self-explanatory.
+ *
+ * The mode governs what watch does unprompted. A steer you ask for by hand is
+ * your decision, not the ladder's, and it works from `observe` - `off` is the
+ * only mode that refuses one.
+ */
 const MODE_HELP: Record<WatchMode, string> = {
-  off: "record nothing",
-  observe: "record signals, send nothing",
-  steer: "record and send steers up the ladder",
+  off: "record nothing, send nothing, refuse manual steers",
+  observe: "record signals, send nothing on its own; manual steers still send",
+  steer: "record, and send steers up the ladder on its own",
 };
 
 function SettingsForm({ initial }: { initial: WatchSettings }) {

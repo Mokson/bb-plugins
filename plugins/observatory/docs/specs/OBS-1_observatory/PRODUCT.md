@@ -22,7 +22,7 @@ bb reports per-thread token usage but no cost, no model on the usage event, and 
 
 5. An eval baseline changes only through `bb observatory eval baseline promote <run>`. No run, gate, or cron mutates `eval_baseline`. [auto: `pnpm --filter observatory test -t "baseline moves only by promote"`]
 
-6. `watch_mode` defaults to `observe`. In `observe` the plugin records signals and sends no message; in `off` it records nothing; only `steer` sends. A KV override set from the panel outranks the setting and applies without reload. [auto: `pnpm --filter observatory test -t "watch defaults to observe"`]
+6. `watch_mode` defaults to `observe` and governs the automatic ladder only. In `observe` the ladder records signals and sends no message; in `off` it records nothing; only `steer` lets the ladder send by itself. A manual steer or escalation - `bb observatory watch steer|escalate <id>`, or the Stalls page buttons - is an explicit human decision and sends from `observe` as well as from `steer`; `off` refuses it. Record-before-send (7) and the steer caps apply to a manual steer exactly as to a ladder steer. A KV override set from the panel outranks the setting and applies without reload. [auto: `pnpm --filter observatory test -t "watch defaults to observe"`]
 
 7. Every steering message has an `obs_action` row committed before the send call is issued, with `at` no later than the send timestamp. A send that fails still leaves its `obs_action` row with the failure in `result`. [auto: `pnpm --filter observatory test -t "steer recorded before sent"`]
 

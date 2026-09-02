@@ -94,14 +94,36 @@ describe("watch mode", () => {
     expect(fixture.runtime.queries.actionsForThread(thread, 100)).toEqual([]);
   });
 
-  it("refuses a manual steer while the mode is not steer", async () => {
+  it("allows a manual steer from observe; only the ladder is mode-gated", async () => {
+    // The mode says what watch does on its OWN. A person typing the command
+    // supplies the judgement observe is waiting for, so the manual path sends
+    // while the automatic ladder on the same thread still only records.
     clock.now = T0;
     fixture = makeWatchFixture({ "watch_mode": "observe" }, clock);
+    await fixture.runtime.refresh();
+    const thread = stalledThread(fixture);
+
+    expect(fixture.runtime.engine.evaluateThread(thread)!.opened).toBeGreaterThan(0);
+    await fixture.runtime.ladder.settled();
+    expect(
+      fixture.runtime.queries
+        .actionsForThread(thread, 100)
+        .every((action) => action.action === "observe"),
+    ).toBe(true);
+
+    expect(await fixture.runtime.ladder.steer(thread, { actor: "cli" })).toBe(
+      "steered",
+    );
+  });
+
+  it("refuses a manual steer while the mode is off", async () => {
+    clock.now = T0;
+    fixture = makeWatchFixture({ "watch_mode": "off" }, clock);
     await fixture.runtime.refresh();
     const sends = forbidSend(fixture);
     const thread = stalledThread(fixture);
 
-    expect(await fixture.runtime.ladder.steer(thread)).toBe("observe-only");
+    expect(await fixture.runtime.ladder.steer(thread)).toBe("mode-off");
     expect(sends.touched).toBe(false);
   });
 });

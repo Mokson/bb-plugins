@@ -534,14 +534,15 @@ export function createLadder(deps: LadderDeps): Ladder {
         at,
       });
 
-    // Mode still governs. Someone steering from `observe` is asking for the
-    // mode change first, and silently overriding it would make the setting a
-    // suggestion. The rule eligibility gate does NOT apply: a person who read
-    // the evidence is the judgement that gate stands in for.
+    // `off` means off, and nothing walks past it. `observe` does not gate this
+    // path: the mode governs what the ladder does on its own, and a person
+    // typing `watch steer <id>` or clicking through a confirmation has already
+    // supplied the judgement observe mode waits for. The rule eligibility gate
+    // does NOT apply here for the same reason. Everything that protects the
+    // thread rather than the decision - record-before-send, the caps - still
+    // does, below.
     const mode = deps.config().mode;
-    if (mode !== "steer") {
-      return refuse(mode === "off" ? "mode-off" : "observe-only");
-    }
+    if (mode === "off") return refuse("mode-off");
     const context = deps.thread(threadId);
     if (!context) return refuse("unknown-thread");
     if (context.status !== "active") return refuse("inactive-thread");

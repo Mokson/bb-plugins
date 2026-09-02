@@ -260,8 +260,8 @@ export function StallsPage() {
   );
 
   // One line, from the server's own vocabulary. A refusal ("watch mode is
-  // observe; set it to steer first") is as much a result as a success, and
-  // both land in the same place so a click always answers.
+  // off; set it to steer first") is as much a result as a success, and both
+  // land in the same place so a click always answers.
   const act = useCallback(
     (action: "steer" | "escalate", row: WatchRow) => {
       setConfirmation(`${action}ing ${row.threadId}...`);

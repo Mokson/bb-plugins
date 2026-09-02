@@ -67,6 +67,41 @@ describe("bb observatory watch steer", () => {
     expect(actions[0]?.detail).toContain("by cli");
   });
 
+  it("steers from observe mode, recording before it sends", async () => {
+    // A manual steer is an explicit human action, so observe does not block
+    // it - observe governs the automatic ladder. The action row is still
+    // written first, which is what the live proof measures.
+    clock.now = T0;
+    fixture = makeWatchFixture({ "watch_mode": "observe" }, clock);
+    await fixture.runtime.refresh();
+    const order: string[] = [];
+    Object.defineProperty(fixture.host.bb, "sdk", {
+      configurable: true,
+      get: () => ({
+        threads: {
+          send: () => {
+            order.push("send");
+            return Promise.resolve({ ok: true, delivery: "sent" });
+          },
+        },
+      }),
+    });
+    const thread = fixture.seedThread({ threadId: "thr-live" });
+
+    const result = await runWatchCli(
+      fixture.host.bb,
+      handle(fixture),
+      ["steer", thread],
+      () => clock.now,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(`steered ${thread}\n`);
+    const actions = fixture.runtime.queries.actionsForThread(thread, 10);
+    expect(actions[0]?.action).toBe("steer");
+    expect(order).toEqual(["send"]);
+  });
+
   it("escalates to the parent and names it in the confirmation", async () => {
     clock.now = T0;
     fixture = makeWatchFixture({ "watch_mode": "steer" }, clock);
@@ -113,10 +148,10 @@ describe("bb observatory watch steer", () => {
   });
 
   it("exits non-zero on a refusal, on stderr", async () => {
-    // A script piping this into a loop must not read "watch mode is observe"
-    // as a steer that happened.
+    // A script piping this into a loop must not read "watch mode is off" as a
+    // steer that happened.
     clock.now = T0;
-    fixture = makeWatchFixture({ "watch_mode": "observe" }, clock);
+    fixture = makeWatchFixture({ "watch_mode": "off" }, clock);
     await fixture.runtime.refresh();
     const sent = captureSends(fixture);
     const thread = fixture.seedThread({ threadId: "thr-live" });
@@ -129,7 +164,7 @@ describe("bb observatory watch steer", () => {
     );
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("set it to steer first");
+    expect(result.stderr).toContain("watch mode is off");
     expect(result.stdout).toBeUndefined();
     expect(sent).toEqual([]);
   });

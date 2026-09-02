@@ -44,7 +44,10 @@ export function steerMessage(
     case "mode-off":
       return "watch mode is off; set it to steer first";
     case "observe-only":
-      return "watch mode is observe; set it to steer first";
+      // Only the automatic ladder reaches this verdict now; a manual steer is
+      // allowed from observe, so the line must not tell a person to flip the
+      // mode they deliberately chose.
+      return "watch mode is observe, so the ladder did not send";
     case "unknown-thread":
       return `no ledger row for ${threadId}; it may not be indexed yet`;
     case "inactive-thread":
