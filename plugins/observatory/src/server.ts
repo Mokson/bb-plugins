@@ -103,6 +103,7 @@ import {
   type NightlyFingerprint,
 } from "./eval/nightly.js";
 import {
+  baselineView,
   casesView,
   loadCases,
   runView,
@@ -1682,6 +1683,7 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
     },
     "observatory_eval_runs": ({ limit }) => runsView(evalDeps(), limit),
     "observatory_eval_run": ({ runId }) => runView(evalDeps(), runId),
+    "observatory_eval_baseline": () => baselineView(evalDeps()),
   });
   // --- end eval ---
 

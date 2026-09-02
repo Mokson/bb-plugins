@@ -6,11 +6,11 @@
 // keeps a row too, reading `--`, because "no result" is a failure the gate
 // grades and an absent row would hide it.
 //
-// Baseline: `evalContract` on this branch exposes cases, runs and one run.
-// There is no baseline read and no promote write, so the per-metric deltas
-// cannot be computed here. The thresholds the gate would apply are stated,
-// and promotion is named as the CLI-only action it is - PRODUCT invariant 5
-// reserves that write for `bb observatory eval baseline promote`.
+// Baseline: `observatory_eval_baseline` is a READ. The deltas below compare
+// this run's worst trial per case against the promoted baseline, using the
+// gate's own DRIFT thresholds, so a case marked WARN here is a case the gate
+// warned about. Promotion stays the CLI-only action it is - PRODUCT invariant
+// 5 reserves that write for `bb observatory eval baseline promote`.
 import { useCallback } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import {
@@ -38,16 +38,26 @@ import {
 } from "@/lib/format";
 import { useEvalQuery } from "@/lib/eval-rpc";
 import {
+  baselineDelta,
+  baselineMetrics,
   elapsedMs,
   failedAssertions,
+  growthLabel,
   readMetrics,
   runCaseOrder,
   totalCostUsd,
   verdictWord,
+  worstMetrics,
+  type BaselineDeltaView,
+  type MetricDeltaView,
 } from "@/lib/eval-view";
-import { fixtureRun } from "@/fixtures/eval";
+import { fixtureBaseline, fixtureRun } from "@/fixtures/eval";
 import { DRIFT } from "../../eval/gate.js";
-import type { EvalCaseResultView, EvalRunView } from "../../eval/contract.js";
+import type {
+  EvalBaselineView,
+  EvalCaseResultView,
+  EvalRunView,
+} from "../../eval/contract.js";
 import { PANEL_PATH } from "./routes.js";
 
 const PROMOTE_NOTE =
@@ -116,14 +126,26 @@ function ResultRow({ row }: { row: EvalCaseResultView }) {
   );
 }
 
-function ResultsTable({ view }: { view: EvalRunView }) {
+/** The run's trials keyed by case. Shared by both tables so they cannot drift. */
+function groupByCase(
+  results: readonly EvalCaseResultView[],
+): Map<string, EvalCaseResultView[]> {
   const byCase = new Map<string, EvalCaseResultView[]>();
-  for (const row of view.results) {
+  for (const row of results) {
     const list = byCase.get(row.case) ?? [];
     list.push(row);
     byCase.set(row.case, list);
   }
-  const names = runCaseOrder(view.run?.cases ?? [], view.results);
+  return byCase;
+}
+
+function ResultsTable({
+  names,
+  byCase,
+}: {
+  names: readonly string[];
+  byCase: ReadonlyMap<string, EvalCaseResultView[]>;
+}) {
   if (names.length === 0) {
     return (
       <p className="text-[13px] text-muted-foreground">
@@ -152,6 +174,76 @@ function ResultsTable({ view }: { view: EvalRunView }) {
   );
 }
 
+/**
+ * One growth figure, with `WARN` appended when it clears the gate's ceiling.
+ *
+ * The word, not a colour: the density rules keep hierarchy out of colour so the
+ * page reads the same in either theme and in a screenshot.
+ */
+function Growth({ metric }: { metric: MetricDeltaView | null }) {
+  return (
+    <Num>
+      {growthLabel(metric)}
+      {metric?.warn === true ? " WARN" : ""}
+    </Num>
+  );
+}
+
+/**
+ * This run against the promoted baseline, one row per case.
+ *
+ * A case with no promoted baseline still gets a row, reading `--`: "never
+ * promoted" is a thing a reader acts on, and dropping the row would hide it.
+ */
+function BaselineTable({
+  names,
+  byCase,
+  baseline,
+}: {
+  names: readonly string[];
+  byCase: ReadonlyMap<string, EvalCaseResultView[]>;
+  baseline: EvalBaselineView | null;
+}) {
+  const baselines = baselineMetrics(baseline);
+  const runIds = new Map(
+    (baseline?.cases ?? []).map((entry) => [entry.case, entry.runId]),
+  );
+  const rows: Array<{ name: string; runId: string | null; delta: BaselineDeltaView }> =
+    names.map((name) => ({
+      name,
+      runId: runIds.get(name) ?? null,
+      delta: baselineDelta(
+        worstMetrics(byCase.get(name) ?? []),
+        baselines.get(name),
+      ),
+    }));
+
+  return (
+    <table className="w-full text-[13px]">
+      <thead>
+        <tr className="text-[11px] text-muted-foreground">
+          <TextHead>case</TextHead>
+          <TextHead>baseline run</TextHead>
+          <NumHead>tokens</NumHead>
+          <NumHead>cost usd</NumHead>
+          <NumHead>wall</NumHead>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={row.name} className="border-t border-border">
+            <Cell>{row.name}</Cell>
+            <Cell>{row.runId ?? UNKNOWN}</Cell>
+            <Growth metric={row.delta.tokens} />
+            <Growth metric={row.delta.costUsd} />
+            <Growth metric={row.delta.wallMs} />
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 /** `eval/runs/<id>`. An unknown id renders one line, never a thrown rpc. */
 export function EvalRun({ runId }: { runId: string }) {
   const navigate = useBbNavigate();
@@ -164,6 +256,16 @@ export function EvalRun({ runId }: { runId: string }) {
     { runId },
     fixtureRun,
   );
+  // A second read rather than a field on the run: baselines move by promotion,
+  // not by running, so folding them into the run payload would cache a number
+  // that is right only until the next promote.
+  const baselineQuery = useEvalQuery<EvalBaselineView>(
+    "observatory_eval_baseline",
+    {},
+    fixtureBaseline,
+  );
+  const baseline =
+    baselineQuery.kind === "ready" ? baselineQuery.data : null;
 
   return (
     <section className="flex flex-col gap-3 py-4">
@@ -187,6 +289,8 @@ export function EvalRun({ runId }: { runId: string }) {
             );
           }
           const wall = elapsedMs(view.run.startedAt, view.run.finishedAt);
+          const byCase = groupByCase(view.results);
+          const names = runCaseOrder(view.run.cases, view.results);
           return (
             <div className="flex flex-col gap-3">
               <HeroRow>
@@ -210,13 +314,22 @@ export function EvalRun({ runId }: { runId: string }) {
                   ["finished utc", formatTime(view.run.finishedAt)],
                 ]}
               />
-              <ResultsTable view={view} />
+              <ResultsTable names={names} byCase={byCase} />
               <Heading>Baseline</Heading>
               <p className="text-[11px] text-muted-foreground">{THRESHOLDS}</p>
-              <p className="text-[11px] text-muted-foreground">
-                per-case deltas are not on the eval rpc contract; the run gate
-                above carries the comparison
-              </p>
+              {baselineQuery.kind === "ready" ? (
+                <BaselineTable
+                  names={names}
+                  byCase={byCase}
+                  baseline={baseline}
+                />
+              ) : (
+                <p className="text-[11px] text-muted-foreground">
+                  {baselineQuery.kind === "loading"
+                    ? "loading baselines"
+                    : baselineQuery.message}
+                </p>
+              )}
               <p className="text-[11px] text-muted-foreground">
                 {PROMOTE_NOTE}
               </p>

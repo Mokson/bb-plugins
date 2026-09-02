@@ -16,6 +16,47 @@ export const evalLastResultSchema = z
   })
   .strict();
 
+/**
+ * The parts of a parsed case a reader needs to judge what it measures.
+ *
+ * A subset, not the whole YAML: `harness` pins models and `answers` is a
+ * script, and neither answers "what does this case do, and what may it spend".
+ * `assertionKeys` carries the names only - the assertion VALUES are the case
+ * file's own business, and a reader who wants them has `path`.
+ */
+export const evalCaseBodySchema = z
+  .object({
+    fixture: z
+      .object({
+        project: z.string(),
+        repo: z.string(),
+        baseBranch: z.string(),
+        sha: z.string(),
+        dirty: z.array(z.string()),
+        envFiles: z.array(z.string()),
+      })
+      .strict(),
+    invocation: z
+      .object({
+        text: z.string(),
+        route: z.string().nullable(),
+        mode: z.string().nullable(),
+      })
+      .strict(),
+    limits: z
+      .object({
+        timeoutMs: z.number(),
+        costCeilingUsd: z.number(),
+        maxTotalTokens: z.number(),
+      })
+      .strict(),
+    /** The `assert` keys this case declares. */
+    assertionKeys: z.array(z.string()),
+    trials: z.number(),
+    retries: z.number(),
+  })
+  .strict();
+
 export const evalCaseSummarySchema = z
   .object({
     name: z.string(),
@@ -25,6 +66,8 @@ export const evalCaseSummarySchema = z
     /** Null exactly when `valid`. Carries the offending key's path. */
     error: z.string().nullable(),
     lastResult: evalLastResultSchema.nullable(),
+    /** Null exactly when the case did not parse, so it mirrors `valid`. */
+    body: evalCaseBodySchema.nullable(),
   })
   .strict();
 
@@ -59,6 +102,28 @@ export const evalCaseResultSchema = z
   })
   .strict();
 
+/**
+ * One case's promoted baseline: the run it came from and the metrics the next
+ * run is measured against.
+ *
+ * `runId` is per case, not per suite, because promotion takes a case list -
+ * two cases may sit on baselines from different runs, and a single "the
+ * baseline run" field would have to pick one of them and be wrong.
+ */
+export const evalBaselineEntrySchema = z
+  .object({
+    case: z.string(),
+    runId: z.string().nullable(),
+    /** Opaque to the wire, exactly as `evalCaseResultSchema.metrics` is. */
+    metrics: z.unknown().nullable(),
+    promotedAt: z.string().nullable(),
+  })
+  .strict();
+
+export const evalBaselineOutputSchema = z
+  .object({ cases: z.array(evalBaselineEntrySchema) })
+  .strict();
+
 export const evalRunsOutputSchema = z
   .object({ runs: z.array(evalRunSummarySchema) })
   .strict();
@@ -70,6 +135,9 @@ export const evalRunOutputSchema = z
   })
   .strict();
 
+export type EvalCaseBody = z.output<typeof evalCaseBodySchema>;
+export type EvalBaselineEntry = z.output<typeof evalBaselineEntrySchema>;
+export type EvalBaselineView = z.output<typeof evalBaselineOutputSchema>;
 export type EvalCaseSummary = z.output<typeof evalCaseSummarySchema>;
 export type EvalRunSummary = z.output<typeof evalRunSummarySchema>;
 export type EvalCaseResultView = z.output<typeof evalCaseResultSchema>;
@@ -91,5 +159,11 @@ export const evalContract = defineRpcContract({
   "observatory_eval_run": {
     input: z.object({ runId: z.string().min(1) }).strict(),
     output: evalRunOutputSchema,
+  },
+  // Read only. PRODUCT.md invariant 5 reserves every baseline WRITE for
+  // `bb observatory eval baseline promote`, so there is no rpc that moves one.
+  "observatory_eval_baseline": {
+    input: z.object({}).strict(),
+    output: evalBaselineOutputSchema,
   },
 });

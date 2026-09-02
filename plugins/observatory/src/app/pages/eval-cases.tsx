@@ -5,12 +5,11 @@
 // false` with the offending key path - and its error renders indented beneath
 // the row, the same shape the run page uses for a failed assertion.
 //
-// Two fields the design asked for are NOT on the wire on this branch: a case's
-// `trials` count and its parsed body (fixture, invocation, limits, assertion
-// keys). `evalCaseSummarySchema` carries name, tags, path, validity and the
-// last result, and nothing else. Both render `--` with one line naming the
-// case file as the source, because inventing a number the rpc never sent is
-// the one failure this module is built against.
+// The detail view renders the case's parsed body - fixture, invocation, limits
+// and the assertion keys it declares - straight off `evalCaseSummarySchema`.
+// `body` is null exactly when the file did not parse, and that case shows its
+// error instead: an invented body for a case nobody can run is the one failure
+// this module is built against.
 import { useCallback } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { Heading, Hero, NumHead, TextHead } from "@/components/spend-common";
@@ -22,12 +21,20 @@ import {
   RowLink,
   Verdict,
 } from "@/components/eval-common";
-import { UNKNOWN, formatCount, formatTime } from "@/lib/format";
+import {
+  UNKNOWN,
+  formatCount,
+  formatDuration,
+  formatTime,
+  formatTokens,
+  formatUsd,
+} from "@/lib/format";
 import { useEvalQuery } from "@/lib/eval-rpc";
 import { verdictWord } from "@/lib/eval-view";
 import { fixtureCases, fixtureRuns } from "@/fixtures/eval";
 import { PANEL_PATH } from "./routes.js";
 import type {
+  EvalCaseBody,
   EvalCaseSummary,
   EvalCasesView,
   EvalRunSummary,
@@ -37,8 +44,63 @@ import type {
 /** How many runs the history strip shows. Newest first, from the server. */
 const RUN_LIMIT = 20;
 
-const BODY_NOTE =
-  "trials and the case body (fixture, invocation, limits, assertion keys) are not on the eval rpc; the case file is the source";
+/**
+ * The parsed case body, as three labelled groups and the assertion keys.
+ *
+ * Meta lines rather than a table: these are one value each, and a two-column
+ * table of eleven single values would be chrome around nothing.
+ */
+function CaseBody({ body }: { body: EvalCaseBody }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <MetaLine
+        entries={[
+          ["invocation", body.invocation.text],
+          ["route", body.invocation.route ?? UNKNOWN],
+          ["mode", body.invocation.mode ?? UNKNOWN],
+        ]}
+      />
+      <MetaLine
+        entries={[
+          ["project", body.fixture.project],
+          ["repo", body.fixture.repo],
+          ["base branch", body.fixture.baseBranch],
+          ["sha", body.fixture.sha],
+          [
+            "dirty",
+            body.fixture.dirty.length === 0
+              ? UNKNOWN
+              : body.fixture.dirty.join(" "),
+          ],
+          [
+            "env files",
+            body.fixture.envFiles.length === 0
+              ? UNKNOWN
+              : body.fixture.envFiles.join(" "),
+          ],
+        ]}
+      />
+      <MetaLine
+        entries={[
+          ["timeout", formatDuration(body.limits.timeoutMs)],
+          ["cost ceiling", formatUsd(body.limits.costCeilingUsd)],
+          ["max tokens", formatTokens(body.limits.maxTotalTokens)],
+          ["retries", formatCount(body.retries)],
+        ]}
+      />
+      <MetaLine
+        entries={[
+          [
+            "assertions",
+            body.assertionKeys.length === 0
+              ? UNKNOWN
+              : body.assertionKeys.join(" "),
+          ],
+        ]}
+      />
+    </div>
+  );
+}
 
 function useNav(): (subPath: string) => void {
   const navigate = useBbNavigate();
@@ -211,7 +273,14 @@ function CaseDetail({ name }: { name: string }) {
           return (
             <div className="flex flex-col gap-3">
               <HeroRow>
-                <Hero label="trials" value={UNKNOWN} />
+                <Hero
+                  label="trials"
+                  value={
+                    entry.body === null
+                      ? UNKNOWN
+                      : formatCount(entry.body.trials)
+                  }
+                />
                 <Hero
                   label="last verdict"
                   value={verdictWord(entry.lastResult?.status)}
@@ -231,10 +300,11 @@ function CaseDetail({ name }: { name: string }) {
                   ],
                 ]}
               />
-              {entry.valid ? null : (
+              {entry.body === null ? (
                 <p className="text-[13px]">{entry.error ?? "did not parse"}</p>
+              ) : (
+                <CaseBody body={entry.body} />
               )}
-              <p className="text-[11px] text-muted-foreground">{BODY_NOTE}</p>
               <Heading>Run history</Heading>
               <EvalFrame query={runs}>
                 {(runsView) => (
@@ -284,7 +354,6 @@ function CasesOverview() {
               cases={view.cases}
               onOpen={(name) => goTo(`eval/cases/${encodeURIComponent(name)}`)}
             />
-            <p className="text-[11px] text-muted-foreground">{BODY_NOTE}</p>
           </div>
         )}
       </EvalFrame>

@@ -44,11 +44,20 @@ describe("the eval cases route", () => {
     await slot.findByText("assert.trace.max_turnz: unrecognized key");
   });
 
-  it("renders trials as -- because the rpc does not carry the count", async () => {
-    const slot = await mount("eval");
-    await slot.findByRole("button", { name: FIXTURE_CASE_NAME });
-    expect(slot.container.textContent).toContain(UNKNOWN);
-    await slot.findByText(/the case file is the source/);
+  it("shows the parsed case body on the detail view", async () => {
+    const slot = await mount(`eval/cases/${FIXTURE_CASE_NAME}`);
+    await slot.findByText("deliver the fixture backlog item");
+    await slot.findByText("fixture0000000000000000000000000000000a1");
+    // The assertion KEYS, not their values: the case file owns those.
+    await slot.findByText("ledger artifacts trace");
+    // `trials` comes off the body now rather than reading `--`.
+    await slot.findByText("3");
+  });
+
+  it("shows the parse error instead of a body when the case did not parse", async () => {
+    const slot = await mount("eval/cases/fixture-groom-shape");
+    await slot.findByText("assert.trace.max_turnz: unrecognized key");
+    expect(slot.container.textContent).not.toContain("base branch");
   });
 
   it("lists the recent runs beside the cases", async () => {
@@ -103,9 +112,20 @@ describe("the eval run route", () => {
     );
   });
 
+  it("marks WARN on every delta that clears the gate's threshold", async () => {
+    const slot = await mount(`eval/runs/${FIXTURE_RUN_ID}`);
+    // fixture-deliver-bug clears all three DRIFT ceilings against its baseline.
+    await slot.findByText("+75% WARN");
+    await slot.findByText("+60% WARN");
+    await slot.findByText("+73% WARN");
+    // fixture-deliver-normal drifts a few points and stays quiet.
+    await slot.findByText("+7%");
+    expect(slot.container.textContent).toContain("run_fixture_0");
+  });
+
   it("keeps every row height at 24px", async () => {
     const slot = await mount(`eval/runs/${FIXTURE_RUN_ID}`);
-    await slot.findByText("fixture-deliver-bug");
+    await slot.findAllByText("fixture-deliver-bug");
     const cells = Array.from(slot.container.querySelectorAll("tbody td"));
     expect(cells.length).toBeGreaterThan(0);
     for (const cell of cells) {
