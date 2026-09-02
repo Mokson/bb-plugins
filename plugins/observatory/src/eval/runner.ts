@@ -99,6 +99,8 @@ export async function stopOwnedThread(
 /** One question of a provider's `user_question` interaction. */
 interface PendingQuestion {
   id: string;
+  /** What the agent actually asked. Often the only text the interaction has. */
+  prompt?: string;
   allowFreeText: boolean;
   options?: ReadonlyArray<{ label: string; value: string }>;
 }
@@ -118,7 +120,14 @@ interface PendingLike {
 export function interactionText(interaction: PendingLike): string {
   const payload = interaction.payload ?? {};
   const data = payload.data === undefined ? "" : JSON.stringify(payload.data);
-  return `${payload.title ?? ""}\n${data}`;
+  // The question prompts, not just the title: a provider `user_question` puts
+  // what it asked in `questions[].prompt` and leaves the title generic, so a
+  // rule matching on the question's own words used to see nothing.
+  const prompts = (payload.questions ?? [])
+    .map((question) => question.prompt ?? "")
+    .filter((prompt) => prompt !== "")
+    .join("\n");
+  return `${payload.title ?? ""}\n${prompts}\n${data}`;
 }
 
 export function interactionKind(interaction: PendingLike): string {
