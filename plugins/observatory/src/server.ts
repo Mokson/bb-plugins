@@ -83,6 +83,7 @@ import {
   formatSessions,
   writeAuditPack,
   type AuditDeps,
+  type AuditTarget,
 } from "./audit/pack.js";
 import {
   failureRows,
@@ -923,6 +924,15 @@ export function runAuditCommand(
     // the two, and asking the operator to say which would be a flag nobody
     // remembers.
     const isFolder = target.includes("/") || target.startsWith(".");
+    if (hasFlag(argv, "pack")) {
+      // Verbatim, unformatted: this surface exists so an operator can measure
+      // what the agent tool returns, and pretty-printing would change it.
+      const result = auditPackToolResult(
+        resolved,
+        isFolder ? { runFolder: target } : { threadId: target },
+      );
+      return { exitCode: 0, stdout: `${result}\n` };
+    }
     const session = auditSession(
       resolved,
       isFolder ? { runFolder: target } : { threadId: target },
@@ -1018,7 +1028,7 @@ const USAGE = [
   "             [--json]",
   "  audit      One session against the 7d median: audit <threadId|runFolder>",
   "             with no target, the sessions list: [--range 7d]",
-  "             [--json] [--export]",
+  "             [--json] [--export] [--pack]",
   "  failures   Failure signatures by count: [--range 7d] [--include-muted]",
   "  insights   Cost drivers, models and failure signatures: [--range 7d]",
   // --- eval ---
@@ -1296,6 +1306,17 @@ export function clampToolResult(payload: unknown): string {
     if (body.length === 0) return JSON.stringify({ truncated: true, body: "" });
     body = body.slice(0, Math.max(0, body.length - over));
   }
+}
+
+/**
+ * The audit pack exactly as the agent tool returns it.
+ *
+ * One function behind three callers - the agent tool, the rpc and
+ * `bb observatory audit <target> --pack` - so the tool's 4096-char contract is
+ * checkable from a terminal instead of only from inside a model's turn.
+ */
+export function auditPackToolResult(deps: AuditDeps, target: AuditTarget): string {
+  return clampToolResult(auditPackWithExport(deps, target));
 }
 
 /** Every run folder the ledger attributes at least one thread to. */
@@ -1748,6 +1769,9 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
     }),
     "observatory_audit_export": ({ format, ...target }) =>
       auditExport(auditRpcDeps(), target, format),
+    "observatory_audit_pack": (target) => ({
+      result: auditPackToolResult(auditRpcDeps(), target),
+    }),
   });
 
   // The agent-facing view of the same rollups. Kept to one tool with one
@@ -1866,7 +1890,7 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
       })
       .strict(),
     execute(target) {
-      return clampToolResult(auditPackWithExport(auditRpcDeps(), target));
+      return auditPackToolResult(auditRpcDeps(), target);
     },
   });
 
@@ -1987,7 +2011,7 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
         summary:
           "One session's metrics against the 7-day median, its verification coverage and its unverified edits.",
         usage:
-          "bb observatory audit [<threadId|runFolder>] [--range 7d] [--json] [--export]",
+          "bb observatory audit [<threadId|runFolder>] [--range 7d] [--json] [--export] [--pack]",
       },
       {
         name: "failures",

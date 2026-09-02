@@ -173,4 +173,15 @@ export const auditContract = defineRpcContract({
       .strict(),
     output: auditExportSchema,
   },
+  /**
+   * The agent tool's result, verbatim.
+   *
+   * A string rather than the pack object: the point of this method is to make
+   * the tool's clamped payload checkable from outside a model turn, and a
+   * parsed re-serialization would not be the same bytes.
+   */
+  "observatory_audit_pack": {
+    input: auditTargetSchema,
+    output: z.object({ result: z.string() }).strict(),
+  },
 });
