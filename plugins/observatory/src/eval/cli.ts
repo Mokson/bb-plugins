@@ -183,6 +183,9 @@ async function run(
   if (trials !== undefined && (!Number.isInteger(trials) || trials < 1)) {
     return { exitCode: 1, stderr: `--trials must be a positive integer, got "${trialsRaw}"\n` };
   }
+  // Bound once: the method is optional, and reading it through `live` at the
+  // call site would need a non-null assertion to satisfy the same check.
+  const drainThread = live.drainThread?.bind(live);
   const report = await liveRun({
     bb: live.bb,
     db: live.db,
@@ -196,9 +199,7 @@ async function run(
     ...(live.checkLedgerScript === undefined
       ? {}
       : { checkLedgerScript: live.checkLedgerScript }),
-    ...(live.drainThread === undefined
-      ? {}
-      : { drainThread: (threadId: string) => live.drainThread!(threadId) }),
+    ...(drainThread === undefined ? {} : { drainThread }),
   });
   const stdout = `${formatLiveRun(report)}\n`;
   if (report.gate !== null) {

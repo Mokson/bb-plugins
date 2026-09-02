@@ -664,7 +664,7 @@ export function createEvalModule(
    * after core, but core can be disabled or restarted under it, so the drain
    * is resolved per call rather than captured at setup.
    */
-  ingest: () => Ingest | null = () => null,
+  ingest: () => Ingest | null,
 ): ObservatoryModule {
   return defineModule({
     id: "eval",
