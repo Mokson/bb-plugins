@@ -9,7 +9,7 @@ import { WATCH_MODES } from "./contract.js";
 import type { WatchHandle } from "./module.js";
 import { buildExplain, buildWatchList } from "./views.js";
 import { MODE_KV_KEY } from "./settings.js";
-import { settingsView } from "./rpc.js";
+import { runManualSteer, settingsView } from "./rpc.js";
 
 export const WATCH_CLI_COMMANDS = [
   {
@@ -17,9 +17,15 @@ export const WATCH_CLI_COMMANDS = [
     summary:
       "Active threads with their stall state, the rule that fired, and the evidence.",
     usage:
-      "bb observatory watch [--follow] [--json] | watch explain <threadId> | watch off|observe|steer",
+      "bb observatory watch [--follow] [--json] | watch explain <threadId> | watch steer|escalate <threadId> [--note <text>] | watch off|observe|steer",
   },
 ] as const;
+
+/** `--note "..."`, the one flag the manual steers take. */
+function noteFlag(argv: readonly string[]): string | undefined {
+  const index = argv.indexOf("--note");
+  return index === -1 ? undefined : argv[index + 1];
+}
 
 function duration(ms: number): string {
   if (ms < 1_000) return "0s";
@@ -105,6 +111,36 @@ export async function runWatchCli(
         ? `${JSON.stringify(view, null, 2)}\n`
         : `${formatExplain(view)}\n`,
     };
+  }
+
+  // `watch steer <threadId>` steers one thread; bare `watch steer` sets the
+  // mode. The two spellings collide by design — a person types the word they
+  // mean — so the argument decides, and this branch has to come FIRST or the
+  // mode setter would swallow the steer.
+  if (sub === "steer" || sub === "escalate") {
+    const threadId = argv[1];
+    if (threadId !== undefined && !threadId.startsWith("--")) {
+      const result = await runManualSteer(
+        runtime,
+        sub,
+        threadId,
+        noteFlag(argv),
+        "cli",
+        now,
+      );
+      return {
+        exitCode: result.sent ? 0 : 1,
+        ...(result.sent
+          ? {
+              stdout: json
+                ? `${JSON.stringify(result, null, 2)}\n`
+                : `${result.message}\n`,
+            }
+          : // A refusal is a non-zero exit on stderr: a script that pipes this
+            // into a loop must not read "watch mode is observe" as a steer.
+            { stderr: `${result.message}\n` }),
+      };
+    }
   }
 
   if (sub && (WATCH_MODES as readonly string[]).includes(sub)) {

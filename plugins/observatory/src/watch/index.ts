@@ -1,6 +1,7 @@
 // The watch module's public surface. `server.ts` and the panel reach the
 // module through these names and never past them into a file.
 export {
+  ESCALATION_CHANNEL,
   RULE_IDS,
   SIGNAL_CHANNEL,
   WATCH_MODES,
@@ -43,15 +44,35 @@ export {
   type ThreadFact,
   type WatchSnapshot,
 } from "./queries.js";
-export { STALL_RULES, dedupeKey, evaluate, type Finding } from "./rules.js";
+export {
+  STALL_RULES,
+  STEER_ELIGIBLE_RULES,
+  UNFINGERPRINTED,
+  dedupeKey,
+  evaluate,
+  type Finding,
+} from "./rules.js";
 export {
   OVERALL_HOURLY_CAP,
   PER_THREAD_HOURLY_CAP,
+  RESERVED_TITLE_PREFIXES,
+  STEER_COOLDOWN_MS,
   createLadder,
+  escalationDiagnostic,
+  ruleOfDetail,
+  steerDiagnostic,
   type Ladder,
   type LadderOutcome,
   type SignalTransition,
+  type SteerVerdict,
+  type ThreadContext,
 } from "./ladder.js";
+export {
+  buildPremiseReminder,
+  isOpenDecision,
+  readLedger,
+  section,
+} from "./premise.js";
 export {
   createEngine,
   evidenceOf,
@@ -78,7 +99,13 @@ export {
   type WatchHandle,
   type WatchRuntime,
 } from "./module.js";
-export { STEER_NOTE, createWatchRpcHandlers, settingsView } from "./rpc.js";
+export {
+  STEER_NOTE,
+  createWatchRpcHandlers,
+  runManualSteer,
+  settingsView,
+  steerMessage,
+} from "./rpc.js";
 export {
   WATCH_CLI_COMMANDS,
   formatExplain,

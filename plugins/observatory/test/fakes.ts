@@ -270,6 +270,7 @@ export function makeIngestHost(): FakeIngestHost {
 // ---------------------------------------------------------------------------
 
 import { createWatchRuntime, type WatchRuntime } from "../src/watch/module.js";
+import { ruleOfDetail, type LadderDeps } from "../src/watch/ladder.js";
 
 /** A fixed instant so every fixture's arithmetic is readable. */
 export const T0 = Date.parse("2026-09-01T12:00:00.000Z");
@@ -403,6 +404,41 @@ export function makeWatchFixture(
     dispose() {
       db.close();
     },
+  };
+}
+
+/**
+ * The ladder dependencies a test that builds its OWN ladder needs, filled from
+ * a fixture's database.
+ *
+ * Not a mock: `thread`, `steerHistory` and `steerCounts` read the same queries
+ * the module wires in, so a test that seeds a thread gets the guards the real
+ * ladder gets. Only `config` and `send` are usually the test's to choose.
+ */
+export function ladderDeps(
+  fixture: WatchFixture,
+  now: () => number,
+  overrides: Partial<LadderDeps> = {},
+): LadderDeps {
+  const queries = fixture.runtime.queries;
+  return {
+    store: fixture.store,
+    publish: (channel, payload) =>
+      fixture.host.bb.realtime.publish(channel, payload),
+    config: () => ({ mode: "observe", quietHours: null }),
+    now,
+    log: fixture.host.bb.log,
+    thread: (threadId) => {
+      const fact = queries.steerContext(threadId, now());
+      if (!fact) return null;
+      const { runFolder: _runFolder, ...context } = fact;
+      return context;
+    },
+    steeredRules: (threadId, since) =>
+      queries.steerHistory(threadId, since).map((row) => ruleOfDetail(row.detail)),
+    steerCounts: (threadId, since) => queries.steerCounts(threadId, since),
+    send: async () => ({ ok: true }),
+    ...overrides,
   };
 }
 

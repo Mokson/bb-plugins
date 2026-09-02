@@ -1008,6 +1008,8 @@ const USAGE = [
   "  watch      Stall state per active thread: [--follow] [--json]",
   "             explain <threadId>   signals and actions for one thread",
   "             off|observe|steer    set the watch mode (stored in kv)",
+  "             steer <threadId> [--note <text>]     steer one thread by hand",
+  "             escalate <threadId> [--note <text>]  steer its parent instead",
   "  context    Prompt-prefix composition: [surfaces] [--cwd path]",
   "             [--thread <id>]  one thread's compaction estimate",
   "             [--json]",

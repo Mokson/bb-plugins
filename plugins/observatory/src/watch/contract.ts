@@ -156,6 +156,27 @@ export type InboxRow = z.output<typeof inboxRowSchema>;
 export type InboxCounts = z.output<typeof inboxCountsSchema>;
 export type WatchSettingsView = z.output<typeof watchSettingsSchema>;
 
+/**
+ * What a manual steer or escalation reports back.
+ *
+ * `verdict` is the ladder's own vocabulary, written verbatim into
+ * `obs_action.result` too, so the one-line confirmation the page shows and the
+ * row an auditor reads say the same word. `message` is that word rendered for
+ * a person; the page does not compose its own, or the two would drift.
+ */
+export const steerResultSchema = z
+  .object({
+    threadId: z.string(),
+    /** The thread the message actually went to. Differs on an escalation. */
+    targetThreadId: z.string().nullable(),
+    verdict: z.string(),
+    sent: z.boolean(),
+    message: z.string(),
+  })
+  .strict();
+
+export type SteerResult = z.output<typeof steerResultSchema>;
+
 export const watchContract = defineRpcContract({
   "observatory_watch_list": {
     input: z.object({}).strict(),
@@ -220,6 +241,23 @@ export const watchContract = defineRpcContract({
       .object({ rows: z.array(inboxRowSchema), counts: inboxCountsSchema })
       .strict(),
   },
+  /**
+   * A person steering one thread by hand, from the Stalls page or the command
+   * palette. The CLI reaches the same ladder method, so the two surfaces
+   * cannot record differently.
+   */
+  "observatory_watch_steer": {
+    input: z
+      .object({ threadId: z.string(), note: z.string().optional() })
+      .strict(),
+    output: steerResultSchema,
+  },
+  "observatory_watch_escalate": {
+    input: z
+      .object({ threadId: z.string(), note: z.string().optional() })
+      .strict(),
+    output: steerResultSchema,
+  },
 });
 
 /** The realtime channel the app's thread-row status listener subscribes to. */
@@ -237,6 +275,29 @@ export const signalBroadcastSchema = z
 
 export type SignalBroadcast = z.output<typeof signalBroadcastSchema>;
 
+/**
+ * Rung 3's channel. One channel, not one per thread: TECH decision 6 rules out
+ * channel-scoped subscriptions, so a subscriber filters on `threadId` itself.
+ */
+export const ESCALATION_CHANNEL = "observatory/escalation";
+
+export const escalationBroadcastSchema = z
+  .object({
+    /** The thread the evidence is about. */
+    threadId: z.string(),
+    /** The thread the steer went to: the parent, or the root. */
+    targetThreadId: z.string(),
+    rootThreadId: z.string(),
+    /** Null for a manual escalation, which names no rule. */
+    kind: ruleIdSchema.nullable(),
+    severity: severitySchema,
+    evidence: z.string(),
+    at: z.string(),
+  })
+  .strict();
+
+export type EscalationBroadcast = z.output<typeof escalationBroadcastSchema>;
+
 // App-side names.
 //
 // The panel was written against a second draft of this file that used a
@@ -246,6 +307,7 @@ export type SignalBroadcast = z.output<typeof signalBroadcastSchema>;
 // two halves.
 
 export const WATCH_SIGNAL_CHANNEL = SIGNAL_CHANNEL;
+export const WATCH_ESCALATION_CHANNEL = ESCALATION_CHANNEL;
 
 export type WatchSeverity = Severity;
 export type WatchSignal = SignalView;

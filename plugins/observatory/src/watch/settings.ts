@@ -53,6 +53,9 @@ export const RULE_ENABLED_KEYS = {
 
 export const QUIET_HOURS_KEY = "watch_quietHours";
 
+/** The post-compaction premise reminder's toggle. Off by default, per spec. */
+export const PREMISE_REMINDER_KEY = "watch_premiseReminder";
+
 /**
  * Descriptors this module adds to the plugin's set. `watch_mode`,
  * `budget_perTreeUsd` and `budget_perDayUsd` are declared by phase 0 and are
@@ -99,6 +102,13 @@ export const WATCH_SETTING_DESCRIPTORS = {
     type: "string",
     label: "Watch: retrying provider errors within 10 minutes",
     default: "3",
+  },
+  [PREMISE_REMINDER_KEY]: {
+    type: "boolean",
+    label: "Watch: post-compaction premise reminder",
+    description:
+      "After a compaction, queue one message listing the run ledger's done-when rows and open decisions. Needs watch mode steer; off by default.",
+    default: false,
   },
   [QUIET_HOURS_KEY]: {
     type: "string",
@@ -149,6 +159,8 @@ export interface WatchConfig {
   thresholds: Record<string, number>;
   source: Record<string, ThresholdSource>;
   quietHours: QuietHours | null;
+  /** Opt-in, so an absent or non-true value is off. */
+  premiseReminder: boolean;
 }
 
 function toNumber(value: unknown, fallback: number): number {
@@ -219,5 +231,11 @@ export async function readWatchConfig(
     thresholds,
     source,
     quietHours: parseQuietHours(settings[QUIET_HOURS_KEY]),
+    // The mirror image of `enabled` above: this one ships OFF, so only an
+    // explicit true turns it on, in either the boolean or the string the KV
+    // store round-trips it as.
+    premiseReminder:
+      settings[PREMISE_REMINDER_KEY] === true ||
+      settings[PREMISE_REMINDER_KEY] === "true",
   };
 }

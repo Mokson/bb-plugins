@@ -17,6 +17,7 @@ import { ThreadContext } from "./pages/context.js";
 import { ThreadAudit } from "./pages/audit-sessions.js";
 import { mountSidebarUsageStrip } from "./lib/usage/sidebar-strip.js";
 import { mountThreadRowStatus } from "./lib/watch/thread-row-status.js";
+import { steerThread } from "./lib/watch/steer-request.js";
 import "./usage-strip.css";
 
 /** The thread panel's tabs, each rendering the panel route's own component. */
@@ -101,6 +102,26 @@ export default definePluginApp((app) => {
     title: "Audit",
     icon: "Eye",
     component: ThreadAuditTab,
+  });
+
+  // "Steer stalled thread" in bb's quick palette.
+  //
+  // `run` gets a thread id, a project id and `openPanel` - no rpc client, and
+  // `useRpc` is a hook - so it reaches the endpoint by `fetch`, exactly as the
+  // thread-row content script does. Hidden without a thread in view, since the
+  // whole action is "this one".
+  app.slots.commandPaletteAction({
+    id: "observatory-steer-thread",
+    title: "Observatory: steer stalled thread",
+    isAvailable: (context) => context.threadId !== null,
+    run: async (context) => {
+      if (context.threadId === null) return;
+      // Errors are contained and logged by the host, per the slot's contract.
+      // The verdict lands in `obs_action` either way, which is where a caller
+      // with no surface to render into has to look - the Trajectory tab's
+      // ladder-actions table shows it.
+      await steerThread(context.threadId);
+    },
   });
 
   // The absorbed usage-tracker strip plus today's spend. It is a content

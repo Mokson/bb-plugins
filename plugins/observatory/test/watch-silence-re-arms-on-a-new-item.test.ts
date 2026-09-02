@@ -74,6 +74,17 @@ describe("the silence rule", () => {
       },
     ]);
     fixture.seedItems(thread, [
+      // The rule states a fact about spending SINCE a change, so it needs a
+      // change to have happened. A thread that has never edited anything is a
+      // research seat, not a stalled one; see
+      // docs/specs/OBS-1_observatory/evidence/watch-steer/PRECISION.md.
+      {
+        seq: 1,
+        kind: "fileChange",
+        path: "src/a.ts",
+        startedAt: -50_000,
+        completedAt: -49_000,
+      },
       { seq: 2, kind: "toolCall", startedAt: -30_000, completedAt: -29_000 },
     ]);
     expect(fixture.runtime.engine.evaluateThread(thread)!.opened).toBe(1);

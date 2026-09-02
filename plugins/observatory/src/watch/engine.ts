@@ -34,6 +34,19 @@ export interface WatchEngine {
   evaluateThread(threadId: string): EvaluationResult | null;
   /** The minute sweep: every active thread, for the time-based rules. */
   sweep(): EvaluationResult[];
+  /**
+   * Close every open signal whose thread is no longer running, and return the
+   * transitions that produced.
+   *
+   * `evaluateThread` is the reconcile for a LIVE thread: a rule that stopped
+   * holding closes its episode. But it only ever runs for threads the sweep
+   * considers active, so a thread that went idle, archived or failed while a
+   * signal was open left that signal open forever — 235 of 235 open rows in
+   * the live database, every one on an idle or errored thread. This is the
+   * missing half: a thread that is not running cannot be stalling, so its
+   * signals close.
+   */
+  closeStale(): SignalTransition[];
 }
 
 export function createEngine(deps: EngineDeps): WatchEngine {
@@ -109,9 +122,38 @@ export function createEngine(deps: EngineDeps): WatchEngine {
     return { threadId, opened, closed, transitions };
   }
 
+  function closeStale(): SignalTransition[] {
+    if (deps.config().mode === "off") return [];
+    const at = new Date(deps.now()).toISOString();
+    const transitions: SignalTransition[] = [];
+    for (const row of deps.queries.staleOpenSignals()) {
+      deps.store.closeSignal(row.id, at);
+      const rule = parseRuleId(row.kind);
+      // Same reason as the close branch above: a row whose kind no longer
+      // names a live rule is still closed, but there is nothing truthful to
+      // put in a broadcast typed on the rule union.
+      if (!rule || row.thread_id === null) continue;
+      transitions.push({
+        signalId: row.id,
+        threadId: row.thread_id,
+        rule,
+        state: "closed",
+        severity: parseSeverity(row.severity),
+        evidence: evidenceOf(row.payload) ?? `${row.kind} cleared`,
+        at,
+      });
+    }
+    for (const transition of transitions) deps.ladder.applyLadder(transition);
+    return transitions;
+  }
+
   return {
     evaluateThread,
+    closeStale,
     sweep() {
+      // Close first. A thread that finished since the last sweep is no longer
+      // in `activeThreads`, so nothing below would ever reach its signals.
+      closeStale();
       const results: EvaluationResult[] = [];
       for (const thread of deps.queries.activeThreads()) {
         const result = evaluateThread(thread.threadId);
