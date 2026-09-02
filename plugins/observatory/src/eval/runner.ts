@@ -96,10 +96,22 @@ export async function stopOwnedThread(
   await bb.sdk.threads.stop({ threadId });
 }
 
+/** One question of a provider's `user_question` interaction. */
+interface PendingQuestion {
+  id: string;
+  allowFreeText: boolean;
+  options?: ReadonlyArray<{ label: string; value: string }>;
+}
+
 interface PendingLike {
   id: string;
   status: string;
-  payload?: { kind?: string; title?: string; data?: unknown };
+  payload?: {
+    kind?: string;
+    title?: string;
+    data?: unknown;
+    questions?: readonly PendingQuestion[];
+  };
 }
 
 /** Everything a rule's `text_regex` is tested against. */
@@ -155,6 +167,64 @@ export function matchAnswer(rules: AnswerRule[], interaction: PendingLike): Answ
     return rule;
   }
   return null;
+}
+
+/**
+ * The option a rule's text names, or the first one — bb's own convention puts
+ * the recommended option first, which is what "proceed with your recommended
+ * option" asks for. A question with no options takes the text itself.
+ */
+export function questionAnswer(
+  question: PendingQuestion,
+  respond: string,
+): { selected: string[]; freeText?: string } {
+  const options = question.options ?? [];
+  const text = respond.toLowerCase();
+  const named = options.find(
+    (option) =>
+      text.includes(option.value.toLowerCase()) ||
+      text.includes(option.label.toLowerCase()),
+  );
+  const chosen = named ?? options[0];
+  if (chosen === undefined) return { selected: [], freeText: respond };
+  return { selected: [chosen.value] };
+}
+
+/**
+ * Deliver one rule's answer in the shape the interaction's own kind takes.
+ * A provider question and a permission approval are RESOLVED: `respond` is
+ * the plugin-form path, and bb rejects it for a provider interaction with
+ * "Plugin interaction expected". A plugin's own form still takes the raw
+ * value, since only the plugin that raised it knows what shape it wants.
+ */
+async function answerInteraction(
+  bb: BbPluginApi,
+  threadId: string,
+  interaction: PendingLike,
+  respond: string,
+): Promise<void> {
+  const target = { threadId, interactionId: interaction.id };
+  switch (interactionKind(interaction)) {
+    case "approval":
+      await bb.sdk.threads.interactions.resolve({
+        ...target,
+        resolution: { decision: "allow_once", grantedPermissions: null },
+      });
+      return;
+    case "user_question": {
+      const answers: Record<string, { selected: string[]; freeText?: string }> = {};
+      for (const question of interaction.payload?.questions ?? []) {
+        answers[question.id] = questionAnswer(question, respond);
+      }
+      await bb.sdk.threads.interactions.resolve({
+        ...target,
+        resolution: { kind: "user_answer", answers },
+      });
+      return;
+    }
+    default:
+      await bb.sdk.threads.interactions.respond({ ...target, value: respond });
+  }
 }
 
 export interface BudgetBreach {
@@ -336,11 +406,7 @@ export async function runCase(input: RunCaseInput): Promise<RunCaseResult> {
         break;
       }
       try {
-        await input.bb.sdk.threads.interactions.respond({
-          threadId,
-          interactionId: interaction.id,
-          value: rule.respond,
-        });
+        await answerInteraction(input.bb, threadId, interaction, rule.respond);
       } catch (error) {
         killed = {
           reason: "unanswered-gate",
