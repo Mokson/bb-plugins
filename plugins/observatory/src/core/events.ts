@@ -157,14 +157,20 @@ function normalizeArgs(args: Record<string, unknown>): Record<string, unknown> {
 /**
  * The identity of "this call again". The arguments themselves are hashed and
  * dropped: the loop detector needs equality, not content.
+ *
+ * Nothing is not an identity. An empty argument record hashes to one constant
+ * that every argument-less call would share, so it returns null instead and
+ * the caller decides what else, if anything, identifies the item.
  */
 export function fingerprintArgs(
   args: Record<string, unknown> | undefined,
 ): string | null {
   if (!args) return null;
-  return createHash("sha256")
-    .update(JSON.stringify(normalizeArgs(args)))
-    .digest("hex");
+  // Measured on what is actually hashed: `JSON.stringify` drops undefined
+  // values, so a record of nothing but undefined is a record of nothing.
+  const json = JSON.stringify(normalizeArgs(args));
+  if (json === "{}") return null;
+  return createHash("sha256").update(json).digest("hex");
 }
 
 type AnyItem = { type: string; id: string } & Record<string, unknown>;
@@ -190,19 +196,44 @@ function itemPath(item: AnyItem): string | null {
   return null;
 }
 
-function itemFingerprint(item: AnyItem): string | null {
+/** Whatever the host gave us as this item's input, or null when it gave none. */
+function itemInput(item: AnyItem): Record<string, unknown> | null {
   if (item.type === "toolCall") {
-    return fingerprintArgs(item.arguments as Record<string, unknown> | undefined);
+    const args = item.arguments;
+    return args && typeof args === "object"
+      ? (args as Record<string, unknown>)
+      : null;
   }
   // A command IS its arguments, so the command string is fingerprinted the
   // same way and, like tool arguments, never stored.
   if (item.type === "commandExecution" && typeof item.command === "string") {
-    return fingerprintArgs({ command: item.command });
+    return { command: item.command };
   }
   if (item.type === "search" && typeof item.query === "string") {
-    return fingerprintArgs({ mode: item.mode, query: item.query });
+    return { mode: item.mode, query: item.query };
   }
   return null;
+}
+
+/**
+ * Arguments alone will not do. bb emits `arguments: {}` for its built-in
+ * `search` and `read` tools - the input never arrives, under this or any other
+ * key - so hashing them made a thousand distinct searches one fingerprint and
+ * the loop rule called them a loop. The name and the path qualify a real
+ * input, and on file items they are the whole of it. With neither an input nor
+ * a path there is no identity to record: null leaves the item unfingerprinted,
+ * which the watch rules already skip.
+ */
+function itemFingerprint(item: AnyItem): string | null {
+  const input = itemInput(item);
+  const inputFingerprint = input === null ? null : fingerprintArgs(input);
+  const path = itemPath(item);
+  if (inputFingerprint === null && path === null) return null;
+  return fingerprintArgs({
+    input: inputFingerprint,
+    name: itemName(item),
+    path,
+  });
 }
 
 const TOOL_ITEM_TYPES = new Set([

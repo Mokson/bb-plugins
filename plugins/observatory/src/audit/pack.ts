@@ -264,6 +264,17 @@ function metricDelta(
   return value / medianValue - 1;
 }
 
+/**
+ * A metric in the units a reader thinks in. The raw float is the arithmetic,
+ * not the sentence: "373.6198315 is over the median 1.9738959999999999" makes
+ * a reader parse digits to find a number they already knew was big.
+ */
+export function metricText(key: string, value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return "n/a";
+  if (key === "costUsd") return value.toFixed(2);
+  return Math.round(value).toLocaleString("en-US");
+}
+
 /** A metric this far above its median is worth a line in the report. */
 const OUTLIER_DELTA = 0.5;
 
@@ -303,9 +314,12 @@ export function auditSession(
     if (metric.delta !== null && metric.delta >= OUTLIER_DELTA) {
       findings.push({
         code: `above-median:${metric.metric}`,
-        detail: `${metric.metric} ${metric.value} is ${(
+        detail: `${metric.metric} ${metricText(metric.metric, metric.value)} is ${(
           metric.delta * 100
-        ).toFixed(0)}% over the 7d median ${metric.median}`,
+        ).toFixed(0)}% over the 7d median ${metricText(
+          metric.metric,
+          metric.median,
+        )}`,
       });
     }
   }

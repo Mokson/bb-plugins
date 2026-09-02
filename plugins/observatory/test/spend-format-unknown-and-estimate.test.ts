@@ -45,4 +45,14 @@ describe("number formatting", () => {
     expect(formatTime("2026-09-01T09:00:00.000Z")).toBe("Sep 1, 09:00");
     expect(formatTime("not a date")).toBe(UNKNOWN);
   });
+
+  it("climbs to the coarsest unit a long duration deserves", () => {
+    expect(formatDuration(59_900)).toBe("59.9s");
+    expect(formatDuration(60_000)).toBe("1m");
+    expect(formatDuration(30 * 60_000)).toBe("30m");
+    expect(formatDuration(60 * 60_000)).toBe("1h");
+    expect(formatDuration(72 * 60_000)).toBe("1h 12m");
+    expect(formatDuration(24 * 3_600_000)).toBe("1d");
+    expect(formatDuration(51 * 3_600_000)).toBe("2d 3h");
+  });
 });

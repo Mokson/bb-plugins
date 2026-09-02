@@ -68,13 +68,31 @@ export function formatCount(value: number | null | undefined): string {
   return Math.round(value).toLocaleString("en-US");
 }
 
-/** A turn duration in seconds, one decimal. */
+/**
+ * A duration at the coarsest unit that still says something: `42.0s` under a
+ * minute, then `30m`, `1h 12m`, `2d 3h`. A stall measured in hours read as
+ * `7200.0s`, which is a number to do arithmetic on rather than a duration to
+ * read. Two units is the ceiling; the third never changed a decision.
+ */
 export function formatDuration(ms: number | null | undefined): string {
   if (ms === null || ms === undefined || !Number.isFinite(ms)) return UNKNOWN;
-  return `${(ms / 1000).toLocaleString("en-US", {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  })}s`;
+  const seconds = ms / 1000;
+  if (seconds < 60) {
+    return `${seconds.toLocaleString("en-US", {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    })}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    const rest = minutes % 60;
+    return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`;
+  }
+  const days = Math.floor(hours / 24);
+  const rest = hours % 24;
+  return rest === 0 ? `${days}d` : `${days}d ${rest}h`;
 }
 
 /** A wall-clock stamp for a turn row. Unparseable input renders `--`. */
