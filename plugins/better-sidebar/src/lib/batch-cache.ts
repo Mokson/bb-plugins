@@ -98,7 +98,16 @@ export function createBatchCache<TValue, TResult, TMethod extends string>(
         const chunk = due.slice(i, i + options.maxIdsPerRequest);
         for (const id of chunk) inFlight.add(id);
         void call(options.method, { threadIds: chunk }).then(
-          (result) => settle(chunk, options.unpack(result as TResult)),
+          (result) => {
+            // `unpack` is caller code over a wire payload: a throw there must
+            // degrade the chunk, never leak its in-flight guard or reject
+            // unobserved. `settle` always clears `inFlight` and notifies.
+            try {
+              settle(chunk, options.unpack(result as TResult));
+            } catch {
+              settle(chunk, null);
+            }
+          },
           // A rejection is a cached fact, not a thrown one: the rows keep
           // everything else they draw and lose only this lookup's part.
           () => settle(chunk, null),

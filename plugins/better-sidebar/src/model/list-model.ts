@@ -27,7 +27,8 @@ import {
  * fallback of a thread the host already considers named.
  */
 export function resolveTitle(thread: PluginSidebarThread): string {
-  const chosen = thread.title ?? thread.titleFallback ?? "";
+  const raw = thread.title ?? thread.titleFallback ?? "";
+  const chosen = typeof raw === "string" ? raw : "";
   const trimmed = chosen.trim();
   return trimmed === "" ? "Untitled" : trimmed;
 }
@@ -51,7 +52,7 @@ export function resolveWorkspaceLabel(
   if (workspace !== null) return workspace;
   if (!reachesHostStep(thread)) return null;
   if (thread.host === null || thread.host.id === localHostId) return null;
-  const host = thread.host.name.trim();
+  const host = typeof thread.host.name === "string" ? thread.host.name.trim() : "";
   return host ? host : null;
 }
 
@@ -83,10 +84,11 @@ function reachesHostStep(thread: PluginSidebarThread): boolean {
 function resolveWorkspaceOnly(thread: PluginSidebarThread): string | null {
   const environment = thread.environment;
   if (!environment) return null;
-  const branch = environment.branchName?.trim();
+  const branch =
+    typeof environment.branchName === "string" ? environment.branchName.trim() : "";
   if (branch) return branch;
   if (WORKTREE_KINDS.has(environment.workspaceDisplayKind)) {
-    const name = environment.name?.trim();
+    const name = typeof environment.name === "string" ? environment.name.trim() : "";
     if (name) return name;
   }
   return null;
@@ -456,8 +458,9 @@ export function buildListModel(input: ListModelInput): ListModel {
   const tree = buildTree(input);
   const projectNames = projectNameMap(input);
   const dynamicLabels = dynamicLabelMap(input);
+  const query = typeof input.searchQuery === "string" ? input.searchQuery : "";
   const sections =
-    input.searchQuery.trim() === ""
+    query.trim() === ""
       ? buildLiveSections(tree, input, projectNames, dynamicLabels)
       : buildSearchSections(tree, input, projectNames, dynamicLabels);
   let rowCount = 0;

@@ -36,6 +36,16 @@ const GROUP_BY_OPTIONS: readonly { value: GroupBy; label: string }[] = [
 ];
 
 /**
+ * Radix hands back a bare string. An unknown value keeps the current grouping
+ * rather than widening the state to something no section key understands.
+ */
+function parseGroupBy(value: string): GroupBy | null {
+  return GROUP_BY_OPTIONS.some((option) => option.value === value)
+    ? (value as GroupBy)
+    : null;
+}
+
+/**
  * The display-options row at the top of the list (B76).
  *
  * B64.1's full-width `Select` is replaced by one icon button that opens a
@@ -78,7 +88,10 @@ export function DisplayMenu({
   const groupByItems = (
     <DropdownMenu.RadioGroup
       value={groupBy}
-      onValueChange={(value) => onGroupByChange(value as GroupBy)}
+      onValueChange={(value) => {
+        const parsed = parseGroupBy(value);
+        if (parsed !== null) onGroupByChange(parsed);
+      }}
     >
       {GROUP_BY_OPTIONS.map((option) => (
         <RadioItem key={option.value} value={option.value}>

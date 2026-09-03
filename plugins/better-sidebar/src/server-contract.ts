@@ -1,54 +1,54 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
-const threadIdSchema = z.string().trim().min(1);
+const threadIdSchema = z.string().trim().min(1).max(256);
 
 const tokenTotalsSchema = z.object({
-  totalTokens: z.number(),
-  inputTokens: z.number(),
-  cachedInputTokens: z.number(),
-  outputTokens: z.number(),
-  reasoningOutputTokens: z.number(),
+  totalTokens: z.number().finite().nonnegative(),
+  inputTokens: z.number().finite().nonnegative(),
+  cachedInputTokens: z.number().finite().nonnegative(),
+  outputTokens: z.number().finite().nonnegative(),
+  reasoningOutputTokens: z.number().finite().nonnegative(),
 });
 
 /** The resolved model and effort. B29's null is "the thread never ran". */
 const executionSchema = z
-  .object({ model: z.string(), reasoningLevel: z.string() })
+  .object({ model: z.string().min(1), reasoningLevel: z.string().min(1) })
   .nullable();
 
 export const dossierSchema = z.object({
-  threadId: z.string(),
+  threadId: threadIdSchema,
   /** null when the thread never resolved execution options (never ran). */
   execution: executionSchema,
   /** null when the provider reports no token usage. B31's no-data case. */
   economics: z
     .object({
       total: tokenTotalsSchema,
-      modelContextWindow: z.number().nullable(),
+      modelContextWindow: z.number().finite().nonnegative().nullable(),
     })
     .nullable(),
   contextWindow: z
     .object({
-      usedTokens: z.number().nullable(),
-      modelContextWindow: z.number().nullable(),
+      usedTokens: z.number().finite().nonnegative().nullable(),
+      modelContextWindow: z.number().finite().nonnegative().nullable(),
       estimated: z.boolean(),
     })
     .nullable(),
   /** Epoch ms the backend produced this payload; drives the frontend TTL. */
-  fetchedAt: z.number(),
+  fetchedAt: z.number().finite().nonnegative(),
 });
 
 export const rowSignalSchema = z.object({
-  threadId: z.string(),
+  threadId: threadIdSchema,
   /** B37: usedTokens / modelContextWindow, or null when either is missing. */
-  contextPressure: z.number().nullable(),
+  contextPressure: z.number().finite().min(0).max(1).nullable(),
   /** B38 */
   modelFallback: z
     .object({
-      originalModel: z.string(),
-      fallbackModel: z.string(),
-      reason: z.string(),
-      message: z.string(),
+      originalModel: z.string().min(1),
+      fallbackModel: z.string().min(1),
+      reason: z.string().min(1),
+      message: z.string().min(1),
     })
     .nullable(),
   /** B39: true when the newest provider/rateLimits/updated event parks the thread. */
@@ -56,34 +56,34 @@ export const rowSignalSchema = z.object({
   /** B40 */
   goal: z
     .object({
-      status: z.string(),
-      tokensUsed: z.number(),
-      tokenBudget: z.number().nullable(),
+      status: z.string().min(1),
+      tokensUsed: z.number().finite().nonnegative(),
+      tokenBudget: z.number().finite().nonnegative().nullable(),
     })
     .nullable(),
 });
 
 /** B71.1: one entry per requested id, in request order. */
 export const threadExecutionSchema = z.object({
-  threadId: z.string(),
+  threadId: threadIdSchema,
   /** null when the thread never ran, and also when its lookup failed. */
   execution: executionSchema,
 });
 
 /** B82: one entry per requested id. `at` is null when the thread has no events. */
 export const threadLastActivitySchema = z.object({
-  threadId: z.string(),
+  threadId: threadIdSchema,
   /** Epoch ms of the thread's newest event, of any type. */
-  at: z.number().nullable(),
+  at: z.number().finite().nonnegative().nullable(),
 });
 
 /** B85: the t3-style work labels for one thread. Both fields degrade to null. */
 export const threadWorkStatSchema = z.object({
-  threadId: z.string(),
+  threadId: threadIdSchema,
   /** Cumulative total tokens from the newest usage event; null when none. */
-  tokens: z.number().nullable(),
+  tokens: z.number().finite().nonnegative().nullable(),
   /** Tool-call count from the timeline's work rows; null when the read failed. */
-  toolCalls: z.number().nullable(),
+  toolCalls: z.number().finite().nonnegative().nullable(),
 });
 
 export const betterSidebarRpcContract = defineRpcContract({
@@ -143,7 +143,7 @@ export const betterSidebarRpcContract = defineRpcContract({
   },
 });
 
-export const DOSSIER_CHANNEL = "thread-dossier";
+export const DOSSIER_CHANNEL = "better-sidebar:dossier";
 
 /** The `threadDossier` result. Slice 4's `DossierState.data` is `Dossier | null`. */
 export type Dossier = z.infer<typeof dossierSchema>;

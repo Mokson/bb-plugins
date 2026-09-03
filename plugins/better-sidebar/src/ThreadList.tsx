@@ -1,5 +1,7 @@
 import {
   useCallback,
+  useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -71,10 +73,16 @@ function ThreadListBody({
     threads: [],
     projects: [],
   });
-  if (status === "ready") {
-    hasLoadedRef.current = true;
-    lastReadyRef.current = { threads: live.threads, projects: live.projects };
-  }
+  // Written on commit, read on a later render: writing refs during render is
+  // what made this unsafe under concurrent rendering. The previous answer is
+  // only ever read when a later render is NOT ready, and effects flush before
+  // that render, so nothing observes the one-render lag.
+  useEffect(() => {
+    if (status === "ready") {
+      hasLoadedRef.current = true;
+      lastReadyRef.current = { threads: live.threads, projects: live.projects };
+    }
+  });
   const { threads, projects } =
     status === "ready" ? live : lastReadyRef.current;
   // B83: the last known settings until the host's answer lands, so the list
@@ -151,6 +159,16 @@ function ThreadListBody({
   const lastActivity = useLastActivity(renderedThreadIds);
 
   const headersRef = useRef<(HTMLElement | null)[]>([]);
+  // The ref callbacks below repopulate indices 0..n-1 on every commit, so a
+  // render-time reset would wipe values the commit just attached (refs settle
+  // before layout effects). Only a stale tail — sections that shrank — needs
+  // dropping, and that is safe to do here.
+  useLayoutEffect(() => {
+    headersRef.current.length = Math.min(
+      headersRef.current.length,
+      model.sections.length,
+    );
+  });
   const jumpIndexRef = useRef(-1);
   const onKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
     const direction = matchBucketJump(event);
@@ -242,7 +260,8 @@ function ThreadListBody({
   if (model.sections.length === 0) {
     // B64.4: a scope or a search that matched nothing is never the generic
     // "no threads yet", which would be a lie about an account that has plenty.
-    const narrowed = searchQuery.trim() !== "" || scopedProject !== undefined;
+    const queryText = typeof searchQuery === "string" ? searchQuery : "";
+    const narrowed = queryText.trim() !== "" || scopedProject !== undefined;
     return (
       <div data-better-sidebar-list="" className="flex h-full flex-col overflow-y-auto py-1">
         {displayMenu}
@@ -254,9 +273,6 @@ function ThreadListBody({
       </div>
     );
   }
-
-  // Rebuilt each render so the jump table cannot outlive the sections it indexes.
-  headersRef.current = [];
 
   return (
     <div

@@ -3,6 +3,18 @@ import { cn } from "../lib/utils";
 import { GLYPH_BOX_CLASS, ROW1_ICON, ROW2_ICON } from "./row-metrics";
 import { useProviderMark } from "./useProviderMark";
 
+/**
+ * The value is interpolated into `url("...")`, where a quote, paren or
+ * control character breaks out of the string — so only server-relative paths
+ * (what bb serves) and http(s) URLs are drawn. Anything else falls back to
+ * the neutral dot below, never to a broken or injected mask.
+ */
+function isSafeLogoUrl(url: unknown): url is string {
+  if (typeof url !== "string" || url === "") return false;
+  if (/["'()\\]/.test(url) || /[\u0000-\u001f\u007f]/.test(url)) return false;
+  return url.startsWith("/") || /^https?:\/\//i.test(url);
+}
+
 function providerMaskStyle(logoUrl: string): CSSProperties {
   const maskImage = `url(${JSON.stringify(logoUrl)})`;
   return {
@@ -77,7 +89,8 @@ export function ProviderGlyph({
   const scale = MARK_SIZES[size];
   const box = cn(GLYPH_BOX_CLASS, scale.box, className);
   const label = mark?.displayName ?? providerId;
-  const logoUrl = mark?.logoUrl ?? null;
+  const rawLogoUrl = mark?.logoUrl ?? null;
+  const logoUrl = isSafeLogoUrl(rawLogoUrl) ? rawLogoUrl : null;
   const tint = monochrome ? undefined : mark?.iconTint;
 
   // B80. A loading directory is an EMPTY directory, so without this branch every

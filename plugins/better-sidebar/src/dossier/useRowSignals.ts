@@ -32,7 +32,7 @@ const listeners = new Map<string, Set<() => void>>();
 const inFlight = new Set<string>();
 const observedIds = new WeakMap<Element, string>();
 
-let call: Call | null = null;
+let callRef: { current: Call | null } = { current: null };
 let observer: IntersectionObserver | null = null;
 let batchTimer: ReturnType<typeof setTimeout> | null = null;
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
@@ -43,7 +43,7 @@ export function resetRowSignals(): void {
   cache.clear();
   listeners.clear();
   inFlight.clear();
-  call = null;
+  callRef.current = null;
   observer?.disconnect();
   observer = null;
   if (batchTimer !== null) clearTimeout(batchTimer);
@@ -110,7 +110,7 @@ function store(threadId: string, signal: RowSignal | null, ttl: number): void {
  * draws no glyph and costs nothing.
  */
 function runBatch(): void {
-  const send = call;
+  const send = callRef.current;
   if (send === null) return;
   const due = [...visible].filter((id) => !inFlight.has(id) && isStale(id));
   if (due.length === 0) return;
@@ -118,11 +118,26 @@ function runBatch(): void {
   for (let i = 0; i < due.length; i += MAX_IDS_PER_REQUEST) {
     const chunk = due.slice(i, i + MAX_IDS_PER_REQUEST);
     for (const id of chunk) inFlight.add(id);
+    // Passed as both fulfilment and rejection handler, so the guard is
+    // cleared and listeners repaint even when the mapping above throws.
+    const finish = () => {
+      for (const id of chunk) {
+        inFlight.delete(id);
+        notify(id);
+      }
+    };
     void send("rowSignals", { threadIds: chunk })
       .then(
-        ({ signals }) => {
-          const byId = new Map(signals.map((s) => [s.threadId, s]));
-          for (const id of chunk) store(id, byId.get(id) ?? null, SIGNALS_TTL_MS);
+        (result) => {
+          // The wire payload is caller-shaped: a throw in the mapping
+          // degrades the chunk, never its in-flight guard.
+          try {
+            const { signals } = result as { signals: RowSignal[] };
+            const byId = new Map(signals.map((s) => [s.threadId, s]));
+            for (const id of chunk) store(id, byId.get(id) ?? null, SIGNALS_TTL_MS);
+          } catch {
+            for (const id of chunk) store(id, null, ERROR_TTL_MS);
+          }
         },
         // A rejected batch draws no glyphs and retries after the short TTL —
         // row signals are decoration and never surface an error to the row.
@@ -130,12 +145,7 @@ function runBatch(): void {
           for (const id of chunk) store(id, null, ERROR_TTL_MS);
         },
       )
-      .then(() => {
-        for (const id of chunk) {
-          inFlight.delete(id);
-          notify(id);
-        }
-      });
+      .then(finish, finish);
   }
 }
 
@@ -166,9 +176,11 @@ export function useSignalValue(threadId: string): RowSignal | null {
   const [, rerender] = useReducer((v: number) => v + 1, 0);
   const rpc = useRpc<typeof betterSidebarRpcContract>();
 
-  useEffect(() => {
-    call = rpc.call;
-  }, [rpc]);
+  // Assigned during render, like useLastActivity's callRef: the module-level
+  // holder always carries the latest mounted hook's call, never the one an
+  // effect happened to install last. `runBatch` fires from timers, so it
+  // cannot take a per-hook ref directly.
+  callRef.current = rpc.call;
 
   useEffect(() => subscribe(threadId, rerender), [threadId]);
 

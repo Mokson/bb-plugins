@@ -230,6 +230,10 @@ function useEqualTruncation() {
 
     equalize();
 
+    // One observer per row, on the line itself: the measured box IS this
+    // element, and a shared observer would need a per-element registry with
+    // the same bookkeeping. Kept deliberately; the per-row cost is one
+    // observer watching one box.
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(equalize);
     observer.observe(line);

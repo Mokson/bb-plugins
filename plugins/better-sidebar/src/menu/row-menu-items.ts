@@ -31,6 +31,19 @@ export interface RowMenuActions {
   requestDelete: (threadId: string) => unknown;
 }
 
+/**
+ * A row action fired without awaiting it. A rejection must not escape as an
+ * unhandled rejection: the row carries no error UI for these, so the failure
+ * is logged and the row keeps everything else it draws.
+ */
+export function fireAndForget(result: unknown, label: string): void {
+  if (result instanceof Promise) {
+    result.catch((error: unknown) => {
+      console.warn(`better-sidebar: ${label} failed: ${String(error)}`);
+    });
+  }
+}
+
 export function buildRowMenuItems({
   thread,
   pullRequest,
@@ -69,13 +82,15 @@ export function buildRowMenuItems({
       glyph: thread.isUnread ? "mail" : "mail-open",
       label: thread.isUnread ? "Mark read" : "Mark unread",
       separatorBefore: true,
-      onSelect: () => void actions.setRead(thread.id, thread.isUnread),
+      onSelect: () =>
+        fireAndForget(actions.setRead(thread.id, thread.isUnread), "mark read"),
     },
     {
       id: "pin",
       glyph: thread.isPinned ? "pin-off" : "pin",
       label: thread.isPinned ? "Unpin" : "Pin",
-      onSelect: () => void actions.setPinned(thread.id, !thread.isPinned),
+      onSelect: () =>
+        fireAndForget(actions.setPinned(thread.id, !thread.isPinned), "pin"),
     },
     { id: "rename", glyph: "pencil", label: "Rename", onSelect: requestRename },
     {
@@ -83,7 +98,7 @@ export function buildRowMenuItems({
       glyph: "archive",
       label: "Archive",
       separatorBefore: true,
-      onSelect: () => void actions.archive(thread.id),
+      onSelect: () => fireAndForget(actions.archive(thread.id), "archive"),
     },
     {
       id: "delete",
@@ -91,7 +106,7 @@ export function buildRowMenuItems({
       // bb writes it without an ellipsis, though it also confirms.
       label: "Delete",
       destructive: true,
-      onSelect: () => void actions.requestDelete(thread.id),
+      onSelect: () => fireAndForget(actions.requestDelete(thread.id), "delete"),
     },
   );
   return items;
