@@ -280,7 +280,7 @@ function RowBody({
                   common row and status draws nothing for it — so every title
                   keeps its x whatever the row's state. */}
               <span className={LEADING_COLUMN_CLASS}>
-                <StatusGlyph thread={thread} />
+                <StatusGlyph thread={thread} rolledUpIndicator={row.rolledUpIndicator} />
               </span>
 
               {renameEditor.isRenaming ? (

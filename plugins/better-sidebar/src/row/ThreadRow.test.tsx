@@ -127,6 +127,7 @@ function row(overrides: Partial<RenderRow> = {}): RenderRow {
     childCount: 0,
     isCompleted: false,
     hasUpdateSinceCompleted: false,
+    rolledUpIndicator: null,
     projectName: "bb-plugins",
     dimLevel: 0,
     sectionKey: "today",
@@ -1235,6 +1236,54 @@ describe("ThreadRow — the active state", () => {
     expect(rowBox(container).classList.contains("bg-accent")).toBe(false);
     expect(
       container.querySelector("[data-sidebar-thread-id]")?.getAttribute("aria-current"),
+    ).toBeNull();
+  });
+});
+
+describe("ThreadRow — a parent waiting on its children (B87)", () => {
+  it("draws the rolled-up glyph on a row whose own thread is idle", () => {
+    const { container } = renderRow(
+      row({
+        thread: thread({ indicator: "none" }),
+        rolledUpIndicator: "background-agent",
+      }),
+    );
+    // The same treatment a working thread gets: one glyph, one meaning.
+    const glyph = container.querySelector("[aria-label='Child threads working']");
+    expect(glyph).not.toBeNull();
+    expect(glyph!.classList.contains("animate-pulse")).toBe(true);
+  });
+
+  it("names the children in the label, not the thread", () => {
+    const { container } = renderRow(
+      row({
+        thread: thread({ indicator: "none" }),
+        rolledUpIndicator: "waiting-for-input",
+      }),
+    );
+    expect(
+      container.querySelector("[aria-label='A child thread needs you']"),
+    ).not.toBeNull();
+  });
+
+  it("still draws nothing for an idle row with idle children", () => {
+    const { container } = renderRow(
+      row({ thread: thread({ indicator: "none" }), rolledUpIndicator: null }),
+    );
+    expect(container.querySelector("[role='img'][aria-label]")).toBeNull();
+  });
+
+  it("keeps the thread's OWN indicator when it has one", () => {
+    const { container } = renderRow(
+      row({
+        thread: thread({ indicator: "runtime", indicatorLabel: "Running" }),
+        // The model never sets this alongside a real indicator; belt and braces.
+        rolledUpIndicator: "background-agent",
+      }),
+    );
+    expect(container.querySelector("[aria-label='Running']")).not.toBeNull();
+    expect(
+      container.querySelector("[aria-label='Child threads working']"),
     ).toBeNull();
   });
 });

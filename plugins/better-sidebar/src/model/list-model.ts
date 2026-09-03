@@ -13,6 +13,7 @@ import {
   statusGroupOf,
 } from "./buckets";
 import { rankSearch, type SearchCandidate } from "./search";
+import { childrenByParent, rollUpIndicator } from "./rollup";
 import {
   NO_HOST_KEY,
   type BetterSidebarSettings,
@@ -221,6 +222,13 @@ function byEntrance(order: SectionOrder | null) {
 
 interface Tree {
   readonly visible: readonly PluginSidebarThread[];
+  /**
+   * B87: parent id → direct children over the WHOLE thread set, scope and
+   * archived threads included. Deliberately NOT `childrenOf`: that one is the
+   * render tree, and a roll-up built from it would go quiet whenever a filter
+   * hid the children rather than when the children stopped working.
+   */
+  readonly rollupChildren: ReadonlyMap<string, PluginSidebarThread[]>;
   readonly byId: ReadonlyMap<string, PluginSidebarThread>;
   readonly childrenOf: ReadonlyMap<string, PluginSidebarThread[]>;
   readonly roots: readonly PluginSidebarThread[];
@@ -311,7 +319,7 @@ function buildTree(input: ListModelInput): Tree {
   // B68.2 for every section at once. Grouping preserves this order, so no
   // section needs its own sort and the new B65 keys need no special case.
   roots.sort(byEntrance(input.sectionOrder));
-  return { visible, byId, childrenOf, roots };
+  return { visible, byId, childrenOf, roots, rollupChildren: childrenByParent(input.threads) };
 }
 
 /**
@@ -400,6 +408,7 @@ function makeRow(
     // that is what the dot claims. `>` and not `>=`: the write that RECORDS the
     // completion lands at the same millisecond, and it is not news.
     hasUpdateSinceCompleted: filedAt !== undefined && thread.updatedAt > filedAt,
+    rolledUpIndicator: rollUpIndicator(thread, tree.rollupChildren),
     title: resolveTitle(thread),
     workspaceLabel: resolveWorkspaceLabel(thread, localHostId),
     depth,

@@ -94,6 +94,7 @@ function row(overrides: Partial<RenderRow> = {}): RenderRow {
     childCount: 0,
     isCompleted: false,
     hasUpdateSinceCompleted: false,
+    rolledUpIndicator: null,
     projectName: "bb",
     dimLevel: 0,
     sectionKey: "today",

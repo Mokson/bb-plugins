@@ -1,6 +1,7 @@
 import type {
   PluginSidebarProject,
   PluginSidebarThread,
+  PluginSidebarThreadIndicator,
 } from "@get-bb/plugin-sdk/app";
 
 /** B65: `host` and `status` join the modes an unknown value degrades to `date`. */
@@ -167,6 +168,16 @@ export interface RenderRow {
    * False for every row that is not completed.
    */
   readonly hasUpdateSinceCompleted: boolean;
+  /**
+   * B87: the state this row draws ON BEHALF OF its descendants, or null when it
+   * has none to draw. Set only for a thread whose own indicator is `none`, so
+   * it never contradicts the thread's own state.
+   *
+   * Presentation only. The section key, the bands and the sort all still read
+   * the thread's own indicator, so a parent never migrates between sections
+   * because a child started or stopped.
+   */
+  readonly rolledUpIndicator: PluginSidebarThreadIndicator | null;
 }
 
 export interface RenderSection {

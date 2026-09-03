@@ -5,6 +5,7 @@ import type {
 import { cn } from "../lib/utils";
 import { Glyph, type GlyphName } from "../ui/Glyph";
 import { GLYPH_BOX_CLASS, ROW1_ICON } from "./row-metrics";
+import { rollUpLabel } from "../model/rollup";
 
 /**
  * B66, superseding B22: every state carries a hue, taken from bb's own status
@@ -78,9 +79,32 @@ const TREATMENTS: Partial<
  * common row, and reserving a glyph's width on it truncated titles for a
  * column that was empty almost everywhere. Only the time slot is fixed now.
  */
-export function StatusGlyph({ thread }: { thread: PluginSidebarThread }) {
-  const treatment = TREATMENTS[thread.indicator];
+export function StatusGlyph({
+  thread,
+  rolledUpIndicator = null,
+}: {
+  thread: PluginSidebarThread;
+  /**
+   * B87: the state the thread's DESCENDANTS are in, when it has none of its
+   * own. The model sets it only for an idle thread, so it can never fight the
+   * thread's own indicator here.
+   *
+   * Drawn with the same treatment a working thread gets, deliberately: one
+   * glyph means one thing, and a parent waiting on its subagents IS a run in
+   * progress. What changes is the label, which names the children — a screen
+   * reader saying "running" about a thread whose own turn ended is false.
+   */
+  rolledUpIndicator?: PluginSidebarThreadIndicator | null;
+}) {
+  const indicator = thread.indicator === "none" && rolledUpIndicator !== null
+    ? rolledUpIndicator
+    : thread.indicator;
+  const treatment = TREATMENTS[indicator];
   if (treatment === undefined) return null;
+  const label =
+    indicator === thread.indicator
+      ? (thread.indicatorLabel ?? thread.indicator)
+      : rollUpLabel(indicator);
 
   return (
     // No margin of its own: the glyph now sits centred in the row's leading
@@ -90,7 +114,7 @@ export function StatusGlyph({ thread }: { thread: PluginSidebarThread }) {
       <Glyph
         name={treatment.glyph}
         role="img"
-        aria-label={thread.indicatorLabel ?? thread.indicator}
+        aria-label={label}
         className={cn(ROW1_ICON, treatment.className)}
       />
     </span>
