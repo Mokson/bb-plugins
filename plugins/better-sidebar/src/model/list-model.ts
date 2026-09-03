@@ -103,7 +103,7 @@ function byAttention(a: PluginSidebarThread, b: PluginSidebarThread): number {
 }
 
 /** B67.1: the host's own rolled-up "finished, and you have not looked" state. */
-export function isDone(thread: PluginSidebarThread): boolean {
+export function isFinished(thread: PluginSidebarThread): boolean {
   return thread.indicator === "unread-success" || thread.indicator === "unread-error";
 }
 
@@ -126,7 +126,7 @@ export function sectionKeyOf(
 ): SectionKey {
   const merged = settings.groupBy === "status";
   if (thread.hasPendingInteraction) return merged ? "status:needs-you" : "needs-you";
-  if (isDone(thread)) return merged ? "status:unread" : "done";
+  if (isFinished(thread)) return merged ? "status:unread" : "done";
   if (thread.isPinned) return "pinned";
   switch (settings.groupBy) {
     case "date":
