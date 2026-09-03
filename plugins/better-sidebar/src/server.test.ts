@@ -508,6 +508,230 @@ describe("contract input validation", () => {
   });
 });
 
+describe("corrupt SDK values degrade alone (round-2 H1)", () => {
+  it("resolves a dossier with null sections when every value is corrupt", async () => {
+    const host = hostWith({
+      events: {
+        t1: [
+          // totalTokens is a string: the whole economics section degrades.
+          event("thread/tokenUsage/updated", 10, {
+            providerThreadId: "p",
+            tokenUsage: {
+              last: {
+                totalTokens: 1,
+                inputTokens: 1,
+                cachedInputTokens: 0,
+                outputTokens: 0,
+                reasoningOutputTokens: 0,
+              },
+              total: {
+                totalTokens: "1000",
+                inputTokens: 1,
+                cachedInputTokens: 0,
+                outputTokens: 0,
+                reasoningOutputTokens: 0,
+              },
+              modelContextWindow: 200_000,
+            },
+          }),
+          // estimated is a string: the whole contextWindow section degrades.
+          event("thread/contextWindowUsage/updated", 11, {
+            providerThreadId: "p",
+            contextWindowUsage: {
+              usedTokens: 1_000,
+              modelContextWindow: 200_000,
+              estimated: "yes",
+            },
+          }),
+        ],
+      },
+      // An empty model string: the execution section degrades.
+      execution: { model: "", reasoningLevel: "high" },
+    });
+    await plugin(host.bb);
+
+    const dossier = (await host.harness.callRpc("threadDossier", {
+      threadId: "t1",
+    })) as Record<string, unknown>;
+
+    expect(dossier.execution).toBeNull();
+    expect(dossier.economics).toBeNull();
+    expect(dossier.contextWindow).toBeNull();
+  });
+
+  it("keeps a dossier section when only a nullable field is corrupt", async () => {
+    const host = hostWith({
+      events: {
+        t1: [
+          event("thread/tokenUsage/updated", 10, {
+            providerThreadId: "p",
+            tokenUsage: {
+              last: {
+                totalTokens: 500,
+                inputTokens: 500,
+                cachedInputTokens: 0,
+                outputTokens: 0,
+                reasoningOutputTokens: 0,
+              },
+              total: {
+                totalTokens: 500,
+                inputTokens: 500,
+                cachedInputTokens: 0,
+                outputTokens: 0,
+                reasoningOutputTokens: 0,
+              },
+              // Corrupt but nullable: the field degrades, not the section.
+              modelContextWindow: "200000",
+            },
+          }),
+        ],
+      },
+      execution: { model: "opus", reasoningLevel: "high" },
+    });
+    await plugin(host.bb);
+
+    const dossier = (await host.harness.callRpc("threadDossier", {
+      threadId: "t1",
+    })) as {
+      economics: { total: { totalTokens: number }; modelContextWindow: unknown };
+    };
+
+    expect(dossier.economics.total.totalTokens).toBe(500);
+    expect(dossier.economics.modelContextWindow).toBeNull();
+  });
+
+  it("nulls one signal's corrupt goal and keeps the batch", async () => {
+    const host = hostWith({
+      events: {
+        t1: [
+          event("thread/goal/updated", 30, {
+            providerThreadId: "p",
+            objective: "ship it",
+            status: "active",
+            timeUsedSeconds: 1,
+            tokenBudget: 50_000,
+            // Corrupt-but-formed: the string the NaN report is about.
+            tokensUsed: "1000",
+          }),
+        ],
+        t2: [goalUpdated(31)],
+      },
+    });
+    await plugin(host.bb);
+
+    const result = (await host.harness.callRpc("rowSignals", {
+      threadIds: ["t1", "t2"],
+    })) as { signals: { threadId: string; goal: unknown }[] };
+
+    expect(result.signals).toHaveLength(2);
+    expect(result.signals[0]?.goal).toBeNull();
+    expect(result.signals[1]?.goal).toEqual({
+      status: "active",
+      tokensUsed: 1_000,
+      tokenBudget: 50_000,
+    });
+  });
+
+  it("nulls a corrupt execution and a corrupt timestamp without rejecting", async () => {
+    const sdk: CreateFakePluginHostOptions["sdk"] = {
+      threads: {
+        defaultExecutionOptions: async () => ({ model: 42, reasoningLevel: "high" }),
+        events: {
+          list: async () => [
+            {
+              id: "e:1",
+              scope: "thread",
+              threadId: "t1",
+              seq: 1,
+              createdAt: "yesterday",
+              type: "thread/active",
+              data: {},
+            },
+          ],
+        },
+      },
+    };
+    const host = createFakePluginHost({ pluginId: "better-sidebar", sdk });
+    await plugin(host.bb);
+
+    const executions = (await host.harness.callRpc("threadExecutions", {
+      threadIds: ["t1"],
+    })) as { executions: unknown[] };
+    expect(executions.executions).toEqual([{ threadId: "t1", execution: null }]);
+
+    const activity = (await host.harness.callRpc("lastActivity", {
+      threadIds: ["t1"],
+    })) as { activity: unknown[] };
+    expect(activity.activity).toEqual([{ threadId: "t1", at: null }]);
+  });
+
+  it("nulls corrupt work-stat tokens but still counts the tool calls", async () => {
+    const host = hostWith({
+      events: {
+        t1: [
+          event("thread/tokenUsage/updated", 10, {
+            providerThreadId: "p",
+            tokenUsage: {
+              last: {
+                totalTokens: 1,
+                inputTokens: 1,
+                cachedInputTokens: 0,
+                outputTokens: 0,
+                reasoningOutputTokens: 0,
+              },
+              total: {
+                totalTokens: "85700",
+                inputTokens: 1,
+                cachedInputTokens: 0,
+                outputTokens: 0,
+                reasoningOutputTokens: 0,
+              },
+              modelContextWindow: 200_000,
+            },
+          }),
+        ],
+      },
+      timeline: {
+        t1: [
+          {
+            kind: "work",
+            workKind: "tool",
+            callId: "call_1",
+            id: "w1",
+          },
+        ],
+      },
+    });
+    await plugin(host.bb);
+
+    const stat = (await host.harness.callRpc("threadWorkStats", {
+      threadIds: ["t1"],
+    })) as { stats: { tokens: unknown; toolCalls: unknown }[] };
+
+    expect(stat.stats[0]?.tokens).toBeNull();
+    expect(stat.stats[0]?.toolCalls).toBe(1);
+  });
+});
+
+describe("duplicate ids answer per request (round-2 L3)", () => {
+  it("expands deduped reads back to input multiplicity in request order", async () => {
+    const host = hostWith({});
+    await plugin(host.bb);
+
+    const result = (await host.harness.callRpc("rowSignals", {
+      threadIds: ["t2", "t1", "t2"],
+    })) as { signals: { threadId: string }[] };
+
+    expect(result.signals.map((signal) => signal.threadId)).toEqual([
+      "t2",
+      "t1",
+      "t2",
+    ]);
+    // The repeated id still costs one read.
+    expect(listCalls(host)).toBe(8);
+  });
+});
+
 describe("handler failure (ruling 10)", () => {
   it("rejects the call rather than resolving with null fields when the SDK fails", async () => {
     const host = hostWith({});

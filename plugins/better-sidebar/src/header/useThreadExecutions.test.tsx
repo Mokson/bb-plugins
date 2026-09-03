@@ -12,7 +12,9 @@ installTestPluginRuntime();
 const { useThreadExecutions, resetThreadExecutionsCache } = await import(
   "./useThreadExecutions"
 );
-const { betterSidebarRpcContract } = await import("../server-contract");
+const { betterSidebarRpcContract, DOSSIER_CHANNEL } = await import(
+  "../server-contract"
+);
 
 type Contract = typeof betterSidebarRpcContract;
 
@@ -120,6 +122,26 @@ describe("useThreadExecutions batching (B71.1)", () => {
     await settle();
     expect(status()).toBe("ready");
     expect(models()).toBe("-,-");
+  });
+
+  it("refetches an id published on the dossier channel (M4)", async () => {
+    let model = "model-a-v1";
+    const slot = render({ threadIds: ["a"], enabled: true }, {
+      threadExecutions: () => ({
+        executions: [
+          { threadId: "a", execution: { model, reasoningLevel: "high" } },
+        ],
+      }),
+    });
+    await settle();
+    expect(models()).toBe("model-a-v1");
+
+    model = "model-a-v2";
+    await slot.behavior.emitRealtime(DOSSIER_CHANNEL, { threadId: "a" });
+    await settle();
+
+    expect(calls(slot)).toHaveLength(2);
+    expect(models()).toBe("model-a-v2");
   });
 });
 

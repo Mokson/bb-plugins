@@ -1,7 +1,11 @@
 import { useEffect, useReducer, useRef } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
-import { createBatchCache } from "../lib/batch-cache";
-import type { ThreadWorkStat, betterSidebarRpcContract } from "../server-contract";
+import { createBatchCache, unpackValidated } from "../lib/batch-cache";
+import {
+  threadWorkStatSchema,
+  type ThreadWorkStat,
+  type betterSidebarRpcContract,
+} from "../server-contract";
 
 /**
  * B85. Tokens and tool calls per child, the same batched shape
@@ -25,12 +29,17 @@ const cache = createBatchCache<
   readyTtlMs: 10_000,
   errorTtlMs: 2_000,
   maxIdsPerRequest: 60,
+  // Round-2 M5: a corrupt-but-formed element degrades to null (the labels are
+  // skipped) instead of rejecting the batch.
   unpack: (result) =>
-    new Map(
-      result.stats.map((entry) => [
-        entry.threadId,
-        { tokens: entry.tokens, toolCalls: entry.toolCalls },
-      ]),
+    unpackValidated(
+      (result as { stats?: unknown }).stats,
+      threadWorkStatSchema,
+      (entry) => ({
+        threadId: entry.threadId,
+        value: { tokens: entry.tokens, toolCalls: entry.toolCalls },
+      }),
+      null,
     ),
   // A failed lookup draws no labels; it never blanks the row.
   missing: null,

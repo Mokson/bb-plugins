@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import { cn } from "../lib/utils";
 import { GLYPH_BOX_CLASS, ROW1_ICON, ROW2_ICON } from "./row-metrics";
+import { sanitizeIconTint } from "./provider-cache";
 import { useProviderMark } from "./useProviderMark";
 
 /**
@@ -91,7 +92,10 @@ export function ProviderGlyph({
   const label = mark?.displayName ?? providerId;
   const rawLogoUrl = mark?.logoUrl ?? null;
   const logoUrl = isSafeLogoUrl(rawLogoUrl) ? rawLogoUrl : null;
-  const tint = monochrome ? undefined : mark?.iconTint;
+  // L2: the tint is a validated allowlist (hex / rgb() / color-mix()), never
+  // the raw directory string — live answers bypass the storage schema, so the
+  // choke point is here at the draw, covering cached marks too.
+  const tint = monochrome ? undefined : sanitizeIconTint(mark?.iconTint);
 
   // B80. A loading directory is an EMPTY directory, so without this branch every
   // row falls into case 3 below — and that dot means "bb does not know this

@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useRef,
   useSyncExternalStore,
   type CSSProperties,
   type ReactNode,
@@ -58,7 +59,19 @@ let hoverState: HoverState = IDLE;
 
 /** B26: a drag suppresses the card; leaving the action buttons re-arms it. */
 let suppressed = false;
-let overActions = false;
+/**
+ * Round-2 L1: one hold count per suppression handle, not one module boolean.
+ * The old flag was module-global: a row that unmounted while its menu was
+ * open cleared suppression another row still owned. Holds are counted per
+ * handle (pointer-enter and menu-open each hold one), the card is suppressed
+ * while ANY handle holds any, and unmount releases everything its handle
+ * still owns — clearing happens only at zero.
+ */
+const overActionHolds = new Map<object, number>();
+
+function isOverActions(): boolean {
+  return overActionHolds.size > 0;
+}
 
 let fetchTimer: ReturnType<typeof setTimeout> | null = null;
 let openTimer: ReturnType<typeof setTimeout> | null = null;
@@ -98,7 +111,7 @@ function armPhase(): void {
   stopPhaseTimers();
   const threadId = hoverState.threadId;
   setHoverState({ threadId, phase: "idle" });
-  if (threadId === null || suppressed || overActions) return;
+  if (threadId === null || suppressed || isOverActions()) return;
   fetchTimer = setTimeout(() => {
     fetchTimer = null;
     setHoverState({ threadId: hoverState.threadId, phase: "fetching" });
@@ -138,10 +151,18 @@ function closeHover(): void {
   setHoverState(IDLE);
 }
 
-function setOverActions(next: boolean): void {
-  if (overActions === next) return;
-  overActions = next;
-  armPhase();
+function setOverActionsFor(holder: object, next: boolean): void {
+  const wasSuppressed = isOverActions();
+  if (next) {
+    overActionHolds.set(holder, (overActionHolds.get(holder) ?? 0) + 1);
+  } else {
+    const remaining = (overActionHolds.get(holder) ?? 0) - 1;
+    if (remaining <= 0) overActionHolds.delete(holder);
+    else overActionHolds.set(holder, remaining);
+  }
+  // Re-arm only on a transition: every hold/release between would restart the
+  // open delay under a pointer that never moved.
+  if (isOverActions() !== wasSuppressed) armPhase();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -230,7 +251,7 @@ export function resetHoverSuppression(): void {
   closeTimer = clearTimer(closeTimer);
   releaseTimer = clearTimer(releaseTimer);
   suppressed = false;
-  overActions = false;
+  overActionHolds.clear();
   hoverState = IDLE;
 }
 
@@ -242,7 +263,26 @@ export function resetHoverSuppression(): void {
  * boundary crossing.
  */
 export function useRowHoverSuppression(): (next: boolean) => void {
-  return setOverActions;
+  const holderRef = useRef<object | null>(null);
+  if (holderRef.current === null) holderRef.current = {};
+  const holder = holderRef.current;
+  const setterRef = useRef<((next: boolean) => void) | null>(null);
+  if (setterRef.current === null) {
+    setterRef.current = (next: boolean) => setOverActionsFor(holder, next);
+  }
+  // L1: unmount releases everything this handle still holds (a section move
+  // under an open menu), so a dying row never strands — or clears — another
+  // row's suppression. The caller's own close/unmount decrement stays valid:
+  // it runs before this and simply decrements first.
+  useEffect(
+    () => () => {
+      if (!overActionHolds.has(holder)) return;
+      overActionHolds.delete(holder);
+      if (!isOverActions()) armPhase();
+    },
+    [holder],
+  );
+  return setterRef.current;
 }
 
 function useHoverState(): HoverState {

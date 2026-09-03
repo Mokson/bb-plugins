@@ -84,7 +84,15 @@ function Signal({
 function goalRingProgress(goal: RowSignal["goal"]): number | null {
   if (goal === null) return null;
   if (goal.status === "budgetLimited") return 1;
-  if (goal.tokenBudget === null || goal.tokenBudget <= 0) return null;
+  // Round-2 M5: the unpack site validates, but a corrupt-but-formed payload
+  // that slips any crack must draw nothing, never NaN into the dash array.
+  if (typeof goal.tokensUsed !== "number" || typeof goal.tokenBudget !== "number") {
+    return null;
+  }
+  if (!Number.isFinite(goal.tokensUsed) || !Number.isFinite(goal.tokenBudget)) {
+    return null;
+  }
+  if (goal.tokenBudget <= 0) return null;
   return Math.min(1, Math.max(0, goal.tokensUsed / goal.tokenBudget));
 }
 
