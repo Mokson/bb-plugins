@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { definePluginApp, useRpc } from "@bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import { Button } from "@/components/ui/button";
@@ -43,6 +43,7 @@ type PushState = {
 const DEVICE_ID_KEY = "bb-push-notify:device-id";
 const DEVICE_NAME_KEY = "bb-push-notify:device-name";
 const MAX_MIN_TURN_SECONDS = 3600;
+const MAX_MUTED_PROJECTS = 500;
 let fallbackDeviceId: string | null = null;
 let fallbackDeviceName = "This browser";
 
@@ -193,8 +194,9 @@ function SettingsSection() {
   );
   const [projects, setProjects] = useState<Project[]>([]);
   const [minTurnInput, setMinTurnInput] = useState("");
+  const minTurnFocused = useRef(false);
   const supported = useMemo(pushSupported, []);
-  const deviceId = useMemo(getDeviceId, []);
+  const [deviceId] = useState(getDeviceId);
   const currentDevice = pushState?.devices.find(
     (device) => device.id === deviceId,
   );
@@ -204,7 +206,9 @@ function SettingsSection() {
     setPushState(next);
     const current = next.devices.find((device) => device.id === deviceId);
     if (current) setDeviceName(current.name);
-    setMinTurnInput(String(next.filters.minTurnSeconds));
+    if (!minTurnFocused.current) {
+      setMinTurnInput(String(next.filters.minTurnSeconds));
+    }
     return next;
   }
 
@@ -372,7 +376,8 @@ function SettingsSection() {
   }
 
   function saveMinTurnSeconds() {
-    const parsed = Number.parseInt(minTurnInput, 10);
+    const trimmed = minTurnInput.trim();
+    const parsed = /^\d+$/.test(trimmed) ? Number(trimmed) : Number.NaN;
     if (!Number.isInteger(parsed) || parsed < 0 || parsed > MAX_MIN_TURN_SECONDS) {
       setMessage(
         `Minimum turn length must be between 0 and ${MAX_MIN_TURN_SECONDS} seconds.`,
@@ -386,6 +391,16 @@ function SettingsSection() {
 
   function toggleMutedProject(projectId: string, muted: boolean) {
     const current = pushState?.filters.mutedProjectIds ?? [];
+    if (
+      muted &&
+      !current.includes(projectId) &&
+      current.length >= MAX_MUTED_PROJECTS
+    ) {
+      setMessage(
+        `You can mute up to ${MAX_MUTED_PROJECTS} projects. Unmute one to mute another.`,
+      );
+      return;
+    }
     const next = muted
       ? [...new Set([...current, projectId])]
       : current.filter((id) => id !== projectId);
@@ -422,17 +437,33 @@ function SettingsSection() {
   async function removeDevice(device: Device) {
     setBusy(true);
     try {
-      if (device.id === deviceId && pushState) {
-        const registration = await navigator.serviceWorker.getRegistration(
-          pushState.workerScope,
-        );
-        const subscription = await registration?.pushManager.getSubscription();
-        await subscription?.unsubscribe();
-        await registration?.unregister();
-      }
+      // Delete server-side first so the device is always removable, even if
+      // the local service worker cleanup below fails.
       await rpc.call("removeDevice", { id: device.id });
+      let subscriptionCleanupFailed = false;
+      if (
+        device.id === deviceId &&
+        pushState &&
+        "serviceWorker" in navigator
+      ) {
+        try {
+          const registration = await navigator.serviceWorker.getRegistration(
+            pushState.workerScope,
+          );
+          const subscription =
+            await registration?.pushManager.getSubscription();
+          await subscription?.unsubscribe();
+          await registration?.unregister();
+        } catch {
+          subscriptionCleanupFailed = true;
+        }
+      }
       await refresh();
-      setMessage(`${device.name} was removed.`);
+      setMessage(
+        subscriptionCleanupFailed
+          ? `${device.name} was removed, but the browser push subscription could not be released.`
+          : `${device.name} was removed.`,
+      );
     } catch (error) {
       setMessage(messageFor(error, "Could not remove the device"));
     } finally {
@@ -657,7 +688,13 @@ function SettingsSection() {
                 value={minTurnInput}
                 disabled={busy}
                 onChange={(event) => setMinTurnInput(event.currentTarget.value)}
-                onBlur={saveMinTurnSeconds}
+                onFocus={() => {
+                  minTurnFocused.current = true;
+                }}
+                onBlur={() => {
+                  minTurnFocused.current = false;
+                  saveMinTurnSeconds();
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") saveMinTurnSeconds();
                 }}
