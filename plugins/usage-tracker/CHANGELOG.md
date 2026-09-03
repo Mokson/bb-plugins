@@ -4,6 +4,16 @@ All notable changes to Usage Tracker are documented here.
 
 ## Unreleased
 
+## 0.2.0 - 2026-09-04
+
+### Added
+
+- OpenCode Go usage in the sidebar footer, read directly from OpenCode's Zen
+  usage endpoint with the API key stored under Settings → Plugins → Usage
+  Tracker. The expanded view shows the 5-hour, weekly, and monthly limit
+  windows with reset times; a missing, rejected, or rate-limited key falls
+  back to a recovery message while last-known values stay visible.
+
 ## 0.1.3 - 2026-08-27
 
 ### Added

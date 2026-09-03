@@ -5,7 +5,8 @@
 <h1 align="center">Usage Tracker for BB</h1>
 
 <p align="center">
-  Codex and Claude Code limits, always visible in BB's sidebar footer.
+  Codex, Claude Code, and OpenCode Go limits, always visible in BB's sidebar
+  footer.
 </p>
 
 <p align="center">
@@ -21,9 +22,10 @@ usage reading, without adding a navigation item or a separate plugin page.
 
 ## Features
 
-- Shows Codex and Claude Code subscription usage in BB's sidebar footer.
-- Lets you show or hide Codex and Claude Code independently; the strip
-  compacts for one provider and disappears when both are disabled.
+- Shows Codex, Claude Code, and OpenCode Go subscription usage in BB's sidebar
+  footer.
+- Lets you show or hide Codex, Claude Code, and OpenCode Go independently; the
+  strip compacts for fewer providers and disappears when all are disabled.
 - Lets you choose whether the compact percentage and progress bar show the
   weekly or five-hour limit. Weekly is the default.
 - Expands either provider to show its five-hour, weekly, and additional
@@ -67,6 +69,12 @@ codex login
 claude
 ```
 
+OpenCode Go is read directly from OpenCode's usage endpoint instead: paste an
+[OpenCode API key](https://opencode.ai) under **Settings → Plugins → Usage
+Tracker → OpenCode API key**. The key is stored as a server-side secret and is
+never sent to the frontend. Until a key is set, the OpenCode Go entry explains
+where to add it.
+
 If a CLI is missing, signed out, or expired, expand that provider in the strip
 to see the recovery instruction reported by BB.
 
@@ -74,9 +82,11 @@ to see the recovery instruction reported by BB.
 
 The collapsed strip is designed for quick scanning:
 
-- Select the Claude Code or Codex reading to open its details in place.
+- Select the Claude Code, Codex, or OpenCode Go reading to open its details in
+  place.
 - Review the full **5-hour limit**, **weekly limit**, every additional
-  provider-defined window, and their reset times.
+  provider-defined window (including OpenCode Go's **monthly limit**), and
+  their reset times.
 - Select the same provider again, use the close button, press <kbd>Esc</kbd>,
   or click outside the details to collapse it.
 - Select the refresh icon to fetch both providers immediately.
@@ -103,9 +113,12 @@ bb plugin remove usage-tracker
 ## Data and privacy
 
 The plugin reads BB's local `system.usageLimits` data and does not ask for or
-store provider credentials. Its only persistent browser data is the last
-successful usage snapshot in local storage, used to keep useful values visible
-during a temporary provider or network failure.
+store provider credentials. The one exception is the optional OpenCode API
+key, which BB keeps as a server-side plugin secret and the plugin sends only
+to `https://opencode.ai/zen/go/v1/usage` to read OpenCode Go limits. Its only
+persistent browser data is the last successful usage snapshot in local
+storage, used to keep useful values visible during a temporary provider or
+network failure.
 
 Usage Tracker runs as a trusted BB frontend content script. Install plugins
 only from sources you trust.

@@ -127,19 +127,35 @@ function providerWithFable() {
 
 test("enables sidebar providers independently in display order", () => {
   assert.deepEqual(
-    enabledSidebarProviderIds({ enableClaudeCode: true, enableCodex: true }),
-    ["claudeCode", "codex"],
+    enabledSidebarProviderIds({
+      enableClaudeCode: true,
+      enableCodex: true,
+      enableOpenCodeGo: true,
+    }),
+    ["claudeCode", "codex", "opencodeGo"],
   );
   assert.deepEqual(
-    enabledSidebarProviderIds({ enableClaudeCode: true, enableCodex: false }),
+    enabledSidebarProviderIds({
+      enableClaudeCode: true,
+      enableCodex: false,
+      enableOpenCodeGo: false,
+    }),
     ["claudeCode"],
   );
   assert.deepEqual(
-    enabledSidebarProviderIds({ enableClaudeCode: false, enableCodex: true }),
-    ["codex"],
+    enabledSidebarProviderIds({
+      enableClaudeCode: false,
+      enableCodex: true,
+      enableOpenCodeGo: true,
+    }),
+    ["codex", "opencodeGo"],
   );
   assert.deepEqual(
-    enabledSidebarProviderIds({ enableClaudeCode: false, enableCodex: false }),
+    enabledSidebarProviderIds({
+      enableClaudeCode: false,
+      enableCodex: false,
+      enableOpenCodeGo: false,
+    }),
     [],
   );
 });
@@ -161,7 +177,7 @@ test("normalizes providers in stable order with every usage window", () => {
   assert.equal(snapshot.fetchedAt, "2026-08-11T17:00:00.000Z");
   assert.deepEqual(
     snapshot.providers.map((provider) => provider.id),
-    ["codex", "claudeCode", "cursor"],
+    ["codex", "claudeCode", "cursor", "opencodeGo"],
   );
   assert.equal(snapshot.providers[0]?.windows.length, 2);
   assert.equal(snapshot.providers[0]?.windows[0]?.barPercent, 17.25);
@@ -197,6 +213,7 @@ test("keeps current provider wire-key windows intact", () => {
       ["codex", "ok", [["Codex weekly", 11]]],
       ["claudeCode", "ok", [["Claude Fable", 22]]],
       ["cursor", "ok", [["Cursor monthly", 33]]],
+      ["opencodeGo", "error", []],
     ],
   );
 });
@@ -215,7 +232,7 @@ test("keeps healthy legacy provider windows intact", () => {
     snapshot.providers.map((provider) =>
       provider.windows.map((window) => window.label),
     ),
-    [["Codex legacy"], ["Claude legacy"], ["Cursor legacy"]],
+    [["Codex legacy"], ["Claude legacy"], ["Cursor legacy"], []],
   );
 });
 
@@ -264,6 +281,7 @@ test("prefers current provider keys over legacy aliases", () => {
       [["Codex current", 10]],
       [["Claude current", 20]],
       [["Cursor current", 30]],
+      [],
     ],
   );
 });
@@ -275,7 +293,7 @@ test("isolates an omitted provider response", () => {
   const snapshot = normalizeUsage(response, { id: null, name: null });
   assert.deepEqual(
     snapshot.providers.map((provider) => provider.status),
-    ["ok", "expired", "error"],
+    ["ok", "expired", "error", "error"],
   );
   assert.equal(snapshot.providers[0]?.windows.length, 2);
   assert.deepEqual(snapshot.providers[2], {
