@@ -280,6 +280,15 @@ const ITEM_COLUMNS = [
  * The prepared-once property survives because statements are cached per key
  * shape, and callers only have a handful of shapes.
  */
+/** SQL identifiers in this file are all coded constants, never input. */
+const SAFE_NAME = /^[a-z_]+$/;
+
+function assertSafeName(value: string, what: string): void {
+  if (!SAFE_NAME.test(value)) {
+    throw new Error(`refusing to interpolate ${what}: ${JSON.stringify(value)}`);
+  }
+}
+
 class PartialUpsert {
   private readonly cache = new Map<string, Statement>();
 
@@ -295,7 +304,12 @@ class PartialUpsert {
      * "unavailable" default would throw the proof away.
      */
     private readonly keepExisting: readonly string[] = [],
-  ) {}
+  ) {
+    assertSafeName(table, "table name");
+    for (const key of [...keys, ...pk, ...keepExisting]) {
+      assertSafeName(key, "column name");
+    }
+  }
 
   run(row: Record<string, unknown>): void {
     const present = this.keys.filter((key) => row[key] !== undefined);
@@ -329,6 +343,20 @@ class PartialUpsert {
     return `INSERT INTO ${this.table} (${names}) VALUES (${binds})
             ${conflict} ${action}`;
   }
+}
+
+export interface RetentionWindows {
+  itemsDays: number;
+  logTurnsDays: number;
+  turnsDays: number;
+}
+
+export interface PruneCounts {
+  items: number;
+  logTurns: number;
+  turns: number;
+  matches: number;
+  meta: number;
 }
 
 export class ObservatoryStore {
@@ -513,16 +541,103 @@ export class ObservatoryStore {
   }
 
   /**
-   * TODO(phase 1): prune by the `retention.itemsDays`,
-   * `retention.logTurnsDays` and `retention.turnsDays` settings. Signals and
-   * actions are kept: they are the evidence a steer or a budget breach
-   * happened, and nothing regenerates them.
+   * Delete completed rows older than the retention windows. Only COMPLETED
+   * rows go: a running turn or item is live no matter how long ago it
+   * started, and a row with no completion timestamp cannot be aged at all.
+   * Signals and actions are kept: they are the evidence a steer or a budget
+   * breach happened, and nothing regenerates them. Every statement is a plain
+   * DELETE, so re-running a pass deletes nothing new.
    */
-  prune(_retention: {
-    itemsDays: number;
-    logTurnsDays: number;
-    turnsDays: number;
-  }): void {
-    // Deliberately empty until phase 1 has rows worth pruning.
+  prune(retention: RetentionWindows): PruneCounts {
+    const counts: PruneCounts = {
+      items: 0,
+      logTurns: 0,
+      turns: 0,
+      matches: 0,
+      meta: 0,
+    };
+    const cutoffIso = (days: number): string | null => {
+      if (!Number.isFinite(days) || days < 0) return null;
+      return new Date(Date.now() - days * 86_400_000).toISOString();
+    };
+    const run = this.db.transaction(() => {
+      const itemsCutoff = cutoffIso(retention.itemsDays);
+      if (itemsCutoff !== null) {
+        counts.items += this.db
+          .prepare(
+            `DELETE FROM obs_item
+              WHERE completed_at IS NOT NULL AND completed_at < ?`,
+          )
+          .run(itemsCutoff).changes as number;
+      }
+      const logCutoff = cutoffIso(retention.logTurnsDays);
+      if (logCutoff !== null) {
+        counts.logTurns += this.db
+          .prepare(`DELETE FROM obs_log_turn WHERE ts < ?`)
+          .run(Date.parse(logCutoff)).changes as number;
+      }
+      const turnsCutoff = cutoffIso(retention.turnsDays);
+      if (turnsCutoff !== null) {
+        counts.turns += this.db
+          .prepare(
+            `DELETE FROM obs_turn
+              WHERE completed_at IS NOT NULL AND completed_at < ?`,
+          )
+          .run(turnsCutoff).changes as number;
+        // Matches point at (thread, turn), not at log rows: without this a
+        // pruned turn leaves a pointer to a row that no longer exists.
+        counts.matches += this.db
+          .prepare(
+            `DELETE FROM obs_match
+              WHERE NOT EXISTS (
+                SELECT 1 FROM obs_turn t
+                 WHERE t.thread_id = obs_match.thread_id
+                   AND t.turn_id = obs_match.turn_id
+              )`,
+          )
+          .run().changes as number;
+      }
+      // Stale ledger-owned meta: join stats for sessions with no thread left
+      // to name them, and carries for threads that no longer exist. Threads
+      // are never pruned, so today this only clears rows a crashed older
+      // build left behind — but the pass is what keeps that true.
+      const liveSessions = new Set(
+        this.db
+          .prepare<[], { key: string }>(
+            `SELECT 'join:' || provider_id || ':' || provider_thread_id AS key
+               FROM obs_thread
+              WHERE provider_id IS NOT NULL
+                AND provider_thread_id IS NOT NULL`,
+          )
+          .all()
+          .map((row) => row.key),
+      );
+      const liveThreads = new Set(
+        this.db
+          .prepare<[], { thread_id: string }>(
+            `SELECT thread_id FROM obs_thread`,
+          )
+          .all()
+          .map((row) => row.thread_id),
+      );
+      const stale: string[] = [];
+      for (const row of this.db
+        .prepare<[], { key: string }>(
+          `SELECT key FROM obs_meta WHERE key LIKE 'join:%' OR key LIKE 'carry:%'`,
+        )
+        .all()) {
+        if (row.key.startsWith("join:")) {
+          if (!liveSessions.has(row.key)) stale.push(row.key);
+        } else if (!liveThreads.has(row.key.slice("carry:".length))) {
+          stale.push(row.key);
+        }
+      }
+      const remove = this.db.prepare(`DELETE FROM obs_meta WHERE key = ?`);
+      for (const key of stale) {
+        counts.meta += remove.run(key).changes as number;
+      }
+    });
+    run();
+    return counts;
   }
 }

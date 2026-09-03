@@ -369,13 +369,39 @@ export function selectBatch(
     .slice(0, MAX_BATCH_CLUSTERS);
 }
 
+let draftBatchInFlight = false;
+
 /**
  * Spawn one hidden drafting thread for the next batch and store its drafts.
  *
  * Returns without spawning when the budget is spent, when nothing qualifies,
  * or when this batch's thread already exists.
+ *
+ * Singleflight: the budget check and the spawn are not atomic, so two
+ * overlapping batches could both pass the check and pay twice. The first
+ * caller holds the guard until its spawn settles; the second gets a busy
+ * result instead of a second thread.
  */
 export async function runDraftBatch(
+  deps: DraftBatchDeps,
+  clusters: readonly Cluster[],
+): Promise<DraftBatchResult> {
+  if (draftBatchInFlight) {
+    return {
+      threadId: null,
+      clusters: [],
+      skipped: "a draft batch is already in progress",
+    };
+  }
+  draftBatchInFlight = true;
+  try {
+    return await runDraftBatchInner(deps, clusters);
+  } finally {
+    draftBatchInFlight = false;
+  }
+}
+
+async function runDraftBatchInner(
   deps: DraftBatchDeps,
   clusters: readonly Cluster[],
 ): Promise<DraftBatchResult> {

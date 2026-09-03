@@ -1,6 +1,7 @@
 // The agent-facing pack and the files the retro seat reads have to describe
-// the same run, so asking for a run folder's pack leaves the three artifacts
-// in it and says where they went.
+// the same run, so asking for a run folder's pack WITH the export flag leaves
+// the three artifacts in it and says where they went. Without the flag the
+// tool is a read: no files, same pack.
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -41,7 +42,11 @@ test("a run-folder target writes audit.json, audit.md and COST.md and returns th
   seed(folder);
   const store = temp.open();
 
-  const pack = auditPackWithExport({ db: store.db, store }, { runFolder: folder });
+  const pack = auditPackWithExport(
+    { db: store.db, store },
+    { runFolder: folder },
+    { write: true },
+  );
 
   expect(pack.written.map((path) => path.replace(`${folder}/`, "")).sort()).toEqual(
     ["COST.md", "audit.json", "audit.md"],
@@ -50,6 +55,16 @@ test("a run-folder target writes audit.json, audit.md and COST.md and returns th
     expect(path.startsWith(folder)).toBe(true);
     expect(existsSync(path)).toBe(true);
   }
+});
+
+test("without the export flag a run-folder target writes nothing", () => {
+  folder = mkdtempSync(join(tmpdir(), "observatory-run-"));
+  seed(folder);
+  const store = temp.open();
+
+  const pack = auditPackWithExport({ db: store.db, store }, { runFolder: folder });
+
+  expect(pack.written).toEqual([]);
 });
 
 test("a thread with no run folder writes nothing and says so", () => {

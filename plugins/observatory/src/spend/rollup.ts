@@ -14,6 +14,7 @@
 // biller produced.
 import type { Database } from "better-sqlite3";
 import { resolveModel, type PricingCatalog } from "../core/catalog.js";
+import { SPEND_ROW_LIMIT } from "./contract.js";
 import type {
   SpendGroup,
   SpendOverview,
@@ -24,6 +25,19 @@ import type {
   SpendTotals,
   TurnRow,
 } from "./contract.js";
+
+/** Re-exported beside the rollups so the CLI and the panel name one number. */
+export { SPEND_ROW_LIMIT };
+
+/**
+ * The row ceiling every spend surface shares. Totals are computed over the
+ * UNCAPPED rows — the cap bounds the payload, never the money — and the
+ * caller reports `truncated` so a capped table never reads as a complete one.
+ */
+function capRows<T>(rows: readonly T[]): { rows: T[]; truncated: boolean } {
+  if (rows.length <= SPEND_ROW_LIMIT) return { rows: [...rows], truncated: false };
+  return { rows: rows.slice(0, SPEND_ROW_LIMIT), truncated: true };
+}
 
 /** Rates are published per million tokens. */
 const PER_MILLION = 1_000_000;
@@ -443,7 +457,7 @@ export function spendOverview(
   const now = (deps.now ?? Date.now)();
   const filter = buildFilter(query, now);
   const catalog = deps.catalog ?? null;
-  const rows =
+  const all =
     query.group === "lineage"
       ? lineageRows(threadAggregates(deps.db, filter))
       : query.group === "model"
@@ -454,7 +468,12 @@ export function spendOverview(
             "model",
           )
         : flatRows(deps.db, filter, "substr(t.started_at, 1, 10)", "day");
-  return { totals: totalsFor(deps.db, filter, catalog), rows };
+  const { rows, truncated } = capRows(all);
+  return {
+    totals: totalsFor(deps.db, filter, catalog),
+    rows,
+    ...(truncated ? { truncated: true as const } : {}),
+  };
 }
 
 /** Per-turn flags. Closed vocabulary, shared with `COST.md`. */
@@ -549,6 +568,7 @@ export function spendThread(
     splitSource: turn.split_source ?? "unavailable",
     flags: turnFlags(turn),
   }));
+  const capped = capRows(rows);
 
   return {
     thread: {
@@ -564,7 +584,8 @@ export function spendThread(
       buildFilter({ threadId }, (deps.now ?? Date.now)()),
       deps.catalog ?? null,
     ),
-    turns: rows,
+    turns: capped.rows,
+    ...(capped.truncated ? { truncated: true as const } : {}),
   };
 }
 
@@ -607,6 +628,9 @@ export function formatOverview(overview: SpendOverview): string {
     );
   }
   if (overview.rows.length === 0) lines.push("  (no priced turns in range)");
+  if (overview.truncated) {
+    lines.push(`  (showing the first ${SPEND_ROW_LIMIT} rows)`);
+  }
   return lines.join("\n");
 }
 
@@ -641,6 +665,9 @@ export function overviewMarkdown(
     `cache_write_usd: ${money(overview.totals.cacheWriteUsd)}`,
     `cache_miss_usd: ${money(overview.totals.missCostUsd)}`,
     `unpriced_models: ${overview.totals.unpricedModels}`,
+    ...(overview.truncated
+      ? [`truncated: showing the first ${SPEND_ROW_LIMIT} rows`]
+      : []),
     "",
     "| row | kind | turns | input | cache read | output | cost usd | estimated |",
     "| --- | --- | --- | --- | --- | --- | --- | --- |",

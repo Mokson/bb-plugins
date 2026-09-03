@@ -45,6 +45,7 @@ import {
 import {
   agentTotals,
   formatOverview,
+  SPEND_ROW_LIMIT,
   spendExport,
   spendOverview,
   spendThread,
@@ -75,6 +76,7 @@ import {
 } from "./context/snapshot.js";
 import { auditContract } from "./audit/contract.js";
 import {
+  assertInside,
   auditExport,
   auditSession,
   auditSessions,
@@ -116,6 +118,7 @@ import {
   CORE_MODULE_ID,
   ModuleRegistry,
   defineModule,
+  isEnabledSetting,
   moduleEnabledKvKey,
   moduleEnabledSettingKey,
   type ModuleContext,
@@ -436,6 +439,12 @@ function parseHours(value: string | boolean | undefined, fallback: number) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+/** Retention days, from the setting, falling back to the advertised default. */
+function parseDays(value: string | boolean | undefined, fallback: number) {
+  const parsed = Number.parseFloat(typeof value === "string" ? value : "");
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 /** The pass budget, from the setting, falling back to the measured default. */
 function indexBudget(
   value: string | boolean | undefined,
@@ -525,6 +534,33 @@ export function createCoreModule(
         "0 */24 * * *",
         ctx.job("pricing", async () => {
           if (stack) await stack.refreshCatalog();
+        }),
+      );
+      bb.background.schedule(
+        "prune",
+        "0 4 * * *",
+        ctx.job("prune", async () => {
+          // Re-read every tick like the log budget: retention is the setting
+          // a person reaches for when the database outgrows its disk.
+          const current = await settings();
+          const deleted = store.prune({
+            itemsDays: parseDays(current["retention_itemsDays"], 30),
+            logTurnsDays: parseDays(current["retention_logTurnsDays"], 90),
+            turnsDays: parseDays(current["retention_turnsDays"], 365),
+          });
+          const total =
+            deleted.items +
+            deleted.logTurns +
+            deleted.turns +
+            deleted.matches +
+            deleted.meta;
+          if (total > 0) {
+            bb.log.info(
+              `[core] prune deleted ${deleted.turns} turns, ` +
+                `${deleted.items} items, ${deleted.logTurns} log turns, ` +
+                `${deleted.matches} matches, ${deleted.meta} meta keys`,
+            );
+          }
         }),
       );
       bb.log.info(
@@ -748,7 +784,7 @@ export const CONTEXT_TOOL = {
 export const AUDIT_PACK_TOOL = {
   name: "observatory_audit_pack",
   description:
-    "Session metrics against the 7-day median, verification coverage, unverified edits, failures and insight facets for a thread or deliver run folder. When the target resolves a run folder it also writes audit.json, audit.md and COST.md there and returns their paths.",
+    "Session metrics against the 7-day median, verification coverage, unverified edits, failures and insight facets for a thread or deliver run folder. Read-only by default; pass export true to also write audit.json, audit.md and COST.md into the run folder and get their paths back.",
 } as const;
 
 export const FAILURES_TOOL = {
@@ -1079,12 +1115,12 @@ export async function buildStatus(deps: StatusDeps): Promise<StatusView> {
     const source =
       typeof override === "boolean"
         ? "kv"
-        : typeof setting === "boolean"
+        : typeof setting === "boolean" || typeof setting === "string"
           ? "setting"
           : "default";
     const enabled =
       !breaker.tripped &&
-      (typeof override === "boolean" ? override : setting === true);
+      (typeof override === "boolean" ? override : isEnabledSetting(setting));
     modules.push({
       id,
       enabled,
@@ -1202,7 +1238,10 @@ export function formatCoverage(
 /** `--provider codex` style flags. Absent flag returns undefined. */
 export function flagValue(argv: readonly string[], name: string): string | undefined {
   const index = argv.indexOf(`--${name}`);
-  return index === -1 ? undefined : argv[index + 1];
+  if (index === -1) return undefined;
+  const value = argv[index + 1];
+  // `--provider --reset` is a missing value, not a provider named "--reset".
+  return value === undefined || value.startsWith("--") ? undefined : value;
 }
 
 /** `--reset` style switches, which carry no value. */
@@ -1328,8 +1367,12 @@ export function clampToolResult(payload: unknown): string {
  * `bb observatory audit <target> --pack` - so the tool's 4096-char contract is
  * checkable from a terminal instead of only from inside a model's turn.
  */
-export function auditPackToolResult(deps: AuditDeps, target: AuditTarget): string {
-  return clampToolResult(auditPackWithExport(deps, target));
+export function auditPackToolResult(
+  deps: AuditDeps,
+  target: AuditTarget,
+  options: { write?: boolean } = {},
+): string {
+  return clampToolResult(auditPackWithExport(deps, target, options));
 }
 
 /** Every run folder the ledger attributes at least one thread to. */
@@ -1343,6 +1386,20 @@ export function knownRunFolders(db: Database): Set<string> {
     rows
       .map((row) => row.run_folder)
       .filter((folder): folder is string => folder !== null),
+  );
+}
+
+/**
+ * The tool-call hot path of the above: one parameterized EXISTS instead of
+ * loading every attributed folder to test one id.
+ */
+export function isKnownRunFolder(db: Database, folder: string): boolean {
+  return (
+    db
+      .prepare<[string], { one: number }>(
+        `SELECT 1 AS one FROM obs_thread WHERE run_folder = ? LIMIT 1`,
+      )
+      .get(folder) !== undefined
   );
 }
 
@@ -1422,6 +1479,9 @@ export function formatThread(view: SpendThreadView): string {
     );
   }
   if (view.turns.length === 0) lines.push("  (no turns)");
+  if (view.truncated) {
+    lines.push(`  (showing the first ${SPEND_ROW_LIMIT} turns)`);
+  }
   return lines.join("\n");
 }
 
@@ -1481,10 +1541,13 @@ export function runSpendCommand(
       if (hasFlag(argv, "stdout")) {
         return { exitCode: 0, stdout: report.content };
       }
-      writeFileSync(report.filename, report.content, "utf8");
+      // `folder` is operator input: route the write through the same
+      // inside-the-run-folder guard the audit export uses.
+      const target = assertInside(folder, report.filename);
+      writeFileSync(target, report.content, "utf8");
       return {
         exitCode: 0,
-        stdout: `wrote ${report.filename} (${report.agents} agents, ${report.snapshot})\n`,
+        stdout: `wrote ${target} (${report.agents} agents, ${report.snapshot})\n`,
       };
     }
     const tree = flagValue(argv, "tree");
@@ -1542,6 +1605,24 @@ async function backfill(
   }
   const provider = flagValue(argv, "provider");
   const reset = hasFlag(argv, "reset");
+  if (provider !== undefined) {
+    // A typo used to select zero threads and print a healthy-looking empty
+    // coverage report. The known ids are the log roots plus every provider
+    // the ledger has actually seen.
+    const seen = runtime.store.db
+      .prepare<[], { provider_id: string | null }>(
+        `SELECT DISTINCT provider_id FROM obs_thread WHERE provider_id IS NOT NULL`,
+      )
+      .all()
+      .map((row) => row.provider_id as string);
+    const known = [...new Set([...DEFAULT_LOG_ROOTS.map((root) => root.provider), ...seen])].sort();
+    if (!known.includes(provider)) {
+      return {
+        exitCode: 1,
+        stderr: `unknown provider "${provider}" (known: ${known.join(", ") || "none"})\n`,
+      };
+    }
+  }
   // Page the thread list. A single 500-row request silently truncated the
   // backfill on any bb install with more history than that, and the coverage
   // number it printed looked complete.
@@ -1567,22 +1648,47 @@ async function backfill(
   // rewinds the watermark so the whole history is re-derived.
   if (reset) runtime.ingest.reset(selected);
   else for (const threadId of selected) runtime.ingest.markDirty(threadId);
-  // Drain until the dirty set stops SHRINKING. Testing for an empty set spins
-  // the full 100 passes whenever one thread is permanently unreadable, since a
-  // failed drain re-queues itself and the set never reaches zero.
-  let remaining = Number.POSITIVE_INFINITY;
+  // Drain thread by thread, not as one batch: one unreadable thread used to
+  // end the whole backfill early via the shrinking-dirty test, and nothing
+  // said which thread it was. A failure is recorded and the loop moves on;
+  // failed threads are retried while other threads still make progress, and
+  // a second consecutive failure without progress ends the loop instead of
+  // burning all 100 passes on a dead thread.
+  const failures = new Map<string, string>();
+  let pending = [...selected];
   for (let pass = 0; pass < BACKFILL_MAX_PASSES; pass += 1) {
-    await runtime.ingest.drainOnce();
-    const dirty = runtime.ingest.counters().dirty;
-    if (dirty === 0 || dirty >= remaining) break;
-    remaining = dirty;
+    const next: string[] = [];
+    let ingested = 0;
+    let freshFailure = false;
+    for (const threadId of pending) {
+      try {
+        const count = await runtime.ingest.drainThread(threadId);
+        ingested += count;
+        failures.delete(threadId);
+        if (count > 0) next.push(threadId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!failures.has(threadId)) freshFailure = true;
+        failures.set(threadId, message);
+        next.push(threadId);
+      }
+    }
+    pending = next;
+    if (pending.length === 0) break;
+    if (ingested === 0 && !freshFailure) break;
   }
   // The whole history, not just turns still settling: a backfill exists to
   // re-prove what an earlier, premature pass got wrong.
   runtime.ingest.rejoinPending(true);
+  const failureLine =
+    failures.size === 0
+      ? ""
+      : `\nbackfill failures (${failures.size}): ${[...failures.keys()]
+          .slice(0, 10)
+          .join(", ")}${failures.size > 10 ? ", …" : ""}`;
   return {
     exitCode: 0,
-    stdout: `backfilled ${drained} threads since ${new Date(since).toISOString()}\n${formatCoverage(
+    stdout: `backfilled ${drained} threads since ${new Date(since).toISOString()}${failureLine}\n${formatCoverage(
       runtime.events.coverage(provider ?? null),
       runtime.events.coverageByProvider(provider ?? null),
     )}\n`,
@@ -1656,12 +1762,6 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
     bb.storage.migrate(database, statements),
   );
   const store = new ObservatoryStore(db);
-
-  // Phase 0 keeps the indexer in-process. The `bb.host` entry exists and
-  // answers the same contract, so phase 1 swaps this for `bb.hosts.
-  // experimental_client(...)` without touching a caller.
-  const host = new LocalHostClient();
-  void host;
 
   const core: CoreHandle = { current: null };
   const spend: SpendHandle = { current: null };
@@ -1807,7 +1907,7 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
         // `buildCostMd` reads `<id>/LEDGER.md` from disk, so an unchecked id
         // makes this tool an arbitrary-file read on the model's say-so. Only
         // run folders the ledger already attributes turns to are accepted.
-        if (!knownRunFolders(deps.db).has(id)) {
+        if (!isKnownRunFolder(deps.db, id)) {
           return `no such run folder in the ledger: ${id}`;
         }
         const report = buildCostMd(deps.db, { runFolder: id });
@@ -1900,10 +2000,24 @@ export default async function observatory(bb: BbPluginApi): Promise<void> {
       .object({
         threadId: z.string().min(1).optional(),
         runFolder: z.string().min(1).optional(),
+        export: z
+          .boolean()
+          .optional()
+          .describe(
+            "Write audit.json, audit.md and COST.md into the run folder. Off by default: a read must not leave files behind.",
+          ),
       })
       .strict(),
     execute(target) {
-      return auditPackToolResult(auditRpcDeps(), target);
+      const auditTarget: AuditTarget = {
+        ...(target.threadId === undefined ? {} : { threadId: target.threadId }),
+        ...(target.runFolder === undefined
+          ? {}
+          : { runFolder: target.runFolder }),
+      };
+      return auditPackToolResult(auditRpcDeps(), auditTarget, {
+        write: target.export === true,
+      });
     },
   });
 

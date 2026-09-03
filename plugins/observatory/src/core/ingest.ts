@@ -309,7 +309,11 @@ export function createIngest(options: IngestOptions): Ingest {
       ingested += page.length;
       counters.events += page.length;
       if (result.lastSeq === null) break;
-      afterSeq = result.lastSeq;
+      // The watermark only ever moves forward: a page whose events predate
+      // the watermark (a replayed tail after a reset race) must not rewind
+      // it. `setWatermark` clamps too; this keeps the in-memory cursor honest
+      // within the drain.
+      afterSeq = afterSeq === null ? result.lastSeq : Math.max(afterSeq, result.lastSeq);
       // A partial drain is fine: the thread stays dirty and the next tick
       // resumes from the watermark just written.
       if (page.length < PAGE_LIMIT) break;
@@ -476,7 +480,14 @@ export function createIngest(options: IngestOptions): Ingest {
    * turns the pass before it did - rather than on an empty queue or on
    * "proved something", either of which spins forever now that a re-read turn
    * counts as proof. `considered` accumulates work done across passes and so
-   * counts a re-read turn once per pass; the split counters do not.
+   * counts a re-read turn once per pass.
+   *
+   * The other counters do not accumulate re-reads. `logExact`, `sidechain`
+   * and `rows` are once-per-turn events: a proven turn leaves the pending
+   * queue and is never counted again. `logWindow`, `unavailable` and the
+   * unattributed counts are STATE re-observed every pass, so each pass
+   * reports the largest value seen — summing them would count one unsettled
+   * turn once per pass.
    *
    * `all` widens the retry from young turns to the whole history. The
    * scheduled pass stays narrow because an old `log-window` turn has nothing
@@ -489,17 +500,26 @@ export function createIngest(options: IngestOptions): Ingest {
     if (!deps) return null;
     const cutoff = all ? "" : EventStore.rejoinCutoff(now());
     const total = joinPendingTurns(deps, undefined, cutoff);
+    const peak = (next: JoinSummary): void => {
+      total.logWindow = Math.max(total.logWindow, next.logWindow);
+      total.unavailable = Math.max(total.unavailable, next.unavailable);
+      total.unattributedBefore = Math.max(
+        total.unattributedBefore,
+        next.unattributedBefore,
+      );
+      total.unattributedAfter = Math.max(
+        total.unattributedAfter,
+        next.unattributedAfter,
+      );
+    };
     let previous = passFingerprint(total);
     for (let pass = 1; pass < MAX_REJOIN_PASSES; pass += 1) {
       const next = joinPendingTurns(deps, undefined, cutoff);
       total.considered += next.considered;
       total.logExact += next.logExact;
-      total.logWindow += next.logWindow;
       total.sidechain += next.sidechain;
-      total.unavailable = next.unavailable;
       total.rows += next.rows;
-      total.unattributedBefore += next.unattributedBefore;
-      total.unattributedAfter += next.unattributedAfter;
+      peak(next);
       const fingerprint = passFingerprint(next);
       if (fingerprint === previous) break;
       previous = fingerprint;
@@ -527,7 +547,9 @@ export function createIngest(options: IngestOptions): Ingest {
     });
 
     // Lifecycle seeds the registry: a thread that was created and archived
-    // between two drains still gets its row.
+    // between two drains still gets its row. `bb.events.on` returns void —
+    // the SDK offers no unsubscribe — so these five live until the host
+    // drops them on dispose/reload, which is also what ends this loop.
     for (const name of [
       "thread.created",
       "thread.active",
@@ -541,13 +563,15 @@ export function createIngest(options: IngestOptions): Ingest {
       });
     }
 
+    // The abort listener owns the teardown: it runs before the loop below
+    // observes the abort, so a second unsubscribe after the loop would only
+    // ever run already-unsubscribed.
     signal.addEventListener("abort", () => unsubscribe(), { once: true });
     await reconcileStale();
     while (!signal.aborted) {
       const ingested = await drainOnce();
       if (ingested === 0) await sleep(IDLE_POLL_MS, signal);
     }
-    unsubscribe();
   }
 
   return {

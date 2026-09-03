@@ -262,10 +262,22 @@ export interface Partition {
  * turn's completion plus the flush window, belong to no turn: the tail trim
  * applies to the last turn ONLY, because a mid-session turn's slice is
  * already closed by the next turn's start.
+ *
+ * A turn with no parseable timestamp keeps session order instead of dropping
+ * out: both stores sort null starts first, so it is placed at
+ * negative-infinity and may claim rows before the first timestamped start.
+ * Anything else would leave it `unavailable` forever with rows sitting in
+ * `before` that nothing else can own.
+ *
+ * `nowMs` caps the one slice nothing else closes: the last turn, when it is
+ * still open (`completed_at` null), would otherwise absorb every future row
+ * the session ever writes. Rows dated after now are clock skew, not spend,
+ * and land in `after`.
  */
 export function partitionRows(
   turns: readonly PendingSplitTurn[],
   rows: readonly LogTurn[],
+  nowMs: number = Date.now(),
 ): Partition {
   const buckets: LogTurn[][] = turns.map(() => []);
   const before: LogTurn[] = [];
@@ -273,13 +285,12 @@ export function partitionRows(
 
   const live = turns
     .map((turn, index) => ({ index, start: startMs(turn) }))
-    .filter(
-      (entry): entry is { index: number; start: number } =>
-        entry.start !== null,
-    )
     .map((entry) => ({
       index: entry.index,
-      at: entry.start - WINDOW_BEFORE_MS,
+      at:
+        entry.start === null
+          ? Number.NEGATIVE_INFINITY
+          : entry.start - WINDOW_BEFORE_MS,
     }))
     .sort((a, b) => a.at - b.at || a.index - b.index);
 
@@ -309,6 +320,12 @@ export function partitionRows(
     const slice = buckets[last.index] ?? [];
     buckets[last.index] = slice.filter((row) => row.ts <= limit);
     after.push(...slice.filter((row) => row.ts > limit));
+  } else if (last) {
+    // The last turn is still open: nothing closes its slice from the right.
+    // Cap it at now rather than letting it absorb rows dated in the future.
+    const slice = buckets[last.index] ?? [];
+    buckets[last.index] = slice.filter((row) => row.ts <= nowMs);
+    after.push(...slice.filter((row) => row.ts > nowMs));
   }
   return { buckets, before, after };
 }

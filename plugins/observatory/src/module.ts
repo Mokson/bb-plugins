@@ -41,6 +41,21 @@ export function moduleEnabledKvKey(id: string): string {
   return moduleEnabledSettingKey(id);
 }
 
+/**
+ * Whether a setting value means "on".
+ *
+ * Boolean descriptors arrive as booleans, but a value that round-tripped
+ * through the KV store or a stringly settings layer may read `"true"` or
+ * `1`. Only an explicit false-ish value is off; anything unrecognized stays
+ * off too, because silently enabling a module is worse than a status line
+ * that says off.
+ */
+export function isEnabledSetting(value: unknown): boolean {
+  return (
+    value === true || value === "true" || value === 1 || value === "1"
+  );
+}
+
 export interface BreakerState {
   /** Consecutive failures since the last success. */
   failures: number;
@@ -148,7 +163,7 @@ export class ModuleRegistry {
         );
         if (typeof override === "boolean") return override;
         const value = (await settings())[moduleEnabledSettingKey(id)];
-        return value === true;
+        return isEnabledSetting(value);
       },
     };
   }
