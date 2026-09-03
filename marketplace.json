@@ -84,6 +84,26 @@
           "tagPrefix": "files/"
         }
       }
+    },
+    {
+      "id": "skill-usage",
+      "displayName": "Skill Usage",
+      "description": "Every skill a thread invoked, in order, with status and args, plus project and global rollups built from an incremental index of BB thread events.",
+      "icon": "Zap",
+      "tags": ["interface", "skills", "observability"],
+      "author": {
+        "name": "Maksym Moklyak",
+        "github": "Mokson",
+        "url": "https://github.com/Mokson"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/Mokson/bb-plugins.git",
+          "subdir": "plugins/skill-usage",
+          "range": "^0.1.0",
+          "tagPrefix": "skill-usage/"
+        }
+      }
     }
   ]
 }
