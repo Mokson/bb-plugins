@@ -32,6 +32,9 @@ bb plugin install git:https://github.com/Mokson/bb-plugins \
   in `plugins[]`.
 - `plugins/<id>/` — one self-contained plugin package per directory. Each has its
   own `package.json`, tests, and release tags.
+- `plugins/usage-tracker/` — vendored third-party copy (upstream
+  MateoCerquetella/bb-plugins, `private:true`). Intentionally unlisted in
+  `marketplace.json`; keep its author, license and THIRD_PARTY_NOTICES intact.
 
 ## Releasing
 
