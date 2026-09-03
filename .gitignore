@@ -1,4 +1,7 @@
-node_modules/
+# No trailing slash: with one, the pattern matches directories only, and a
+# node_modules SYMLINK — what a worktree gets when it borrows the main
+# checkout's install — is staged by `git add -A` instead of ignored.
+node_modules
 dist/
 .npm-cache/
 *.log
