@@ -89,6 +89,7 @@ function open(
     {
       thread: thread(),
       title: "Right click me",
+      isCompleted: false,
       pullRequest: null,
       onNavigate: vi.fn(),
       onOpenPullRequest: vi.fn(),
@@ -121,20 +122,21 @@ describe("RowContextMenu", () => {
     expect(menu().getAttribute("data-bb-plugin-root")).toBe("");
   });
 
-  it("offers all eight items, with no pull-request item when there is none", () => {
+  it("offers all nine items, with no pull-request item when there is none", () => {
     open();
     expect(
       within(menu())
         .getAllByRole("menuitem")
         .map((item) => item.textContent),
       // bb's own order after the open actions: read state, pin, rename,
-      // then archive and delete.
+      // then B86's completion toggle beside archive, and delete.
     ).toEqual([
       "Open",
       "Open in split",
       "Mark unread",
       "Pin",
       "Rename",
+      "Mark completed",
       "Archive",
       "Delete",
     ]);

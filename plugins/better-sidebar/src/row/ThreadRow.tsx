@@ -192,6 +192,7 @@ function RowBody({
       thread={thread}
       title={row.title}
       pullRequest={pullRequest}
+      isCompleted={row.isCompleted}
       onNavigate={onNavigate}
       onOpenPullRequest={openPullRequest}
       renameEditor={renameEditor}
@@ -381,6 +382,28 @@ function RowBody({
               >
                 {/* B61.2: at `compact` and `default` this is not mounted, so
                     no observer exists and no `rowSignals` request is sent. */}
+                {/* B86.5: search suspends grouping, so a filed thread arrives
+                    among the active ones with no COMPLETED header to explain
+                    it. The check says so on the row itself. Outside search the
+                    section already says it, and a mark on every row of a
+                    section says nothing. */}
+                {row.isCompleted && row.sectionKey === "search" ? (
+                  <Glyph
+                    name="check"
+                    aria-label="Completed"
+                    className={cn(ROW1_ICON, "ml-1.5 text-muted-foreground")}
+                  />
+                ) : null}
+                {/* B86.2: the thread was written to after it was filed. The one
+                    row in the pile worth a second look, and the reason a
+                    background agent finishing does not have to unfile it. */}
+                {row.hasUpdateSinceCompleted ? (
+                  <Glyph
+                    name="dot"
+                    aria-label="Updated since completed"
+                    className={cn(ROW1_ICON, "ml-1.5 text-foreground")}
+                  />
+                ) : null}
                 {showSignals ? <RowSignals threadId={thread.id} /> : null}
                 {/* B51.4: the row's own time, on every row, at the right edge.
                     With time hidden the trailing cluster is fully intrinsic —
@@ -398,6 +421,7 @@ function RowBody({
                 thread={thread}
                 title={row.title}
                 pullRequest={pullRequest}
+                isCompleted={row.isCompleted}
                 quickActions={quickActions}
                 onNavigate={onNavigate}
                 onOpenPullRequest={openPullRequest}

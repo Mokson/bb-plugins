@@ -711,9 +711,16 @@ describe("ThreadList — a hidden thing costs nothing (B61)", () => {
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Host" }));
 
     // Row 1's time label is drawn at every density, so its one batched
-    // `lastActivity` lookup (B82) is not a row-2 cost; nothing else is asked.
+    // `lastActivity` lookup (B82) is not a row-2 cost. B86 adds the second
+    // unconditional read: which threads the user has filed decides which
+    // SECTION every row is in, so it is not a row-2 cost either — without it
+    // the first paint puts filed threads back in the active list. Nothing
+    // else is asked.
     expect(
-      slot.inspection.rpcCalls.filter((call) => call.method !== "lastActivity"),
+      slot.inspection.rpcCalls.filter(
+        (call) =>
+          call.method !== "lastActivity" && call.method !== "completedThreads",
+      ),
     ).toHaveLength(0);
   });
 

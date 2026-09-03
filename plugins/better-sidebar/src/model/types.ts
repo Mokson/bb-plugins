@@ -63,6 +63,7 @@ export const NO_HOST_KEY = "host:none";
 export type SectionKey =
   | "needs-you"
   | "done"
+  | "completed"
   | "pinned"
   | DateBucketKey
   | `project:${string}`
@@ -112,6 +113,14 @@ export interface ListModelInput {
   readonly localHostId: string | null;
   readonly collapsedSections: ReadonlySet<SectionKey>;
   /**
+   * B86: the threads the user has marked completed, mapped to the epoch ms they
+   * were marked at. Owned by `useCompleted`; the model only reads it.
+   *
+   * The timestamp is not decoration. It orders the COMPLETED section, and the
+   * row's "moved on since you filed it" dot is `updatedAt` measured against it.
+   */
+  readonly completedAt: ReadonlyMap<string, number>;
+  /**
    * B10, inverted: the parents the user has OPENED. A parent with children is
    * collapsed until it appears here.
    */
@@ -133,6 +142,20 @@ export interface RenderRow {
   /** B41. 0 = full opacity, rising with bucket age, capped at DIM_FLOOR. */
   readonly dimLevel: 0 | 1 | 2 | 3;
   readonly sectionKey: SectionKey;
+  /**
+   * B86: the user has filed this thread. True wherever the row is drawn, the
+   * search list included — search suspends grouping, so the section key is the
+   * one place that would otherwise say so, and there it says `search`.
+   */
+  readonly isCompleted: boolean;
+  /**
+   * B86: the thread has been written to since it was filed. Drawn as a dot in
+   * the COMPLETED section, because a thread that resumed work is the one entry
+   * in that pile worth looking at.
+   *
+   * False for every row that is not completed.
+   */
+  readonly hasUpdateSinceCompleted: boolean;
 }
 
 export interface RenderSection {
@@ -144,6 +167,14 @@ export interface RenderSection {
    * number churn while the section's own contents were unchanged.
    */
   readonly count: number;
+  /**
+   * Whether the header draws `count`. False everywhere but COMPLETED (B86.4):
+   * that section is collapsed by default, so a header with no number is a box
+   * whose contents the user cannot see without opening it. Every other section
+   * either cannot be collapsed or answers a question the row's own time
+   * already answers.
+   */
+  readonly showCount: boolean;
   readonly isCollapsible: boolean;
   readonly isCollapsed: boolean;
   /** Pre-order flat: parent immediately followed by its visible subtree. */

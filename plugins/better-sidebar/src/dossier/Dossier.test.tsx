@@ -92,6 +92,8 @@ function row(overrides: Partial<RenderRow> = {}): RenderRow {
     workspaceLabel: "feat/a-very-long-branch-name-row-two-truncates",
     depth: 0,
     childCount: 0,
+    isCompleted: false,
+    hasUpdateSinceCompleted: false,
     projectName: "bb",
     dimLevel: 0,
     sectionKey: "today",
@@ -141,6 +143,8 @@ function render(
       lastActivity: () => ({ activity: [] }),
     threadWorkStats: () => ({ stats: [] }),
       localHost: () => ({ hostId: null }),
+      completedThreads: () => ({ entries: [] }),
+      setThreadCompleted: () => ({ entries: [] }),
       ...rpc,
     },
     sidebarThreads: {
@@ -175,6 +179,8 @@ function renderWithSignals(rpc: Partial<PluginRpcTestHandlers<Contract>> = {}) {
       lastActivity: () => ({ activity: [] }),
       threadWorkStats: () => ({ stats: [] }),
       localHost: () => ({ hostId: null }),
+      completedThreads: () => ({ entries: [] }),
+      setThreadCompleted: () => ({ entries: [] }),
         ...rpc,
       },
       sidebarThreads: {

@@ -9,6 +9,7 @@ import { cn } from "../lib/utils";
 import { usePortalScopeProps } from "../lib/portal-scope";
 import { CONTROL_BUTTON_CLASS } from "../ui/control-button";
 import { Glyph, type GlyphName } from "../ui/Glyph";
+import { useCompletedActions } from "../completed-context";
 import { buildRowMenuItems, fireAndForget } from "../menu/row-menu-items";
 import { ROW1_ICON } from "./row-metrics";
 import { useRowHoverSuppression } from "../dossier/RowHover";
@@ -32,6 +33,7 @@ export function RowActions({
   thread,
   title,
   pullRequest,
+  isCompleted,
   quickActions,
   onNavigate,
   onOpenPullRequest,
@@ -42,6 +44,8 @@ export function RowActions({
   /** The model's resolved title (B13), the same one the menu renames from. */
   title: string;
   pullRequest: PluginSidebarPullRequest | null;
+  /** B86: whether the user has filed this thread; the model resolved it. */
+  isCompleted: boolean;
   /** B85: which quick actions the cluster draws, from the settings. */
   quickActions: { pin: boolean; markRead: boolean; archive: boolean };
   onNavigate: () => void;
@@ -51,6 +55,7 @@ export function RowActions({
   onOpen: (split: boolean) => void;
 }) {
   const actions = useSidebarThreadActions();
+  const { setCompleted } = useCompletedActions();
   const portalScope = usePortalScopeProps();
   const suppressHoverCard = useRowHoverSuppression();
   const renameRequested = useRef(false);
@@ -64,6 +69,8 @@ export function RowActions({
     thread,
     pullRequest,
     actions,
+    isCompleted,
+    setCompleted,
     open: (split) => {
       onOpen(split);
       onNavigate();

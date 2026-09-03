@@ -797,7 +797,60 @@ describe("threadWorkStats (B85)", () => {
 });
 
 describe("registration", () => {
-  it("registers all six contract methods and the fourteen settings descriptors (B59, B85)", async () => {
+  /**
+   * B86. The fake host keeps `storage.kv` in a Map, so these round-trip the
+   * real handler against real storage rather than against a stub of it.
+   */
+  it("round-trips the completed map through one kv row", async () => {
+    const host = hostWith({});
+    await plugin(host.bb);
+
+    expect(await host.harness.callRpc("completedThreads", {})).toEqual({
+      entries: [],
+    });
+
+    const filed = (await host.harness.callRpc("setThreadCompleted", {
+      threadId: "t1",
+      completed: true,
+    })) as { entries: { threadId: string; completedAt: number }[] };
+    expect(filed.entries.map((entry) => entry.threadId)).toEqual(["t1"]);
+    expect(filed.entries[0]!.completedAt).toBeTypeOf("number");
+
+    expect(await host.harness.callRpc("completedThreads", {})).toEqual(filed);
+
+    const restored = await host.harness.callRpc("setThreadCompleted", {
+      threadId: "t1",
+      completed: false,
+    });
+    expect(restored).toEqual({ entries: [] });
+  });
+
+  it("re-files an already filed thread with a fresh stamp, never a duplicate row", async () => {
+    const host = hostWith({});
+    await plugin(host.bb);
+
+    await host.harness.callRpc("setThreadCompleted", {
+      threadId: "t1",
+      completed: true,
+    });
+    const again = (await host.harness.callRpc("setThreadCompleted", {
+      threadId: "t1",
+      completed: true,
+    })) as { entries: unknown[] };
+    expect(again.entries).toHaveLength(1);
+  });
+
+  it("reads a corrupt stored value as nothing filed, rather than throwing", async () => {
+    const host = hostWith({});
+    await plugin(host.bb);
+    await host.bb.storage.kv.set("completed-threads", { not: "an array" });
+
+    expect(await host.harness.callRpc("completedThreads", {})).toEqual({
+      entries: [],
+    });
+  });
+
+  it("registers all eight contract methods and the fourteen settings descriptors (B59, B85)", async () => {
     const host = hostWith({});
     await plugin(host.bb);
 
@@ -808,6 +861,8 @@ describe("registration", () => {
       "lastActivity",
       "threadWorkStats",
       "localHost",
+      "completedThreads",
+      "setThreadCompleted",
     ]);
 
     const descriptors = host.harness.inspection.registrations.settingsDescriptors;

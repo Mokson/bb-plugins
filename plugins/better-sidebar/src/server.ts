@@ -1,7 +1,10 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import {
   betterSidebarRpcContract,
+  completedEntrySchema,
+  COMPLETED_KV_KEY,
   DOSSIER_CHANNEL,
+  type CompletedEntry,
   type Dossier,
   type RowSignal,
   type ThreadExecution,
@@ -443,6 +446,30 @@ async function collectInBatches<T>(
   return threadIds.map((threadId) => byId.get(threadId) as T);
 }
 
+/**
+ * B86: the filed set as stored, validated on the way out.
+ *
+ * The row is written by this plugin and read by this plugin, but a value that
+ * survived an older shape, a hand edit, or a partial write must not blank the
+ * sidebar's completion state or crash the list. Anything unparseable reads back
+ * as "nothing filed", which is the state the user can see and correct.
+ */
+async function readCompleted(bb: BbPluginApi): Promise<CompletedEntry[]> {
+  try {
+    const stored = await bb.storage.kv.get<unknown>(COMPLETED_KV_KEY);
+    if (stored === undefined) return [];
+    const parsed = completedEntrySchema.array().safeParse(stored);
+    if (!parsed.success) {
+      bb.log.warn("completedThreads: stored value did not parse; treating as empty");
+      return [];
+    }
+    return parsed.data;
+  } catch (error) {
+    bb.log.warn(`completedThreads: kv read failed: ${String(error)}`);
+    return [];
+  }
+}
+
 export default function plugin(bb: BbPluginApi) {
   // B59 plus the later slices: fourteen settings, server-backed so they follow the user across clients.
   bb.settings.define({
@@ -580,6 +607,29 @@ export default function plugin(bb: BbPluginApi) {
     // A row's host name is worth drawing only when the work runs somewhere
     // else. `primaryHostId` is bb's own machine; a config read that fails
     // degrades to null, which keeps every label rather than hiding one wrongly.
+    // B86: the filed set, read whole on every list mount. One kv row, so the
+    // read is one lookup however many threads are in it.
+    completedThreads: async () => ({
+      entries: await readCompleted(bb),
+    }),
+    setThreadCompleted: async ({ threadId, completed }) => {
+      const current = await readCompleted(bb);
+      const next = current.filter((entry) => entry.threadId !== threadId);
+      // Re-filing an already filed thread restamps it, which is what the user
+      // asked for by picking the item again — and the COMPLETED section orders
+      // on that stamp.
+      if (completed) next.push({ threadId, completedAt: Date.now() });
+      try {
+        await bb.storage.kv.set(COMPLETED_KV_KEY, next);
+      } catch (error) {
+        // The client renders optimistically and reverts on a rejection, so the
+        // failure has to reach it rather than being swallowed into a stale-
+        // looking success.
+        bb.log.warn(`setThreadCompleted: kv write failed: ${String(error)}`);
+        throw error;
+      }
+      return { entries: next };
+    },
     localHost: async () => {
       try {
         const config = await bb.sdk.system.config();

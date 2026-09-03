@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   PluginSidebarPullRequest,
   PluginSidebarThread,
@@ -21,6 +21,8 @@ function build(overrides: Partial<PluginSidebarThread> = {}, pr = false) {
       isPinned: false,
     } as PluginSidebarThread,
     pullRequest: pr ? ({ number: 1 } as PluginSidebarPullRequest) : null,
+    isCompleted: false,
+    setCompleted: () => {},
     actions: {
       setPinned: () => {},
       setRead: () => {},
@@ -43,6 +45,29 @@ function build(overrides: Partial<PluginSidebarThread> = {}, pr = false) {
   });
 }
 
+/** The completion item alone, with the two spies its behaviour is about. */
+function completion({
+  isCompleted,
+  isPinned = false,
+}: {
+  isCompleted: boolean;
+  isPinned?: boolean;
+}) {
+  const setCompleted = vi.fn();
+  const setPinned = vi.fn();
+  const items = buildRowMenuItems({
+    thread: { id: "t1", isUnread: false, isPinned } as PluginSidebarThread,
+    pullRequest: null,
+    actions: { setPinned, setRead: () => {}, archive: () => {}, requestDelete: () => {} },
+    isCompleted,
+    setCompleted,
+    open: () => {},
+    onOpenPullRequest: () => {},
+    requestRename: () => {},
+  });
+  return { item: items.find((entry) => entry.id === "completed")!, setCompleted, setPinned };
+}
+
 describe("row menu items", () => {
   it("orders and labels the items as bb's own menu does", () => {
     expect(build().map((item) => [item.label, item.glyph])).toEqual([
@@ -51,6 +76,7 @@ describe("row menu items", () => {
       ["Mark unread", "mail-open"],
       ["Pin", "pin"],
       ["Rename", "pencil"],
+      ["Mark completed", "check"],
       ["Archive", "archive"],
       ["Delete", "trash"],
     ]);
@@ -74,7 +100,31 @@ describe("row menu items", () => {
     const separated = build()
       .filter((item) => item.separatorBefore)
       .map((item) => item.id);
-    expect(separated).toEqual(["read", "archive"]);
+    expect(separated).toEqual(["read", "completed"]);
+  });
+
+  it("flips the completion item with its state (B86)", () => {
+    const active = completion({ isCompleted: false });
+    expect(active.item).toMatchObject({ label: "Mark completed", glyph: "check" });
+    active.item.onSelect();
+    expect(active.setCompleted).toHaveBeenCalledWith("t1", true);
+
+    const done = completion({ isCompleted: true });
+    expect(done.item).toMatchObject({ label: "Mark active", glyph: "circle-x" });
+    done.item.onSelect();
+    expect(done.setCompleted).toHaveBeenCalledWith("t1", false);
+  });
+
+  it("clears the pin when a pinned thread is filed, so no thread claims two bands", () => {
+    const filed = completion({ isCompleted: false, isPinned: true });
+    filed.item.onSelect();
+    expect(filed.setPinned).toHaveBeenCalledWith("t1", false);
+  });
+
+  it("leaves the pin alone when a filed thread is put BACK", () => {
+    const restored = completion({ isCompleted: true, isPinned: true });
+    restored.item.onSelect();
+    expect(restored.setPinned).not.toHaveBeenCalled();
   });
 
   it("adds the pull-request item only when the branch has one", () => {

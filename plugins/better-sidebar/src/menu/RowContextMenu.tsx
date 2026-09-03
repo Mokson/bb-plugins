@@ -8,6 +8,7 @@ import {
 import { cn } from "../lib/utils";
 import { usePortalScopeProps } from "../lib/portal-scope";
 import { Glyph, type GlyphName } from "../ui/Glyph";
+import { useCompletedActions } from "../completed-context";
 import { buildRowMenuItems } from "./row-menu-items";
 import type { RenameEditor } from "./useRenameEditor";
 
@@ -30,6 +31,7 @@ export function RowContextMenu({
   thread,
   title,
   pullRequest,
+  isCompleted,
   onNavigate,
   onOpenPullRequest,
   renameEditor,
@@ -39,6 +41,8 @@ export function RowContextMenu({
   /** The model's resolved title — B13's chain, not the raw nullable field. */
   title: string;
   pullRequest: PluginSidebarPullRequest | null;
+  /** B86: whether the user has filed this thread; the model resolved it. */
+  isCompleted: boolean;
   onNavigate: () => void;
   /** B36's one handler, owned by the row: `openUrl` returns a boolean that a
    *  second call site would be free to discard, and this one did. */
@@ -47,6 +51,7 @@ export function RowContextMenu({
   children: ReactNode;
 }) {
   const actions = useSidebarThreadActions();
+  const { setCompleted } = useCompletedActions();
   const portalScope = usePortalScopeProps();
   // Set by the Rename item, drained by `onCloseAutoFocus`. See the comment on
   // `ContextMenu.Content` for why the editor cannot open from `onSelect`.
@@ -62,6 +67,8 @@ export function RowContextMenu({
     thread,
     pullRequest,
     actions,
+    isCompleted,
+    setCompleted,
     open,
     onOpenPullRequest,
     requestRename: () => {

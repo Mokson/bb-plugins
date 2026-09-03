@@ -42,6 +42,8 @@ function row(overrides: Partial<RenderRow> = {}): RenderRow {
     workspaceLabel: "feat/equal-truncation",
     depth: 0,
     childCount: 0,
+    isCompleted: false,
+    hasUpdateSinceCompleted: false,
     projectName: "bb-plugins",
     dimLevel: 0,
     sectionKey: "today",

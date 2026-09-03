@@ -84,6 +84,8 @@ function handlers(
     lastActivity: () => ({ activity: [] }),
     threadWorkStats: () => ({ stats: [] }),
     localHost: () => ({ hostId: null }),
+    completedThreads: () => ({ entries: [] }),
+    setThreadCompleted: () => ({ entries: [] }),
     ...overrides,
   };
 }
@@ -96,6 +98,8 @@ function row(id: string): RenderRow {
     workspaceLabel: `feat/${id}-a-branch-row-two-truncates`,
     depth: 0,
     childCount: 0,
+    isCompleted: false,
+    hasUpdateSinceCompleted: false,
     projectName: "bb",
     dimLevel: 0,
     sectionKey: "today",

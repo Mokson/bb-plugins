@@ -78,6 +78,7 @@ function input(
     settings: DEFAULT_SETTINGS,
     searchQuery: "",
     now: NOW,
+    completedAt: new Map(),
     projectFilter: null,
     localHostId: null,
     sectionOrder: null,
@@ -1026,5 +1027,186 @@ describe("parent cycles (B1, F4)", () => {
     );
     expect(sequence(model)).toEqual(["a", "kid", "b"]);
     expect(model.sections[0]!.rows[1]!.depth).toBe(1);
+  });
+});
+
+/**
+ * B86. Two inversions make these read oddly, and both are deliberate:
+ *
+ * - COMPLETED is folded by DEFAULT, and the stored set lists the sections the
+ *   user TOGGLED, so `collapsedSections: ["completed"]` is what expands it.
+ * - The band outranks every group in `sectionKeyOf`, but the section renders
+ *   last. Precedence and render order answer different questions.
+ */
+describe("COMPLETED band (B86)", () => {
+  const filed = (ids: Record<string, number>) => new Map(Object.entries(ids));
+  const expanded = new Set<SectionKey>(["completed"]);
+
+  it("moves a filed thread out of its group and into COMPLETED, rendered last", () => {
+    const threads = [thread("a"), thread("b")];
+    const model = buildListModel(
+      input(threads, {
+        sectionOrder: mount(threads),
+        completedAt: filed({ b: NOW - 1000 }),
+      }),
+    );
+    expect(keys(model)).toEqual(["today", "completed"]);
+    expect(sequence(model)).toEqual(["a"]); // folded, so it draws no rows
+  });
+
+  it("is folded on arrival and shows its count, alone among sections", () => {
+    const threads = [thread("a"), thread("b")];
+    const model = buildListModel(
+      input(threads, {
+        sectionOrder: mount(threads),
+        completedAt: filed({ b: NOW - 1000 }),
+      }),
+    );
+    const completed = model.sections.find((section) => section.key === "completed")!;
+    expect(completed.isCollapsed).toBe(true);
+    expect(completed.count).toBe(1);
+    expect(completed.showCount).toBe(true);
+    expect(completed.label).toBe("COMPLETED");
+    expect(
+      model.sections.find((section) => section.key === "today")!.showCount,
+    ).toBe(false);
+  });
+
+  it("expands when the user has toggled it, which is the stored set's INVERSE", () => {
+    const threads = [thread("a"), thread("b")];
+    const model = buildListModel(
+      input(threads, {
+        sectionOrder: mount(threads),
+        completedAt: filed({ b: NOW - 1000 }),
+        collapsedSections: expanded,
+      }),
+    );
+    expect(sequence(model)).toEqual(["a", "b"]);
+  });
+
+  it("keeps a thread that blocks on the user OUT of COMPLETED (B86.2)", () => {
+    const threads = [thread("stuck", { hasPendingInteraction: true })];
+    const model = buildListModel(
+      input(threads, {
+        sectionOrder: mount(threads),
+        completedAt: filed({ stuck: NOW - 1000 }),
+      }),
+    );
+    expect(keys(model)).toEqual(["needs-you"]);
+  });
+
+  it("outranks the DONE band and the pin", () => {
+    const threads = [
+      thread("finished", { indicator: "unread-success" }),
+      thread("pinned", { isPinned: true }),
+    ];
+    const model = buildListModel(
+      input(threads, {
+        sectionOrder: mount(threads),
+        completedAt: filed({ finished: NOW - 1, pinned: NOW - 2 }),
+        collapsedSections: expanded,
+      }),
+    );
+    expect(keys(model)).toEqual(["completed"]);
+  });
+
+  it("takes the children of a filed parent with it", () => {
+    const threads = [thread("parent"), thread("child", { parentThreadId: "parent" })];
+    const model = buildListModel(
+      input(threads, {
+        sectionOrder: mount(threads),
+        completedAt: filed({ parent: NOW - 1000 }),
+        collapsedSections: expanded,
+        expandedThreadIds: new Set(["parent"]),
+      }),
+    );
+    expect(keys(model)).toEqual(["completed"]);
+    expect(sequence(model)).toEqual(["parent", "child"]);
+    // The child was never filed itself; only its parent was.
+    expect(model.sections[0]!.rows.map((row) => row.isCompleted)).toEqual([
+      true,
+      false,
+    ]);
+  });
+
+  it("orders the section by most recently filed, not by entrance (B86.3)", () => {
+    const threads = [thread("old"), thread("new"), thread("mid")];
+    const model = buildListModel(
+      input(threads, {
+        sectionOrder: mount(threads),
+        completedAt: filed({ old: NOW - 3000, new: NOW - 1000, mid: NOW - 2000 }),
+        collapsedSections: expanded,
+      }),
+    );
+    expect(sequence(model)).toEqual(["new", "mid", "old"]);
+  });
+
+  it("stays flat under every grouping mode", () => {
+    const threads = [
+      thread("a", { projectId: "p1" }),
+      thread("b", { projectId: "p2" }),
+    ];
+    for (const groupBy of ["project", "host", "status", "none"] as const) {
+      const model = buildListModel(
+        input(threads, {
+          settings: { ...DEFAULT_SETTINGS, groupBy },
+          completedAt: filed({ a: NOW - 1, b: NOW - 2 }),
+          collapsedSections: expanded,
+        }),
+      );
+      expect(keys(model)).toEqual(["completed"]);
+      expect(sequence(model)).toEqual(["a", "b"]);
+    }
+  });
+
+  it("dims its rows to the OLDER level rather than inventing a style", () => {
+    const threads = [thread("a")];
+    const model = buildListModel(
+      input(threads, {
+        completedAt: filed({ a: NOW - 1000 }),
+        collapsedSections: expanded,
+      }),
+    );
+    expect(model.sections[0]!.rows[0]!.dimLevel).toBe(3);
+  });
+
+  it("marks a filed thread in the search list, which has no section to say so", () => {
+    const threads = [thread("alpha"), thread("beta")];
+    const model = buildListModel(
+      input(threads, {
+        searchQuery: "alpha",
+        completedAt: filed({ alpha: NOW - 1 }),
+      }),
+    );
+    expect(keys(model)).toEqual(["search"]);
+    expect(model.sections[0]!.rows[0]!.isCompleted).toBe(true);
+  });
+
+  it("raises the dot only for a write that lands AFTER the mark (B86.2)", () => {
+    const threads = [
+      thread("quiet", { updatedAt: NOW - 5000 }),
+      thread("moved", { updatedAt: NOW - 500 }),
+      thread("same", { updatedAt: NOW - 1000 }),
+    ];
+    const model = buildListModel(
+      input(threads, {
+        completedAt: filed({
+          quiet: NOW - 1000,
+          moved: NOW - 1000,
+          same: NOW - 1000,
+        }),
+        collapsedSections: expanded,
+      }),
+    );
+    const dots = new Map(
+      model.sections[0]!.rows.map((row) => [
+        row.thread.id,
+        row.hasUpdateSinceCompleted,
+      ]),
+    );
+    expect(dots.get("moved")).toBe(true);
+    expect(dots.get("quiet")).toBe(false);
+    // The write that RECORDS the mark lands on the same millisecond.
+    expect(dots.get("same")).toBe(false);
   });
 });
