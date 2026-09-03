@@ -56,6 +56,7 @@ describe("parseSkillEvent", () => {
       args: "--deep",
       status: "completed",
       result: "Launching skill: grilling",
+      source: "tool",
     });
   });
 

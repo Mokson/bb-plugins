@@ -23,14 +23,25 @@ that used the skill; clicking a thread navigates there.
 
 ## What counts as a used skill
 
-A `Skill` tool call in the thread event stream: `item_kind` `toolCall`,
+Two sources, merged in time order.
+
+**Tool calls** come from the BB thread event stream: `item_kind` `toolCall`,
 `data.item.tool` `Skill`. The `item/started` and `item/completed` rows are
 collapsed into one invocation, so the list shows invocations, not events.
 Failures, such as `Unknown skill: qa`, are flagged rather than hidden.
 
-Skills preloaded by a slash command or a hook are **not** listed. They leave
-no event of their own — they appear only as an `<inline_skills>` tag in the
-user message, which lists what was *available*, not what was used.
+**Slash commands** such as `/pr` come from the Claude Code session log, and
+render with a leading `/`. They leave no BB event at all, so the log is the
+only place they survive. The log entry pairs `<command-name>/pr</command-name>`
+with the entry after it, which carries
+`Base directory for this skill: <path>`. That pairing is what separates a
+skill-backed command from a built-in such as `/clear`, which loads no skill
+and is not listed.
+
+Logs are found under `$CLAUDE_CONFIG_DIR/projects` (default `~/.claude`), by
+the provider session ids BB records for the thread. A thread whose log is not
+on this machine - another provider, or a remote host - shows its tool calls
+only.
 
 ## The rollup index
 
@@ -52,6 +63,9 @@ every open, so this plugin keeps its own sqlite index at
 - **Rebuild index** drops the table and cursors and runs a full pass again.
 
 ## Known limits
+
+Slash commands are only visible for threads whose Claude Code session log is
+readable on this machine.
 
 You cannot jump from a listed invocation to its place in the transcript. The
 Plugin SDK exposes no API to scroll, focus, highlight, or deep-link a

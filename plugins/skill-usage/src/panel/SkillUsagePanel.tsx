@@ -6,7 +6,7 @@ import {
   type PluginThreadPanelProps,
 } from "@get-bb/plugin-sdk/app";
 import { clockTime, progressLabel, relativeAge } from "../format";
-import { countBySkill, type InvocationStatus } from "../model";
+import { countBySkill, type InvocationSource, type InvocationStatus } from "../model";
 import { INDEX_CHANNEL, skillUsageRpcContract } from "../skill-usage-contract";
 
 type Scope = "thread" | "project" | "global";
@@ -26,6 +26,7 @@ interface Invocation {
   args: string | null;
   status: InvocationStatus;
   result: string | null;
+  source: InvocationSource;
 }
 
 interface RollupThread {
@@ -144,6 +145,9 @@ function ThreadScope({ threadId }: { threadId: string }) {
                 className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-muted/50"
               >
                 <StatusDot status={invocation.status} />
+                {/* The skill directory names the row, never the keystrokes:
+                    a row is a skill the agent read, however it was triggered.
+                    The trigger is in the expanded detail. */}
                 <span className="min-w-0 flex-1 truncate text-sm">{invocation.skill}</span>
                 <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                   {clockTime(invocation.createdAt)}
@@ -151,6 +155,12 @@ function ThreadScope({ threadId }: { threadId: string }) {
               </button>
               {open ? (
                 <dl className="space-y-1 px-3 pb-3 pl-7 text-xs text-muted-foreground">
+                  <div>
+                    <dt className="inline font-medium">Invoked by: </dt>
+                    <dd className="inline">
+                      {invocation.source === "command" ? "slash command" : "Skill tool call"}
+                    </dd>
+                  </div>
                   <div>
                     <dt className="inline font-medium">Status: </dt>
                     <dd className="inline">{invocation.status}</dd>

@@ -6,11 +6,21 @@ import {
   MIGRATIONS,
   pruneThreads,
   readCursor,
+  readSessions,
+  recordSessions,
+  sessionLogUnchanged,
+  writeCommands,
   writeThread,
   type SqliteDatabase,
 } from "./index-store";
 import { collapseInvocations, type SkillInvocation } from "./model";
 import { shouldRefresh } from "./refresh-policy";
+import {
+  findSessionFiles,
+  readCommandInvocations,
+  sessionProjectsRoot,
+  type SessionFile,
+} from "./session-log";
 import { INDEX_CHANNEL, skillUsageRpcContract } from "./skill-usage-contract";
 
 /** Event types that can carry a Skill tool call. */
@@ -129,8 +139,9 @@ export default async function plugin(bb: BbPluginApi) {
     threadId: string,
     afterSeq: number,
     signal: AbortSignal,
-  ): Promise<{ invocations: SkillInvocation[]; lastSeq: number }> {
+  ): Promise<{ invocations: SkillInvocation[]; lastSeq: number; sessions: Set<string> }> {
     const rows: unknown[] = [];
+    const sessions = new Set<string>();
     let cursor = afterSeq;
     for (let page = 0; page < MAX_EVENT_PAGES; page += 1) {
       if (signal.aborted) break;
@@ -144,12 +155,29 @@ export default async function plugin(bb: BbPluginApi) {
       })) as unknown[];
       for (const event of events) {
         rows.push(event);
-        const seq = asRecord(event)["seq"];
+        const record = asRecord(event);
+        const seq = record["seq"];
         if (typeof seq === "number" && seq > cursor) cursor = seq;
+        // The provider session id names the log file that holds this thread's
+        // slash commands, which leave no BB event of their own.
+        const session = asRecord(record["data"])["providerThreadId"];
+        if (typeof session === "string" && session.length > 0) sessions.add(session);
       }
       if (events.length < EVENT_PAGE) break;
     }
-    return { invocations: collapseInvocations(rows), lastSeq: cursor };
+    return { invocations: collapseInvocations(rows), lastSeq: cursor, sessions };
+  }
+
+  /**
+   * Session logs for a thread, from the provider session ids seen in this
+   * pass plus the ones remembered from earlier passes. An incremental pass may
+   * see no new events at all, and the log can still have grown.
+   */
+  async function sessionFilesFor(threadId: string, seen: ReadonlySet<string>): Promise<SessionFile[]> {
+    recordSessions(db, threadId, seen);
+    const ids = readSessions(db, threadId);
+    for (const id of seen) ids.add(id);
+    return findSessionFiles(ids, sessionProjectsRoot());
   }
 
   async function runPass(rebuild: boolean): Promise<void> {
@@ -165,6 +193,7 @@ export default async function plugin(bb: BbPluginApi) {
     publishStatus();
     try {
       if (rebuild) clearIndex(db);
+      let skipped = 0;
       const threads = await listAllThreads(signal);
       status.total = threads.length;
       publishStatus();
@@ -174,21 +203,42 @@ export default async function plugin(bb: BbPluginApi) {
 
       for (const thread of threads) {
         if (signal.aborted) break;
-        const after = readCursor(db, thread.id);
-        const walked = await walkThread(thread.id, after, signal);
-        if (walked.invocations.length > 0 || walked.lastSeq > after) {
-          writeThread(db, {
-            threadId: thread.id,
-            projectId: thread.projectId,
-            invocations: walked.invocations,
-            lastSeq: walked.lastSeq,
-          });
+        // One unreadable thread must not end the pass. `threads.list` can name
+        // a thread that `events.list` answers 404 for, because it was deleted
+        // between the two calls; the rest of the index is still worth having.
+        try {
+          const after = readCursor(db, thread.id);
+          const walked = await walkThread(thread.id, after, signal);
+          if (walked.invocations.length > 0 || walked.lastSeq > after) {
+            writeThread(db, {
+              threadId: thread.id,
+              projectId: thread.projectId,
+              invocations: walked.invocations,
+              lastSeq: walked.lastSeq,
+            });
+          }
+          for (const file of await sessionFilesFor(thread.id, walked.sessions)) {
+            if (sessionLogUnchanged(db, thread.id, file)) continue;
+            const commands = await readCommandInvocations(file.path, thread.id);
+            writeCommands(db, {
+              threadId: thread.id,
+              projectId: thread.projectId,
+              file,
+              invocations: commands,
+            });
+          }
+        } catch (error) {
+          skipped += 1;
+          bb.log.warn(`skill-usage skipped thread ${thread.id}: ${errorMessage(error)}`);
         }
         status.done += 1;
         if (status.done % PROGRESS_EVERY === 0) {
           status.indexedThreads = indexedThreadCount(db);
           publishStatus();
         }
+      }
+      if (skipped > 0) {
+        bb.log.warn(`skill-usage pass skipped ${skipped} of ${threads.length} threads`);
       }
       status.lastRefreshAt = Date.now();
       await bb.storage.kv.set(LAST_REFRESH_KEY, status.lastRefreshAt);
@@ -239,9 +289,17 @@ export default async function plugin(bb: BbPluginApi) {
   bb.rpc.register(skillUsageRpcContract, {
     threadInvocations: async ({ threadId }) => {
       // Thread scope reads events directly rather than the index, so what the
-      // panel shows for the thread you are in is never a refresh behind.
+      // panel shows for the thread you are in is never a refresh behind. The
+      // session log is read live for the same reason.
       const walked = await walkThread(threadId, 0, disposed.signal);
-      return { invocations: walked.invocations };
+      const commands: SkillInvocation[] = [];
+      for (const file of await sessionFilesFor(threadId, walked.sessions)) {
+        commands.push(...(await readCommandInvocations(file.path, threadId)));
+      }
+      const invocations = [...walked.invocations, ...commands].sort(
+        (a, b) => a.createdAt - b.createdAt || a.seq - b.seq,
+      );
+      return { invocations };
     },
 
     waitThread: async ({ threadId, afterSeq }) => {

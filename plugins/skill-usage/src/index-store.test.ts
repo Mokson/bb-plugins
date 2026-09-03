@@ -7,6 +7,10 @@ import {
   MIGRATIONS,
   pruneThreads,
   readCursor,
+  readSessions,
+  recordSessions,
+  sessionLogUnchanged,
+  writeCommands,
   writeThread,
   type SqliteDatabase,
 } from "./index-store";
@@ -21,6 +25,7 @@ function invocation(overrides: Partial<SkillInvocation> & { itemId: string }): S
     args: null,
     status: "completed",
     result: null,
+    source: "tool",
     ...overrides,
   };
 }
@@ -143,6 +148,82 @@ describe("clearIndex", () => {
     clearIndex(db);
     expect(indexedThreadCount(db)).toBe(0);
     expect(readCursor(db, "t1")).toBe(0);
+    expect(loadRollup(db, null)).toEqual([]);
+  });
+});
+
+describe("command rows from session logs", () => {
+  const file = { path: "/logs/a.jsonl", mtimeMs: 10, sizeBytes: 100 };
+
+  it("remembers provider sessions across passes", () => {
+    recordSessions(db, "t1", new Set(["s1", "s2"]));
+    recordSessions(db, "t1", new Set(["s1"]));
+    expect([...readSessions(db, "t1")].sort()).toEqual(["s1", "s2"]);
+  });
+
+  it("skips a log that has not changed since it was parsed", () => {
+    expect(sessionLogUnchanged(db, "t1", file)).toBe(false);
+    writeCommands(db, { threadId: "t1", projectId: "p1", file, invocations: [] });
+    expect(sessionLogUnchanged(db, "t1", file)).toBe(true);
+    expect(sessionLogUnchanged(db, "t1", { ...file, sizeBytes: 200 })).toBe(false);
+  });
+
+  it("replaces only its own file's rows when a log is re-read", () => {
+    const other = { path: "/logs/b.jsonl", mtimeMs: 10, sizeBytes: 100 };
+    writeCommands(db, {
+      threadId: "t1",
+      projectId: "p1",
+      file,
+      invocations: [invocation({ itemId: "a", skill: "pr", source: "command" })],
+    });
+    writeCommands(db, {
+      threadId: "t1",
+      projectId: "p1",
+      file: other,
+      invocations: [invocation({ itemId: "b", skill: "qa", source: "command" })],
+    });
+    writeCommands(db, {
+      threadId: "t1",
+      projectId: "p1",
+      file,
+      invocations: [invocation({ itemId: "c", skill: "debug", source: "command" })],
+    });
+    expect(loadRollup(db, null).map((row) => row.skill).sort()).toEqual(["debug", "qa"]);
+  });
+
+  it("keeps tool rows when a log is re-read, since they carry no file", () => {
+    writeThread(db, {
+      threadId: "t1",
+      projectId: "p1",
+      invocations: [invocation({ itemId: "tool-a" })],
+      lastSeq: 1,
+    });
+    writeCommands(db, { threadId: "t1", projectId: "p1", file, invocations: [] });
+    expect(loadRollup(db, null)).toHaveLength(1);
+  });
+
+  it("round-trips the source through the index", () => {
+    writeCommands(db, {
+      threadId: "t1",
+      projectId: "p1",
+      file,
+      invocations: [invocation({ itemId: "a", source: "command" })],
+    });
+    expect(loadRollup(db, null)[0]?.total).toBe(1);
+  });
+
+  it("prunes session state with the thread", () => {
+    writeCommands(db, {
+      threadId: "gone",
+      projectId: "p1",
+      file,
+      invocations: [invocation({ itemId: "a", threadId: "gone", source: "command" })],
+    });
+    writeThread(db, { threadId: "gone", projectId: "p1", invocations: [], lastSeq: 1 });
+    recordSessions(db, "gone", new Set(["s1"]));
+    pruneThreads(db, new Set(["t1"]));
+    expect(readSessions(db, "gone").size).toBe(0);
+    expect(sessionLogUnchanged(db, "gone", file)).toBe(false);
     expect(loadRollup(db, null)).toEqual([]);
   });
 });

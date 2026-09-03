@@ -13,6 +13,7 @@ const invocationSchema = z
     args: z.string().max(4096).nullable(),
     status: z.enum(["completed", "failed", "running"]),
     result: z.string().max(4096).nullable(),
+    source: z.enum(["tool", "command"]),
   })
   .strict();
 
