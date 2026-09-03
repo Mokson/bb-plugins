@@ -65,9 +65,12 @@ describe("the row partition", () => {
       row({ key: "b", at: "2026-09-01T10:00:05.000Z" }),
     ];
     const partition = partitionRows(turns, rows);
-    expect(partition.buckets[0]).toHaveLength(0);
+    // A timestamp-less turn keeps session order (nulls sort first) instead of
+    // dropping out: it owns the head rows no timestamped turn can claim,
+    // which is what keeps it out of `unavailable` when its slice is non-empty.
+    expect(partition.buckets[0]).toHaveLength(1);
     expect(partition.buckets[1]).toHaveLength(1);
-    expect(partition.before).toHaveLength(1);
+    expect(partition.before).toHaveLength(0);
     expect(partition.after).toHaveLength(0);
   });
 });

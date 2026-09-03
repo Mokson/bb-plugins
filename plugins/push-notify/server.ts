@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { defineRpcContract, type BbPluginApi } from "@bb/plugin-sdk";
-import webPush, { type PushSubscription } from "web-push";
+import * as webPush from "web-push";
+import type { PushSubscription } from "web-push";
 import { z } from "zod";
 import {
   compactText,
@@ -22,6 +23,8 @@ const PUSH_TTL_SECONDS = 12 * 60 * 60;
 export const PUSH_REQUEST_TIMEOUT_MS = 12_000;
 export const PUSH_DELIVERY_BUDGET_MS = 45_000;
 const MAX_PARALLEL_SENDS = 4;
+const MAX_NOTIFY_DEVICES = 25;
+const PUSH_FANOUT_TIMEOUT_MS = 30_000;
 const PUSH_RETRY_DELAYS_MS = [1_000, 3_000] as const;
 const VAPID_SUBJECT = "https://github.com/Mokson/bb-plugins";
 const DEFAULT_MIN_TURN_SECONDS = 30;
@@ -203,6 +206,24 @@ function wait(delayMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
+/** Seconds (numeric) or HTTP-date value of a Retry-After header, in ms. */
+function retryAfterDelayMs(error: unknown): number | null {
+  if (typeof error !== "object" || error === null || !("headers" in error)) {
+    return null;
+  }
+  const headers = (error as { headers?: unknown }).headers;
+  if (typeof headers !== "object" || headers === null) return null;
+  const raw = (headers as Record<string, unknown>)["retry-after"];
+  if (typeof raw === "number") {
+    return Number.isFinite(raw) && raw >= 0 ? raw * 1000 : null;
+  }
+  if (typeof raw !== "string") return null;
+  const text = raw.trim();
+  if (/^\d+$/.test(text)) return Number(text) * 1000;
+  const at = Date.parse(text);
+  return Number.isNaN(at) ? null : Math.max(0, at - Date.now());
+}
+
 async function eachWithConcurrency<T>(
   values: T[],
   concurrency: number,
@@ -238,7 +259,6 @@ self.addEventListener("push", (event) => {
     if (!payload || payload.version !== 1) return;
     await self.registration.showNotification(payload.title, {
       body: payload.body,
-      icon: "/icon-192.png",
       tag: payload.tag,
       data: { href: payload.href, id: payload.id },
     });
@@ -357,11 +377,18 @@ export default function plugin(bb: BbPluginApi) {
 
   if (!publicKey || !privateKey) {
     const keys = webPush.generateVAPIDKeys();
-    db.transaction(() => {
+    // Subscriptions are encrypted to the old key pair, so every stored
+    // device is orphaned by a rotation and must go in the same transaction.
+    const orphanedDevices = db.transaction(() => {
       db.prepare("DELETE FROM push_metadata WHERE key LIKE 'vapid_%'").run();
+      const deleted = db.prepare("DELETE FROM push_devices").run();
       writeMetadata.run("vapid_public_key", keys.publicKey);
       writeMetadata.run("vapid_private_key", keys.privateKey);
+      return deleted.changes;
     })();
+    bb.log.info(
+      `Generated new VAPID keys and removed ${orphanedDevices} orphaned device(s)`,
+    );
     publicKey = keys.publicKey;
     privateKey = keys.privateKey;
   }
@@ -418,10 +445,18 @@ export default function plugin(bb: BbPluginApi) {
           bb.log.info(`Removed expired notification device ${row.id}`);
           return false;
         }
-        const delayMs = PUSH_RETRY_DELAYS_MS[attempt];
-        if (delayMs === undefined || !isRetryablePushStatus(statusCode)) {
+        if (
+          attempt >= PUSH_RETRY_DELAYS_MS.length ||
+          !isRetryablePushStatus(statusCode)
+        ) {
           throw error;
         }
+        // Honor the push service's Retry-After on 429; the budget check below
+        // still caps the total retry delay.
+        const delayMs =
+          statusCode === 429
+            ? (retryAfterDelayMs(error) ?? PUSH_RETRY_DELAYS_MS[attempt])
+            : PUSH_RETRY_DELAYS_MS[attempt];
         if (Date.now() - startedAt + delayMs >= PUSH_DELIVERY_BUDGET_MS) {
           throw error;
         }
@@ -450,6 +485,12 @@ export default function plugin(bb: BbPluginApi) {
       )
       .all() as PushDeviceRow[];
     if (rows.length === 0) return;
+    const notifiable = rows.slice(0, MAX_NOTIFY_DEVICES);
+    if (notifiable.length < rows.length) {
+      bb.log.warn(
+        `Capping push fan-out at ${MAX_NOTIFY_DEVICES} of ${rows.length} devices`,
+      );
+    }
 
     let projectName: string | null = null;
     if (thread.projectId === PERSONAL_PROJECT_ID) {
@@ -468,31 +509,51 @@ export default function plugin(bb: BbPluginApi) {
     }
     const threadTitle = resolveThreadTitle(thread);
     const href = threadHref(thread.projectId, thread.id);
-    await eachWithConcurrency(rows, MAX_PARALLEL_SENDS, async (row) => {
-      const content = notificationContent(
-        kind,
-        projectName,
-        threadTitle,
-        detail,
-        row.show_preview === 1,
+    // Bound the whole fan-out: slow push services must not stall the
+    // fire-and-forget event handler indefinitely.
+    let fanoutTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        eachWithConcurrency(notifiable, MAX_PARALLEL_SENDS, async (row) => {
+          const content = notificationContent(
+            kind,
+            projectName,
+            threadTitle,
+            detail,
+            row.show_preview === 1,
+          );
+          const payload: NotificationPayload = {
+            version: 1,
+            id: randomUUID(),
+            kind,
+            title: content.title,
+            body: content.body,
+            href,
+            tag: notificationTag(kind, thread.id),
+          };
+          try {
+            await send(row, payload);
+          } catch (error) {
+            bb.log.warn(
+              `Push delivery failed for device ${row.id}${pushStatusCode(error) ? ` (${pushStatusCode(error)})` : ""}`,
+            );
+          }
+        }),
+        new Promise<never>((_resolve, reject) => {
+          fanoutTimeoutId = setTimeout(
+            () => reject(new Error("Push fan-out timed out")),
+            PUSH_FANOUT_TIMEOUT_MS,
+          );
+          fanoutTimeoutId.unref?.();
+        }),
+      ]);
+    } catch (error) {
+      bb.log.warn(
+        error instanceof Error ? error.message : "Push fan-out failed",
       );
-      const payload: NotificationPayload = {
-        version: 1,
-        id: randomUUID(),
-        kind,
-        title: content.title,
-        body: content.body,
-        href,
-        tag: notificationTag(kind, thread.id),
-      };
-      try {
-        await send(row, payload);
-      } catch (error) {
-        bb.log.warn(
-          `Push delivery failed for device ${row.id}${pushStatusCode(error) ? ` (${pushStatusCode(error)})` : ""}`,
-        );
-      }
-    });
+    } finally {
+      if (fanoutTimeoutId !== undefined) clearTimeout(fanoutTimeoutId);
+    }
   }
 
   /**
@@ -525,11 +586,45 @@ export default function plugin(bb: BbPluginApi) {
   }
 
   // Turn starts, kept only between thread.active and the event that ends the
-  // turn, so a restarted plugin simply reports an unknown duration.
+  // turn, so a restarted plugin simply reports an unknown duration. Bounded
+  // (1000 entries, 24h TTL) so a busy server cannot grow this map without
+  // limit.
+  const MAX_TURN_START_ENTRIES = 1000;
+  const TURN_START_TTL_MS = 24 * 60 * 60 * 1000;
   const turnStartedAt = new Map<string, number>();
 
+  function recordTurnStart(threadId: string): void {
+    const now = Date.now();
+    // Insertion order tracks age (recorded ids are refreshed below), so the
+    // sweep can stop at the first entry that is still fresh.
+    for (const [id, startedAt] of turnStartedAt) {
+      if (now - startedAt <= TURN_START_TTL_MS) break;
+      turnStartedAt.delete(id);
+    }
+    while (turnStartedAt.size >= MAX_TURN_START_ENTRIES) {
+      const oldest = turnStartedAt.keys().next();
+      if (oldest.done) break;
+      turnStartedAt.delete(oldest.value);
+    }
+    turnStartedAt.delete(threadId);
+    turnStartedAt.set(threadId, now);
+  }
+
+  /**
+   * Read without removing: the entry is deleted only after the idle handler
+   * settles, so a second thread.idle racing the first still sees the start
+   * time and cannot bypass the short-turn filter with an unknown duration.
+   */
+  function peekTurnStartedAt(threadId: string): number | undefined {
+    const startedAt = turnStartedAt.get(threadId);
+    if (startedAt === undefined) return undefined;
+    if (Date.now() - startedAt <= TURN_START_TTL_MS) return startedAt;
+    turnStartedAt.delete(threadId);
+    return undefined;
+  }
+
   bb.events.on("thread.active", ({ thread }) => {
-    turnStartedAt.set(thread.id, Date.now());
+    recordTurnStart(thread.id);
   });
 
   bb.events.on("thread.archived", ({ thread }) => {
@@ -541,19 +636,23 @@ export default function plugin(bb: BbPluginApi) {
   });
 
   bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
-    const startedAt = turnStartedAt.get(thread.id);
-    turnStartedAt.delete(thread.id);
-    if (thread.visibility !== "visible") return;
-    const filters = readFilters();
-    if (filters.mutedProjectIds.includes(thread.projectId)) return;
-    if (filters.suppressSubagents && thread.parentThreadId != null) return;
-    if (await hasPendingInteraction(thread.id)) {
-      await notifyDevices("pending", thread, compactText(lastAssistantText));
-      return;
+    const startedAt = peekTurnStartedAt(thread.id);
+    try {
+      if (thread.visibility !== "visible") return;
+      const filters = readFilters();
+      if (filters.mutedProjectIds.includes(thread.projectId)) return;
+      if (filters.suppressSubagents && thread.parentThreadId != null) return;
+      if (await hasPendingInteraction(thread.id)) {
+        await notifyDevices("pending", thread, compactText(lastAssistantText));
+        return;
+      }
+      const durationMs =
+        startedAt === undefined ? null : Date.now() - startedAt;
+      if (!meetsMinimumDuration(durationMs, filters.minTurnSeconds)) return;
+      await notifyDevices("idle", thread, compactText(lastAssistantText));
+    } finally {
+      turnStartedAt.delete(thread.id);
     }
-    const durationMs = startedAt === undefined ? null : Date.now() - startedAt;
-    if (!meetsMinimumDuration(durationMs, filters.minTurnSeconds)) return;
-    await notifyDevices("idle", thread, compactText(lastAssistantText));
   });
 
   bb.events.on("thread.failed", async ({ thread, error }) => {
@@ -591,15 +690,21 @@ export default function plugin(bb: BbPluginApi) {
         mutedProjectIds: changes.mutedProjectIds ?? current.mutedProjectIds,
       };
       db.transaction(() => {
-        upsertMetadata.run(
-          "suppress_subagents",
-          next.suppressSubagents ? "1" : "0",
-        );
-        upsertMetadata.run("min_turn_seconds", String(next.minTurnSeconds));
-        upsertMetadata.run(
-          "muted_project_ids",
-          JSON.stringify(next.mutedProjectIds),
-        );
+        if (changes.suppressSubagents !== undefined) {
+          upsertMetadata.run(
+            "suppress_subagents",
+            next.suppressSubagents ? "1" : "0",
+          );
+        }
+        if (changes.minTurnSeconds !== undefined) {
+          upsertMetadata.run("min_turn_seconds", String(next.minTurnSeconds));
+        }
+        if (changes.mutedProjectIds !== undefined) {
+          upsertMetadata.run(
+            "muted_project_ids",
+            JSON.stringify(next.mutedProjectIds),
+          );
+        }
       })();
       return next;
     },

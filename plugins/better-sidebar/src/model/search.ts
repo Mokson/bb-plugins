@@ -19,7 +19,8 @@ export interface SearchCandidate {
  * out. The tiers are coarse on purpose: within a tier B43 orders by
  * `latestAttentionAt`, which is what the user is actually scanning for.
  */
-export function matchScore(title: string, query: string): number | null {
+export function matchScore(title: unknown, query: unknown): number | null {
+  if (typeof title !== "string" || typeof query !== "string") return null;
   const haystack = title.toLowerCase();
   const needle = query.trim().toLowerCase();
   if (needle === "") return null;

@@ -517,17 +517,23 @@ export function writeAuditPack(
  * The pack, plus the files it left behind.
  *
  * The agent-facing tool and the retro seat read the same audit; when the
- * target names a run folder the tool writes the three artifacts there so the
- * two never disagree about which run was measured. With no run folder there is
- * nowhere to write, and `written` is empty rather than a guessed location.
+ * target names a run folder AND the caller passes `write`, the tool writes
+ * the three artifacts there so the two never disagree about which run was
+ * measured. Reads stay reads by default: an agent asking "how did this run
+ * go" must not leave files behind as a side effect. With no run folder
+ * there is nowhere to write, and `written` is empty rather than a guessed
+ * location.
  */
 export function auditPackWithExport(
   deps: AuditDeps,
   target: AuditTarget,
+  options: { write?: boolean } = {},
 ) {
   const pack = buildAuditPack(deps, target);
   const written =
-    pack.runFolder === null ? [] : writeAuditPack(deps, pack.runFolder);
+    options.write === true && pack.runFolder !== null
+      ? writeAuditPack(deps, pack.runFolder)
+      : [];
   return { ...pack, written };
 }
 

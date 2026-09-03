@@ -33,7 +33,7 @@ const requestPermission = vi.fn(async () => {
 });
 
 async function loadSettingsSection() {
-  const app = (await import("./app")).default as {
+  const app = (await import("./app")).default as unknown as {
     settingsSections: Array<{ component: React.ComponentType }>;
   };
   return app.settingsSections[0]!.component;

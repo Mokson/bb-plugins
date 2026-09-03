@@ -20,7 +20,11 @@ function compactTextToLength(
     : compact;
 }
 
-export function compactText(value: string | null): string | null {
+export function compactText(value: unknown): string | null {
+  if (typeof value !== "string") {
+    if (value == null) return null;
+    return compactTextToLength(String(value), MAX_DETAIL_LENGTH);
+  }
   return compactTextToLength(value, MAX_DETAIL_LENGTH);
 }
 

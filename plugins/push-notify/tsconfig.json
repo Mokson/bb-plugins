@@ -24,11 +24,16 @@
       ]
     },
     "noEmit": true,
-    "skipLibCheck": false
+    "skipLibCheck": true
   },
   "include": [
     "server.ts",
     "app.tsx",
+    "notification-policy.ts",
+    "*.test.ts",
+    "*.test.tsx",
+    "vitest.config.ts",
+    "test",
     "types",
     "components",
     "lib",

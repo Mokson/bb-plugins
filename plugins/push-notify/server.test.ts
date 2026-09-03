@@ -10,7 +10,7 @@ const webPushMock = vi.hoisted(() => ({
   sendNotification: vi.fn(),
 }));
 
-vi.mock("web-push", () => ({ default: webPushMock }));
+vi.mock("web-push", () => webPushMock);
 
 import plugin, { PUSH_REQUEST_TIMEOUT_MS } from "./server";
 
@@ -161,7 +161,7 @@ describe("web push plugin", () => {
     expect(source).toContain("self.skipWaiting()");
     expect(source).toContain("self.clients.claim()");
     expect(source).toContain('self.addEventListener("push"');
-    expect(source).toContain('icon: "/icon-192.png"');
+    expect(source).not.toContain("icon:");
     host.db.close();
   });
 

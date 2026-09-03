@@ -6,6 +6,10 @@ import {
   type KeyboardEvent,
 } from "react";
 import { experimental_useSidebarThreadActions as useSidebarThreadActions } from "@get-bb/plugin-sdk/app";
+import { fireAndForget } from "./row-menu-items";
+
+/** Titles longer than this are truncated on commit, not rejected. */
+const MAX_RENAME_LENGTH = 200;
 
 /**
  * The handle `ThreadRow` renders and `RowContextMenu` starts (B46).
@@ -58,10 +62,10 @@ export function useRenameEditor(threadId: string): RenameEditor {
     if (!activeRef.current) return;
     activeRef.current = false;
     setIsRenaming(false);
-    const title = value.trim();
+    const title = value.trim().slice(0, MAX_RENAME_LENGTH);
     setValue("");
-    if (title === "" || title === initialRef.current.trim()) return;
-    void actions.rename(threadId, title);
+    if (title === "" || title === initialRef.current.trim().slice(0, MAX_RENAME_LENGTH)) return;
+    fireAndForget(actions.rename(threadId, title), "rename");
   }, [actions, threadId, value]);
 
   return {

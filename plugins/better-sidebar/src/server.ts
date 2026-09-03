@@ -43,8 +43,11 @@ function pressure(
   modelContextWindow: number | null,
 ): number | null {
   if (usedTokens === null || modelContextWindow === null) return null;
+  if (!Number.isFinite(usedTokens) || !Number.isFinite(modelContextWindow)) {
+    return null;
+  }
   if (modelContextWindow <= 0) return null;
-  return usedTokens / modelContextWindow;
+  return Math.min(1, Math.max(0, usedTokens / modelContextWindow));
 }
 
 /**
@@ -188,11 +191,21 @@ async function loadDossier(threads: ThreadsApi, threadId: string): Promise<Dossi
 }
 
 async function loadRowSignal(threads: ThreadsApi, threadId: string): Promise<RowSignal> {
+  // One failing read degrades its own field, never the whole row: a bare
+  // four-way `Promise.all` rejected this thread's signal on any single
+  // failure, and the handler's own `Promise.all` turned that into a rejected
+  // batch for every id it covered.
   const [contextUsage, fallback, rateLimits, goal] = await Promise.all([
-    newestEvent(threads, threadId, ["thread/contextWindowUsage/updated"]),
-    newestEvent(threads, threadId, ["provider/modelFallback"]),
-    newestEvent(threads, threadId, ["provider/rateLimits/updated"]),
-    newestEvent(threads, threadId, ["thread/goal/updated", "thread/goal/cleared"]),
+    newestEvent(threads, threadId, ["thread/contextWindowUsage/updated"]).catch(
+      () => null,
+    ),
+    newestEvent(threads, threadId, ["provider/modelFallback"]).catch(() => null),
+    newestEvent(threads, threadId, ["provider/rateLimits/updated"]).catch(
+      () => null,
+    ),
+    newestEvent(threads, threadId, ["thread/goal/updated", "thread/goal/cleared"]).catch(
+      () => null,
+    ),
   ]);
 
   return {
@@ -226,8 +239,32 @@ async function loadRowSignal(threads: ThreadsApi, threadId: string): Promise<Row
   };
 }
 
+/**
+ * The per-id loaders above never throw, so the fan-out's only remaining risk
+ * is width: 60 ids at once is 60 concurrent SDK reads (240 for rowSignals).
+ * Sequential batches of 8 bound that without a dependency. Ids are deduplicated
+ * first, so a repeated id costs one read and still answers once per request.
+ * An empty list answers empty without touching the SDK.
+ */
+const FAN_OUT_CONCURRENCY = 8;
+
+async function collectInBatches<T>(
+  threadIds: readonly string[],
+  load: (threadId: string) => Promise<T>,
+): Promise<T[]> {
+  const unique = [...new Set(threadIds)];
+  const out: T[] = [];
+  for (let i = 0; i < unique.length; i += FAN_OUT_CONCURRENCY) {
+    const batch = await Promise.all(
+      unique.slice(i, i + FAN_OUT_CONCURRENCY).map(load),
+    );
+    out.push(...batch);
+  }
+  return out;
+}
+
 export default function plugin(bb: BbPluginApi) {
-  // B59: seven settings, server-backed so they follow the user across clients.
+  // B59 plus the later slices: fourteen settings, server-backed so they follow the user across clients.
   bb.settings.define({
     groupBy: {
       type: "select",
@@ -327,29 +364,27 @@ export default function plugin(bb: BbPluginApi) {
     // throw PluginContextStaleError rather than reach a dead runtime.
     threadDossier: ({ threadId }) => loadDossier(bb.sdk.threads, threadId),
     rowSignals: async ({ threadIds }) => ({
-      signals: await Promise.all(
-        threadIds.map((threadId) => loadRowSignal(bb.sdk.threads, threadId)),
+      signals: await collectInBatches(threadIds, (threadId) =>
+        loadRowSignal(bb.sdk.threads, threadId),
       ),
     }),
     // B71.1: the fan-out is here, inside one round trip, not across the wire.
     threadExecutions: async ({ threadIds }) => ({
-      executions: await Promise.all(
-        threadIds.map((threadId) => loadExecution(bb.sdk.threads, threadId)),
+      executions: await collectInBatches(threadIds, (threadId) =>
+        loadExecution(bb.sdk.threads, threadId),
       ),
     }),
     // B82: the same one-round-trip fan-out, for the ids the list has rendered.
     lastActivity: async ({ threadIds }) => ({
-      activity: await Promise.all(
-        threadIds.map((threadId) => loadLastActivity(bb.sdk.threads, threadId)),
+      activity: await collectInBatches(threadIds, (threadId) =>
+        loadLastActivity(bb.sdk.threads, threadId),
       ),
     }),
     // B85: tokens and tool calls, fanned out like the executions above.
     threadWorkStats: async ({ threadIds }) => ({
-      stats: await Promise.all(
-        threadIds.map((threadId) =>
-          loadWorkStats(bb.sdk.threads, threadId, (message) =>
-            bb.log.warn(message),
-          ),
+      stats: await collectInBatches(threadIds, (threadId) =>
+        loadWorkStats(bb.sdk.threads, threadId, (message) =>
+          bb.log.warn(message),
         ),
       ),
     }),
@@ -372,6 +407,11 @@ export default function plugin(bb: BbPluginApi) {
   // which is why it, and not `thread.active`, is the moment to invalidate.
   // `thread.active` fires at the START of a turn, when no new usage data exists
   // yet; publishing there only doubles every visible row's refetch per turn.
+  //
+  // No disposer is collected for these subscriptions: the SDK's `PluginEvents`
+  // declaration types `on` as returning void, with no `off`. The host drops the
+  // plugin's listeners with its scope on reload/disable, so there is nothing
+  // for `onDispose` to release here.
   for (const event of ["thread.idle", "thread.failed"] as const) {
     bb.events.on(event, ({ thread }) => {
       bb.realtime.publish(DOSSIER_CHANNEL, { threadId: thread.id });

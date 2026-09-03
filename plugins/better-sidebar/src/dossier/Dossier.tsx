@@ -148,7 +148,19 @@ function Identity({
   thread: PluginSidebarThread;
   title: string;
 }) {
-  const activity = Object.entries(thread.activity).filter(([, value]) => value > 0);
+  // `activity` is host data: a missing object draws no counts, and a
+  // non-numeric value is not a count either (a Symbol would even throw on
+  // `> 0`, and anything else would only ever read as zero).
+  const rawActivity: unknown = thread.activity ?? {};
+  const activity =
+    typeof rawActivity === "object" && rawActivity !== null
+      ? Object.entries(rawActivity).filter(
+          (entry): entry is [string, number] =>
+            typeof entry[1] === "number" &&
+            Number.isFinite(entry[1]) &&
+            entry[1] > 0,
+        )
+      : [];
   return (
     <div className="flex flex-col gap-1">
       {/* B50: the full title, which row 1 truncated. */}
@@ -270,6 +282,9 @@ function activityLabel(name: string): string {
  * thread timestamp, and UTC made every reader do the offset in their head.
  */
 function shortLocal(epochMs: number): string {
+  // Host data again: a non-finite timestamp has no local form. An em dash
+  // holds the row's place rather than printing "Invalid Date".
+  if (typeof epochMs !== "number" || !Number.isFinite(epochMs)) return "—";
   const date = new Date(epochMs);
   const sameYear = date.getFullYear() === new Date().getFullYear();
   return date.toLocaleString(undefined, {

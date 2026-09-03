@@ -37,9 +37,12 @@ type Call = ReturnType<typeof useRpc<typeof betterSidebarRpcContract>>["call"];
 
 /**
  * Module-level so a second hover of the same row inside the TTL renders from
- * the map during the first paint, with no request at all (B27).
+ * the map during the first paint, with no request at all (B27). Capped, so a
+ * long session hovering hundreds of distinct threads cannot grow it without
+ * bound; the oldest entry goes on insert past the cap.
  */
 const cache = new Map<string, Entry>();
+const MAX_DOSSIER_CACHE_ENTRIES = 200;
 
 /** Test seam: the caches outlive a `cleanup()`, so tests must clear them. */
 export function resetDossierCache(): void {
@@ -83,6 +86,14 @@ function ensure(threadId: string, call: Call): Promise<void> {
       },
     );
   cache.set(threadId, entry);
+  while (cache.size > MAX_DOSSIER_CACHE_ENTRIES) {
+    const oldest = cache.keys().next();
+    if (oldest.done) break;
+    // Never the entry just stored: the map only grows by one here, so the
+    // first key past the cap is always an older hover.
+    if (oldest.value !== threadId) cache.delete(oldest.value);
+    else break;
+  }
   return entry.promise;
 }
 

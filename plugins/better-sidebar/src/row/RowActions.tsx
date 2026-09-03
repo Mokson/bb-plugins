@@ -1,4 +1,4 @@
-import { Fragment, useRef, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, type ReactNode } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   experimental_useSidebarThreadActions as useSidebarThreadActions,
@@ -9,7 +9,7 @@ import { cn } from "../lib/utils";
 import { usePortalScopeProps } from "../lib/portal-scope";
 import { CONTROL_BUTTON_CLASS } from "../ui/control-button";
 import { Glyph, type GlyphName } from "../ui/Glyph";
-import { buildRowMenuItems } from "../menu/row-menu-items";
+import { buildRowMenuItems, fireAndForget } from "../menu/row-menu-items";
 import { ROW1_ICON } from "./row-metrics";
 import { useRowHoverSuppression } from "../dossier/RowHover";
 import type { RenameEditor } from "../menu/useRenameEditor";
@@ -55,6 +55,11 @@ export function RowActions({
   const suppressHoverCard = useRowHoverSuppression();
   const renameRequested = useRef(false);
 
+  // The suppression flag is module-wide hover state, not this row's: a row
+  // that unmounts while its menu is open (a section move under an open menu)
+  // must not leave every other row's card suppressed.
+  useEffect(() => () => suppressHoverCard(false), [suppressHoverCard]);
+
   const items = buildRowMenuItems({
     thread,
     pullRequest,
@@ -98,21 +103,25 @@ export function RowActions({
         <ActionButton
           label={thread.isUnread ? "Mark read" : "Mark unread"}
           glyph={thread.isUnread ? "mail" : "mail-open"}
-          onClick={() => void actions.setRead(thread.id, thread.isUnread)}
+          onClick={() =>
+            fireAndForget(actions.setRead(thread.id, thread.isUnread), "mark read")
+          }
         />
       ) : null}
       {quickActions.pin ? (
         <ActionButton
           label={thread.isPinned ? "Unpin" : "Pin"}
           glyph={thread.isPinned ? "pin-off" : "pin"}
-          onClick={() => void actions.setPinned(thread.id, !thread.isPinned)}
+          onClick={() =>
+            fireAndForget(actions.setPinned(thread.id, !thread.isPinned), "pin")
+          }
         />
       ) : null}
       {quickActions.archive ? (
         <ActionButton
           label="Archive"
           glyph="archive"
-          onClick={() => void actions.archive(thread.id)}
+          onClick={() => fireAndForget(actions.archive(thread.id), "archive")}
         />
       ) : null}
       <DropdownMenu.Root

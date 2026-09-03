@@ -75,11 +75,25 @@ export const spendOverviewInputSchema = z
     host: z.string().optional(),
     provider: z.string().optional(),
     group: spendGroupSchema,
+    /** Narrow to the threads attributed to one deliver run folder. */
+    runFolder: z.string().optional(),
   })
   .strict();
 
+/**
+ * Row ceiling on the overview and thread RPC payloads. A cost report grows
+ * one row per thread (or one turn per turn) of the range, and an unbounded
+ * array in an RPC response fills the caller's context the same way an
+ * unbounded tool result would. Capped surfaces set `truncated`.
+ */
+export const SPEND_ROW_LIMIT = 500;
+
 export const spendOverviewSchema = z
-  .object({ totals: spendTotalsSchema, rows: z.array(spendRowSchema) })
+  .object({
+    totals: spendTotalsSchema,
+    rows: z.array(spendRowSchema),
+    truncated: z.boolean().optional(),
+  })
   .strict();
 
 export const turnRowSchema = z
@@ -116,6 +130,7 @@ export const spendThreadSchema = z
       .strict(),
     totals: spendTotalsSchema,
     turns: z.array(turnRowSchema),
+    truncated: z.boolean().optional(),
   })
   .strict();
 

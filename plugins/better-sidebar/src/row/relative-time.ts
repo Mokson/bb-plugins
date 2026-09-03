@@ -16,6 +16,9 @@ const DAY = 24 * HOUR;
  */
 export function relativeTimeLabel(timestamp: number, now: number): string {
   const elapsed = now - timestamp;
+  // Corrupt host data must not print "NaNw". Unknown reads as unknown, never
+  // as a false "now".
+  if (!Number.isFinite(elapsed)) return "—";
   if (elapsed < MINUTE) return "now";
   if (elapsed < HOUR) return `${Math.floor(elapsed / MINUTE)}m`;
   if (elapsed < DAY) return `${Math.floor(elapsed / HOUR)}h`;
@@ -34,6 +37,7 @@ export function relativeTimeLabel(timestamp: number, now: number): string {
  * precedes its `createdAt` — floors at zero rather than printing a minus sign.
  */
 export function durationLabel(elapsedMs: number): string {
+  if (!Number.isFinite(elapsedMs)) return "—";
   const elapsed = Math.max(0, elapsedMs);
   if (elapsed < MINUTE) return "<1m";
   if (elapsed < HOUR) return `${Math.floor(elapsed / MINUTE)}m`;

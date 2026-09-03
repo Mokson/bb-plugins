@@ -49,6 +49,15 @@ export type CommandRunner = (
   timeoutMs: number,
 ) => { code: number; stdout: string };
 
+/**
+ * Trust boundary: `command` runs under `/bin/sh -c` with the case worktree
+ * as cwd. The command text comes from the case file (`structural` assertions
+ * in `eval_casesDir`) and the check-ledger script path, both
+ * operator-controlled inputs — never from model output, thread content, or
+ * anything the evaluated run wrote. A hostile case file could run anything,
+ * but a hostile case file is already arbitrary code the operator chose to run
+ * an eval over.
+ */
 export const execShell: CommandRunner = (command, cwd, timeoutMs) => {
   try {
     const stdout = execFileSync("/bin/sh", ["-c", command], {
