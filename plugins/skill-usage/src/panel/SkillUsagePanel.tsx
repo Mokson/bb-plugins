@@ -198,12 +198,25 @@ function RollupScope({ scope, threadId }: { scope: "project" | "global"; threadI
     }
   }, [rpc, scope, threadId]);
 
-  // Opening a rollup is the only refresh trigger: no cron, no background
-  // service. The first open backfills, later opens only catch up.
   useEffect(() => {
     mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  // Rows reload whenever the scope changes, straight from the index.
+  useEffect(() => {
+    setRows(null);
+    setExpanded(null);
+    void loadRows();
+  }, [loadRows]);
+
+  // Refresh is asked for once per mount, not once per scope. Switching
+  // between Project and All must not re-walk every thread; the server also
+  // applies a cooldown, so a rapid reopen is a no-op there too.
+  useEffect(() => {
     void (async () => {
-      await loadRows();
       try {
         const next = await rpc.call("indexRefresh", {});
         if (mounted.current) setStatus(next as IndexStatus);
@@ -211,10 +224,7 @@ function RollupScope({ scope, threadId }: { scope: "project" | "global"; threadI
         if (mounted.current) setError(cause instanceof Error ? cause.message : String(cause));
       }
     })();
-    return () => {
-      mounted.current = false;
-    };
-  }, [loadRows, rpc]);
+  }, [rpc]);
 
   useRealtime(INDEX_CHANNEL, (payload) => {
     if (!mounted.current || payload === null || typeof payload !== "object") return;

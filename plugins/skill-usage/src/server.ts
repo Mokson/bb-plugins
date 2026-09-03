@@ -10,6 +10,7 @@ import {
   type SqliteDatabase,
 } from "./index-store";
 import { collapseInvocations, type SkillInvocation } from "./model";
+import { shouldRefresh } from "./refresh-policy";
 import { INDEX_CHANNEL, skillUsageRpcContract } from "./skill-usage-contract";
 
 /** Event types that can carry a Skill tool call. */
@@ -289,7 +290,13 @@ export default async function plugin(bb: BbPluginApi) {
     indexStatus: async () => ({ ...status }),
 
     indexRefresh: async ({ rebuild }) => {
-      if (pass === null) {
+      const wanted = shouldRefresh({
+        running: pass !== null,
+        lastRefreshAt: status.lastRefreshAt,
+        nowMs: Date.now(),
+        rebuild: rebuild === true,
+      });
+      if (wanted) {
         pass = runPass(rebuild === true);
       }
       return { ...status };
