@@ -74,5 +74,34 @@ describe("spendExport", () => {
     expect(result.content).toContain("claude work");
     expect(result.content).toContain("codex work");
     expect(result.content).toContain("provider: all");
+    expect(result.content).toContain("run: all");
+  });
+
+  it("emits only the run folder's rows and names the filter", () => {
+    temp = new TempDatabase();
+    const store = temp.open();
+    seedThread(store, {
+      thread_id: "in-run",
+      title: "run work",
+      run_folder: "/runs/OBS-1",
+    });
+    seedThread(store, { thread_id: "elsewhere", title: "other work" });
+    for (const thread of ["in-run", "elsewhere"]) {
+      seedTurn(store, {
+        thread_id: thread,
+        turn_id: `${thread}-t1`,
+        started_at: "2026-08-31T10:00:00.000Z",
+        cost_usd: 1,
+      });
+    }
+
+    const result = spendExport(
+      { db: store.db, now: () => NOW },
+      { range: "7d", group: "lineage", format: "md", runFolder: "/runs/OBS-1" },
+    );
+
+    expect(result.content).toContain("run work");
+    expect(result.content).not.toContain("other work");
+    expect(result.content).toContain("run: /runs/OBS-1");
   });
 });

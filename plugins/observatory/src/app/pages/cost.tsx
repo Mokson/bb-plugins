@@ -17,6 +17,7 @@ import {
   QueryFrame,
   SELECT_CLASS,
   TextHead,
+  TruncatedNotice,
 } from "@/components/spend-common";
 import { formatCount, formatTokens, formatUsd } from "@/lib/format";
 import {
@@ -366,6 +367,11 @@ export function CostOverview() {
             <OverviewTable
               overview={overview}
               onOpenThread={(threadId) => goTo(`threads/${threadId}`)}
+            />
+            <TruncatedNotice
+              show={overview.truncated}
+              shown={overview.rows.length}
+              unit="rows"
             />
             <EstimateFootnote
               show={overview.rows.some((row) => row.estimated)}

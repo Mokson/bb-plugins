@@ -7,8 +7,8 @@
 //
 // The 7-day median rather than the mean: one runaway run would drag a mean far
 // enough that the next runaway looks ordinary.
-import { writeFileSync } from "node:fs";
-import { resolve, sep } from "node:path";
+import { realpathSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import type { Database } from "better-sqlite3";
 import type { ObservatoryStore } from "../core/store.js";
 import type { SpendRange } from "../spend/contract.js";
@@ -456,15 +456,50 @@ export function auditMarkdown(session: AuditSessionView): string {
  * Refuse any path that is not inside the run folder.
  *
  * The export is the only thing this module writes, and a folder argument is
- * operator input: a `..` in it would turn a report into an overwrite.
+ * operator input: a `..` in it would turn a report into an overwrite. Both
+ * sides go through `realpath` so a symlinked tmpdir cannot put the root and
+ * the target on different spellings of the same directory; a path that does
+ * not exist yet (every report, before it is written) falls back to
+ * `resolve`, which is all the containment check needs.
  */
 export function assertInside(runFolder: string, filename: string): string {
-  const root = resolve(runFolder);
-  const target = resolve(filename);
+  const root = canonical(runFolder);
+  const target = canonical(filename);
   if (target !== root && !target.startsWith(root + sep)) {
     throw new Error(`refusing to write outside the run folder: ${filename}`);
   }
-  return target;
+  // The check above is symlink-aware but the return keeps the caller's
+  // spelling, exactly what `resolve` always returned here.
+  return resolve(filename);
+}
+
+/**
+ * `realpath` where possible, `resolve` where the path is not on disk yet.
+ *
+ * A report never exists before it is written, so `realpath` on the full path
+ * always fails for one. Falling back on the whole path then splits the two
+ * sides across spellings wherever the parent is symlinked (every tmpdir on
+ * macOS), and the write refuses itself. The longest existing prefix is
+ * canonicalized instead, so root and target always meet on one spelling.
+ */
+function canonical(path: string): string {
+  const absolute = resolve(path);
+  try {
+    return realpathSync(absolute);
+  } catch {
+    const leaves: string[] = [basename(absolute)];
+    let dir = dirname(absolute);
+    for (;;) {
+      try {
+        return join(realpathSync(dir), ...leaves);
+      } catch {
+        const parent = dirname(dir);
+        if (parent === dir) return absolute;
+        leaves.unshift(basename(dir));
+        dir = parent;
+      }
+    }
+  }
 }
 
 export interface ExportResult {

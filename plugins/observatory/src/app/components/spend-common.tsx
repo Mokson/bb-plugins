@@ -175,6 +175,30 @@ export function PageSkeleton() {
 }
 
 /**
+ * The truncation notice, paired with the `truncated` flag the rollups set.
+ * The cap bounds the payload, never the money: totals are computed over the
+ * uncapped rows, so the line says the rows are capped and the totals complete
+ * in the same breath. Rendered only when a table actually is truncated, so it
+ * never explains a state the reader cannot see.
+ */
+export function TruncatedNotice({
+  show,
+  shown,
+  unit,
+}: {
+  show: boolean | undefined;
+  shown: number;
+  unit: string;
+}) {
+  if (!show) return null;
+  return (
+    <p className="text-[11px] text-muted-foreground">
+      showing the first {shown} {unit}; totals cover all {unit}
+    </p>
+  );
+}
+
+/**
  * The footnote PRODUCT invariant 27 pairs with the superscript mark. Rendered
  * only when a table actually holds an estimate, so it never explains a symbol
  * the reader cannot see.

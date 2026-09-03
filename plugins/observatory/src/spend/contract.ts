@@ -286,6 +286,7 @@ export const spendContract = defineRpcContract({
         // and nothing in it says so.
         host: z.string().optional(),
         provider: z.string().optional(),
+        runFolder: z.string().optional(),
       })
       .strict(),
     output: spendExportSchema,

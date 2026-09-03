@@ -660,6 +660,7 @@ export function overviewMarkdown(
     // whose totals cannot be trusted a week later.
     `host: ${markdownCell((query.host ?? "") || "all")}`,
     `provider: ${markdownCell((query.provider ?? "") || "all")}`,
+    `run: ${markdownCell((query.runFolder ?? "") || "all")}`,
     `spend_usd: ${money(overview.totals.spendUsd)}`,
     `cache_saved_usd: ${money(overview.totals.cacheSavedUsd)}`,
     `cache_write_usd: ${money(overview.totals.cacheWriteUsd)}`,
