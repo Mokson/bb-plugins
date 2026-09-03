@@ -28,6 +28,33 @@ const MARKS_SCHEMA = z.array(
 );
 
 /**
+ * Round-2 L2: `iconTint` lands in `backgroundColor`, so it is an allowlist,
+ * not a passthrough. Hex (`#rgb`–`#rrggbbaa`) plus the `rgb()`/`rgba()` and
+ * `color-mix()` function shapes the directory actually emits; anything else
+ * (including an empty string) voids the whole tint — both-or-neither, matching
+ * the two-mask drawing — rather than one theme's mask.
+ */
+const HEX_TINT = /^#[0-9a-fA-F]{3,8}$/;
+const FUNCTION_TINT = /^(rgba?|color-mix)\(\s*[^;{}<>"'`\\]*\s*\)$/i;
+
+function isSafeTintColor(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 256) {
+    return false;
+  }
+  return HEX_TINT.test(value) || FUNCTION_TINT.test(value);
+}
+
+export function sanitizeIconTint(
+  tint: { light: string; dark: string } | undefined,
+): { light: string; dark: string } | undefined {
+  if (tint === undefined) return undefined;
+  if (!isSafeTintColor(tint.light) || !isSafeTintColor(tint.dark)) {
+    return undefined;
+  }
+  return tint;
+}
+
+/**
  * Read once per page load and kept in a module variable, because every row
  * asks for it: 41 rows must not mean 41 `JSON.parse` calls of the same string.
  */

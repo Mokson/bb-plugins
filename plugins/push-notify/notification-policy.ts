@@ -21,11 +21,15 @@ function compactTextToLength(
 }
 
 export function compactText(value: unknown): string | null {
-  if (typeof value !== "string") {
-    if (value == null) return null;
+  if (typeof value === "string") {
+    return compactTextToLength(value, MAX_DETAIL_LENGTH);
+  }
+  // Primitives only: String() on an object/array would render
+  // "[object Object]" (or a comma-joined dump) into the notification.
+  if (typeof value === "number" || typeof value === "boolean") {
     return compactTextToLength(String(value), MAX_DETAIL_LENGTH);
   }
-  return compactTextToLength(value, MAX_DETAIL_LENGTH);
+  return null;
 }
 
 export function compactTitle(value: string | null): string | null {

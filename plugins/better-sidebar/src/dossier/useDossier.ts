@@ -85,14 +85,18 @@ function ensure(threadId: string, call: Call): Promise<void> {
         entry.expiresAt = Date.now() + ERROR_TTL_MS;
       },
     );
+  cache.delete(threadId);
   cache.set(threadId, entry);
+  // FIFO, deliberately not LRU: hover order is effectively random, entries
+  // live and die by their TTLs, and a re-hover re-inserts at the young end —
+  // recency tracking would buy nothing. The delete-before-set above is what
+  // keeps a re-hovered id young AND the size honest: without it a re-insert
+  // kept its old (oldest) position, so the cap below could evict the entry
+  // just stored and let the map escape past it.
   while (cache.size > MAX_DOSSIER_CACHE_ENTRIES) {
     const oldest = cache.keys().next();
     if (oldest.done) break;
-    // Never the entry just stored: the map only grows by one here, so the
-    // first key past the cap is always an older hover.
-    if (oldest.value !== threadId) cache.delete(oldest.value);
-    else break;
+    cache.delete(oldest.value);
   }
   return entry.promise;
 }

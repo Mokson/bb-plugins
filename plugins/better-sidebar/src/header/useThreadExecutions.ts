@@ -1,7 +1,12 @@
 import { useEffect, useReducer, useRef } from "react";
-import { useRpc } from "@get-bb/plugin-sdk/app";
-import { createBatchCache } from "../lib/batch-cache";
-import type { ThreadExecution, betterSidebarRpcContract } from "../server-contract";
+import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
+import { createBatchCache, unpackValidated } from "../lib/batch-cache";
+import {
+  DOSSIER_CHANNEL,
+  threadExecutionSchema,
+  type ThreadExecution,
+  type betterSidebarRpcContract,
+} from "../server-contract";
 
 type Execution = ThreadExecution["execution"];
 
@@ -16,8 +21,15 @@ const cache = createBatchCache<
   errorTtlMs: 2_000,
   /** The contract caps one request at 60 ids; a larger set of children chunks. */
   maxIdsPerRequest: 60,
+  // Round-2 M5: a corrupt-but-formed element degrades to null (the row drops
+  // its metadata line) instead of rejecting the batch.
   unpack: (result) =>
-    new Map(result.executions.map((entry) => [entry.threadId, entry.execution])),
+    unpackValidated(
+      (result as { executions?: unknown }).executions,
+      threadExecutionSchema,
+      (entry) => ({ threadId: entry.threadId, value: entry.execution }),
+      null,
+    ),
   // null is both "this thread never ran" and "this id's lookup failed"; B71.3
   // keeps the rows' titles and glyphs either way and drops the metadata line.
   missing: null,
@@ -53,6 +65,16 @@ export function useThreadExecutions(
   // A batch another chip issued settles here too, so a pane that requested
   // nothing still repaints when the ids it shares become available.
   useEffect(() => (enabled ? cache.subscribe(rerender) : undefined), [enabled]);
+
+  // Round-2 M4: per-id TTL-bypass on the dossier channel, mirroring
+  // useDossier/useRowSignals. `ensure` below stays the only fetcher: the
+  // invalidation expires the id, the notify repaints, and the unconditional
+  // effect refetches it while every other id keeps its cached value.
+  useRealtime(DOSSIER_CHANNEL, (payload) => {
+    const invalidated = (payload as { threadId?: unknown } | null)?.threadId;
+    if (typeof invalidated !== "string") return;
+    cache.invalidate(invalidated);
+  });
 
   // Deliberately unconditional, as `useDossier`'s is: the TTL runs on the
   // clock, not on the deps. `ensure` returns after one filter pass when every

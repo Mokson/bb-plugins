@@ -25,6 +25,15 @@ describe("notification policy", () => {
     expect(result).toMatch(/…$/);
   });
 
+  it("compacts only primitives and drops objects instead of stringifying them", () => {
+    expect(compactText(42)).toBe("42");
+    expect(compactText(true)).toBe("true");
+    expect(compactText({ text: "hi" })).toBeNull();
+    expect(compactText(["hi"])).toBeNull();
+    expect(compactText(null)).toBeNull();
+    expect(compactText(undefined)).toBeNull();
+  });
+
   it("uses the fallback title and a safe final fallback", () => {
     expect(
       resolveThreadTitle({ title: null, titleFallback: "  Draft chat  " }),

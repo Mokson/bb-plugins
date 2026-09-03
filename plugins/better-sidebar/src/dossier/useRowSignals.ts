@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import {
   DOSSIER_CHANNEL,
+  rowSignalSchema,
   type RowSignal,
   type betterSidebarRpcContract,
 } from "../server-contract";
@@ -31,6 +32,20 @@ const cache = new Map<string, CacheEntry>();
 const listeners = new Map<string, Set<() => void>>();
 const inFlight = new Set<string>();
 const observedIds = new WeakMap<Element, string>();
+/**
+ * Round-2 H2: one epoch per id, bumped on every invalidation. A batch sent
+ * before the bump settles after it; without the epoch that stale settle
+ * overwrites the invalidation and the refetch it scheduled never happens (the
+ * in-flight guard filters the id out of the next `runBatch`). Settles from an
+ * older epoch store nothing and schedule their own refetch instead.
+ */
+const epochs = new Map<string, number>();
+/**
+ * Round-2 M2: the same FIFO cap-200 as useDossier's. The visible set bounds
+ * the hot ids, but a long session scrolling hundreds of threads must not grow
+ * this without bound; the oldest entry goes on insert past the cap.
+ */
+const MAX_SIGNAL_CACHE_ENTRIES = 200;
 
 let callRef: { current: Call | null } = { current: null };
 let observer: IntersectionObserver | null = null;
@@ -43,6 +58,7 @@ export function resetRowSignals(): void {
   cache.clear();
   listeners.clear();
   inFlight.clear();
+  epochs.clear();
   callRef.current = null;
   observer?.disconnect();
   observer = null;
@@ -102,6 +118,11 @@ function scheduleBatch(): void {
 
 function store(threadId: string, signal: RowSignal | null, ttl: number): void {
   cache.set(threadId, { signal, expiresAt: Date.now() + ttl });
+  while (cache.size > MAX_SIGNAL_CACHE_ENTRIES) {
+    const oldest = cache.keys().next();
+    if (oldest.done) break;
+    cache.delete(oldest.value);
+  }
 }
 
 /**
@@ -118,6 +139,19 @@ function runBatch(): void {
   for (let i = 0; i < due.length; i += MAX_IDS_PER_REQUEST) {
     const chunk = due.slice(i, i + MAX_IDS_PER_REQUEST);
     for (const id of chunk) inFlight.add(id);
+    // H2: the epoch each id was sent at. An invalidation that lands before the
+    // settle bumps it, and the handlers below recognise their own staleness.
+    const sentAt = new Map(chunk.map((id) => [id, epochs.get(id) ?? 0]));
+    const isCurrent = (id: string): boolean =>
+      (epochs.get(id) ?? 0) === (sentAt.get(id) ?? 0);
+    // A superseded settle cleared nothing yet (the guard clears in `finish`
+    // below), so the refetch it owes has to be scheduled — otherwise the id
+    // sits stale until the refresh interval notices.
+    const refetchSuperseded = (): void => {
+      if (chunk.some((id) => !isCurrent(id) && visible.has(id))) {
+        scheduleBatch();
+      }
+    };
     // Passed as both fulfilment and rejection handler, so the guard is
     // cleared and listeners repaint even when the mapping above throws.
     const finish = () => {
@@ -132,17 +166,38 @@ function runBatch(): void {
           // The wire payload is caller-shaped: a throw in the mapping
           // degrades the chunk, never its in-flight guard.
           try {
-            const { signals } = result as { signals: RowSignal[] };
-            const byId = new Map(signals.map((s) => [s.threadId, s]));
-            for (const id of chunk) store(id, byId.get(id) ?? null, SIGNALS_TTL_MS);
+            // Round-2 M5: validate each element against the schema at the
+            // unpack site. A corrupt-but-formed entry (tokensUsed: "1000")
+            // degrades to null instead of reaching goalRingProgress as NaN.
+            const raw = (result as { signals?: unknown }).signals;
+            const list = Array.isArray(raw) ? raw : [];
+            const byId = new Map<string, RowSignal>();
+            for (const entry of list) {
+              const parsed = rowSignalSchema.safeParse(entry);
+              if (parsed.success) byId.set(parsed.data.threadId, parsed.data);
+            }
+            for (const id of chunk) {
+              // H2: an invalidation that landed mid-flight wins — this settle
+              // stores nothing for the id, and the refetch is scheduled below.
+              if (!isCurrent(id)) continue;
+              store(id, byId.get(id) ?? null, SIGNALS_TTL_MS);
+            }
           } catch {
-            for (const id of chunk) store(id, null, ERROR_TTL_MS);
+            for (const id of chunk) {
+              if (!isCurrent(id)) continue;
+              store(id, null, ERROR_TTL_MS);
+            }
           }
+          refetchSuperseded();
         },
         // A rejected batch draws no glyphs and retries after the short TTL —
         // row signals are decoration and never surface an error to the row.
         () => {
-          for (const id of chunk) store(id, null, ERROR_TTL_MS);
+          for (const id of chunk) {
+            if (!isCurrent(id)) continue;
+            store(id, null, ERROR_TTL_MS);
+          }
+          refetchSuperseded();
         },
       )
       .then(finish, finish);
@@ -187,6 +242,10 @@ export function useSignalValue(threadId: string): RowSignal | null {
   useRealtime(DOSSIER_CHANNEL, (payload) => {
     const invalidated = (payload as { threadId?: unknown } | null)?.threadId;
     if (typeof invalidated !== "string") return;
+    // H2: bump first, so a batch sent before this event recognises its own
+    // settle as stale and stores nothing. The settle schedules the refetch
+    // once the guard clears; the immediate schedule below covers the idle case.
+    epochs.set(invalidated, (epochs.get(invalidated) ?? 0) + 1);
     cache.delete(invalidated);
     notify(invalidated);
     if (visible.has(invalidated)) scheduleBatch();

@@ -51,6 +51,166 @@ function pressure(
 }
 
 /**
+ * Round-2 H1: the SDK types promise shaped numbers and non-empty strings, but
+ * the wire can carry anything — a corrupt row, a vendor change. The output
+ * schemas are strict, so one corrupt VALUE would reject the whole batch (the
+ * row is fine, the payload is not). Every producer below sanitizes at
+ * construction instead: finite/nonnegative numbers fall back to null, strings
+ * that must be non-empty fall back to a null parent (or a null field where the
+ * schema allows one), so one corrupt row degrades alone.
+ */
+function finiteNonNegative(value: unknown): number | null {
+  return typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0
+    ? value
+    : null;
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+/** The untyped payload of one event row; `{}` when the row is malformed. */
+function eventPayload(row: unknown): Record<string, unknown> {
+  if (typeof row !== "object" || row === null) return {};
+  const data = (row as { data?: unknown }).data;
+  return typeof data === "object" && data !== null
+    ? (data as Record<string, unknown>)
+    : {};
+}
+
+function nestedValue(root: unknown, path: readonly string[]): unknown {
+  let current: unknown = root;
+  for (const key of path) {
+    if (typeof current !== "object" || current === null) return undefined;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
+}
+
+/** null for "never ran" and for a corrupt value alike; the row draws neither. */
+function sanitizeExecution(
+  execution: { model: unknown; reasoningLevel: unknown } | null | undefined,
+): ThreadExecution["execution"] {
+  if (execution === null || execution === undefined) return null;
+  const model = nonEmptyString(execution.model);
+  const reasoningLevel = nonEmptyString(execution.reasoningLevel);
+  return model !== null && reasoningLevel !== null
+    ? { model, reasoningLevel }
+    : null;
+}
+
+function sanitizeTokenTotals(value: unknown): Dossier["economics"] {
+  const usage = nestedValue(eventPayload(value), ["tokenUsage"]);
+  if (typeof usage !== "object" || usage === null) return null;
+  const record = usage as Record<string, unknown>;
+  const total = record.total;
+  if (typeof total !== "object" || total === null) return null;
+  const fields = total as Record<string, unknown>;
+  const totalTokens = finiteNonNegative(fields.totalTokens);
+  const inputTokens = finiteNonNegative(fields.inputTokens);
+  const cachedInputTokens = finiteNonNegative(fields.cachedInputTokens);
+  const outputTokens = finiteNonNegative(fields.outputTokens);
+  const reasoningOutputTokens = finiteNonNegative(
+    fields.reasoningOutputTokens,
+  );
+  if (
+    totalTokens === null ||
+    inputTokens === null ||
+    cachedInputTokens === null ||
+    outputTokens === null ||
+    reasoningOutputTokens === null
+  ) {
+    return null;
+  }
+  const windowRaw = record.modelContextWindow;
+  return {
+    total: {
+      totalTokens,
+      inputTokens,
+      cachedInputTokens,
+      outputTokens,
+      reasoningOutputTokens,
+    },
+    // Nullable in the schema, so a corrupt window degrades the field, not the row.
+    modelContextWindow:
+      windowRaw === null || windowRaw === undefined
+        ? null
+        : (finiteNonNegative(windowRaw) ?? null),
+  };
+}
+
+function sanitizeContextWindow(value: unknown): Dossier["contextWindow"] {
+  const usage = nestedValue(eventPayload(value), ["contextWindowUsage"]);
+  if (typeof usage !== "object" || usage === null) return null;
+  const record = usage as Record<string, unknown>;
+  const usedRaw = record.usedTokens;
+  const windowRaw = record.modelContextWindow;
+  // Nullable in the schema: corrupt-but-present numbers degrade the field.
+  const usedTokens =
+    usedRaw === null || usedRaw === undefined
+      ? null
+      : (finiteNonNegative(usedRaw) ?? null);
+  const modelContextWindow =
+    windowRaw === null || windowRaw === undefined
+      ? null
+      : (finiteNonNegative(windowRaw) ?? null);
+  // Required by the schema with no null arm: a corrupt flag voids the section.
+  if (typeof record.estimated !== "boolean") return null;
+  return { usedTokens, modelContextWindow, estimated: record.estimated };
+}
+
+/** null for "no fallback" and for a corrupt value alike; the glyph draws neither. */
+function sanitizeModelFallback(row: unknown): RowSignal["modelFallback"] {
+  if (row === null || row === undefined) return null;
+  const payload = eventPayload(row);
+  const originalModel = nonEmptyString(payload.originalModel);
+  const fallbackModel = nonEmptyString(payload.fallbackModel);
+  const reason = nonEmptyString(payload.reason);
+  const message = nonEmptyString(payload.message);
+  return originalModel !== null &&
+    fallbackModel !== null &&
+    reason !== null &&
+    message !== null
+    ? { originalModel, fallbackModel, reason, message }
+    : null;
+}
+
+/** null for "no goal" (or a clear) and for a corrupt value alike. */
+function sanitizeGoal(row: unknown): RowSignal["goal"] {
+  if (typeof row !== "object" || row === null) return null;
+  if ((row as { type?: unknown }).type !== "thread/goal/updated") return null;
+  const payload = eventPayload(row);
+  const status = nonEmptyString(payload.status);
+  const tokensUsed = finiteNonNegative(payload.tokensUsed);
+  if (status === null || tokensUsed === null) return null;
+  const budgetRaw = payload.tokenBudget;
+  // Nullable in the schema: a corrupt budget degrades the field, not the goal.
+  const tokenBudget =
+    budgetRaw === null || budgetRaw === undefined
+      ? null
+      : (finiteNonNegative(budgetRaw) ?? null);
+  return { status, tokensUsed, tokenBudget };
+}
+
+function sanitizeContextPressure(row: unknown): RowSignal["contextPressure"] {
+  if (row === null || row === undefined) return null;
+  const usage = nestedValue(eventPayload(row), ["contextWindowUsage"]);
+  if (typeof usage !== "object" || usage === null) return null;
+  const record = usage as Record<string, unknown>;
+  const used = record.usedTokens;
+  const window = record.modelContextWindow;
+  if (typeof used !== "number" || typeof window !== "number") return null;
+  return pressure(used, window);
+}
+
+function isRateLimitBlocked(row: unknown): boolean {
+  const status = nestedValue(eventPayload(row), ["rateLimits", "status"]);
+  return status === "blocked";
+}
+
+/**
  * B85. One thread's work labels: cumulative tokens off the newest usage
  * event, and the tool-call count off the timeline's work rows. A failure of
  * either read degrades that field to null, never the whole entry.
@@ -75,7 +235,9 @@ async function loadWorkStats(
       const usage = await newestEvent(threads, threadId, [
         "thread/tokenUsage/updated",
       ]);
-      tokens = usage?.data.tokenUsage.total.totalTokens ?? null;
+      tokens = finiteNonNegative(
+        usage?.data.tokenUsage.total.totalTokens ?? null,
+      );
     } catch {
       tokens = null;
     }
@@ -129,12 +291,8 @@ async function loadExecution(
 ): Promise<ThreadExecution> {
   try {
     const execution = await threads.defaultExecutionOptions({ threadId });
-    return {
-      threadId,
-      execution: execution
-        ? { model: execution.model, reasoningLevel: execution.reasoningLevel }
-        : null,
-    };
+    // H1: a corrupt model string degrades this id, never the batch.
+    return { threadId, execution: sanitizeExecution(execution) };
   } catch {
     return { threadId, execution: null };
   }
@@ -153,7 +311,9 @@ async function loadLastActivity(
 ): Promise<ThreadLastActivity> {
   try {
     const rows = await threads.events.list({ threadId, order: "desc", limit: "1" });
-    return { threadId, at: rows[0]?.createdAt ?? null };
+    // H1: a corrupt timestamp falls back to null (the row draws
+    // `thread.updatedAt`), never to a rejected batch.
+    return { threadId, at: finiteNonNegative(rows[0]?.createdAt ?? null) };
   } catch {
     return { threadId, at: null };
   }
@@ -169,23 +329,12 @@ async function loadDossier(threads: ThreadsApi, threadId: string): Promise<Dossi
   return {
     threadId,
     // B29 (§7): both lines are omitted together when options never resolved.
-    execution: execution
-      ? { model: execution.model, reasoningLevel: execution.reasoningLevel }
-      : null,
-    // B31: no token events is a value, not an error.
-    economics: tokenUsage
-      ? {
-          total: tokenUsage.data.tokenUsage.total,
-          modelContextWindow: tokenUsage.data.tokenUsage.modelContextWindow,
-        }
-      : null,
-    contextWindow: contextUsage
-      ? {
-          usedTokens: contextUsage.data.contextWindowUsage.usedTokens,
-          modelContextWindow: contextUsage.data.contextWindowUsage.modelContextWindow,
-          estimated: contextUsage.data.contextWindowUsage.estimated,
-        }
-      : null,
+    // H1: a corrupt model string degrades this call, never a batch around it.
+    execution: sanitizeExecution(execution),
+    // B31: no token events is a value, not an error. H1: corrupt values
+    // degrade their own section, never the call.
+    economics: tokenUsage ? sanitizeTokenTotals(tokenUsage) : null,
+    contextWindow: contextUsage ? sanitizeContextWindow(contextUsage) : null,
     fetchedAt: Date.now(),
   };
 }
@@ -210,32 +359,15 @@ async function loadRowSignal(threads: ThreadsApi, threadId: string): Promise<Row
 
   return {
     threadId,
-    contextPressure: contextUsage
-      ? pressure(
-          contextUsage.data.contextWindowUsage.usedTokens,
-          contextUsage.data.contextWindowUsage.modelContextWindow,
-        )
-      : null,
+    // H1: every field below degrades to its own null on a corrupt value, so
+    // one bad row never rejects the batch its siblings share.
+    contextPressure: sanitizeContextPressure(contextUsage),
     // B38
-    modelFallback: fallback
-      ? {
-          originalModel: fallback.data.originalModel,
-          fallbackModel: fallback.data.fallbackModel,
-          reason: fallback.data.reason,
-          message: fallback.data.message,
-        }
-      : null,
+    modelFallback: sanitizeModelFallback(fallback),
     // B39 (§7): an extra monochrome glyph, not a sixth indicator state.
-    isRateLimitPaused: rateLimits?.data.rateLimits.status === "blocked",
+    isRateLimitPaused: isRateLimitBlocked(rateLimits),
     // B40: a newer `cleared` wins over an older `updated`.
-    goal:
-      goal?.type === "thread/goal/updated"
-        ? {
-            status: goal.data.status,
-            tokensUsed: goal.data.tokensUsed,
-            tokenBudget: goal.data.tokenBudget,
-          }
-        : null,
+    goal: sanitizeGoal(goal),
   };
 }
 
@@ -248,19 +380,67 @@ async function loadRowSignal(threads: ThreadsApi, threadId: string): Promise<Row
  */
 const FAN_OUT_CONCURRENCY = 8;
 
+/**
+ * Round-2 M1: the batch cap above bounds one call, but two calls racing (the
+ * list's rowSignals plus its lastActivity on the same scroll) each ran 8
+ * loads, doubling the concurrent SDK reads with no shared ceiling. This
+ * module-level semaphore caps concurrent per-id LOADS across every in-flight
+ * call at the same 8. (One signals load fans out to 4 event reads, so the
+ * worst case is still a bounded multiple — the point is one shared ceiling.)
+ *
+ * Deadlock-free: a load never acquires while holding another slot, every
+ * acquisition releases in a `finally`, waiters are served FIFO, and batches
+ * stay sequential — so a waiting batch always has running loads draining ahead
+ * of it. There is exactly one client per backend (see the no-cache comment on
+ * the handlers), which is why a process-wide cap is the right bound.
+ */
+const GLOBAL_MAX_CONCURRENT_LOADS = 8;
+let globalActiveLoads = 0;
+const globalLoadWaiters: Array<() => void> = [];
+
+function acquireLoadSlot(): Promise<void> {
+  if (globalActiveLoads < GLOBAL_MAX_CONCURRENT_LOADS) {
+    globalActiveLoads += 1;
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    globalLoadWaiters.push(() => {
+      globalActiveLoads += 1;
+      resolve();
+    });
+  });
+}
+
+function releaseLoadSlot(): void {
+  globalActiveLoads -= 1;
+  const next = globalLoadWaiters.shift();
+  if (next !== undefined) next();
+}
+
 async function collectInBatches<T>(
   threadIds: readonly string[],
   load: (threadId: string) => Promise<T>,
+  keyOf: (value: T) => string,
 ): Promise<T[]> {
   const unique = [...new Set(threadIds)];
-  const out: T[] = [];
+  const byId = new Map<string, T>();
   for (let i = 0; i < unique.length; i += FAN_OUT_CONCURRENCY) {
     const batch = await Promise.all(
-      unique.slice(i, i + FAN_OUT_CONCURRENCY).map(load),
+      unique.slice(i, i + FAN_OUT_CONCURRENCY).map(async (threadId) => {
+        await acquireLoadSlot();
+        try {
+          return await load(threadId);
+        } finally {
+          releaseLoadSlot();
+        }
+      }),
     );
-    out.push(...batch);
+    for (const value of batch) byId.set(keyOf(value), value);
   }
-  return out;
+  // Round-2 L3: the contract promises one entry per REQUESTED id in request
+  // order, but dedupe above loads each id once. Expand back to the input's
+  // multiplicity so a repeated id answers once per request, not once total.
+  return threadIds.map((threadId) => byId.get(threadId) as T);
 }
 
 export default function plugin(bb: BbPluginApi) {
@@ -364,28 +544,37 @@ export default function plugin(bb: BbPluginApi) {
     // throw PluginContextStaleError rather than reach a dead runtime.
     threadDossier: ({ threadId }) => loadDossier(bb.sdk.threads, threadId),
     rowSignals: async ({ threadIds }) => ({
-      signals: await collectInBatches(threadIds, (threadId) =>
-        loadRowSignal(bb.sdk.threads, threadId),
+      signals: await collectInBatches(
+        threadIds,
+        (threadId) => loadRowSignal(bb.sdk.threads, threadId),
+        (signal) => signal.threadId,
       ),
     }),
     // B71.1: the fan-out is here, inside one round trip, not across the wire.
     threadExecutions: async ({ threadIds }) => ({
-      executions: await collectInBatches(threadIds, (threadId) =>
-        loadExecution(bb.sdk.threads, threadId),
+      executions: await collectInBatches(
+        threadIds,
+        (threadId) => loadExecution(bb.sdk.threads, threadId),
+        (entry) => entry.threadId,
       ),
     }),
     // B82: the same one-round-trip fan-out, for the ids the list has rendered.
     lastActivity: async ({ threadIds }) => ({
-      activity: await collectInBatches(threadIds, (threadId) =>
-        loadLastActivity(bb.sdk.threads, threadId),
+      activity: await collectInBatches(
+        threadIds,
+        (threadId) => loadLastActivity(bb.sdk.threads, threadId),
+        (entry) => entry.threadId,
       ),
     }),
     // B85: tokens and tool calls, fanned out like the executions above.
     threadWorkStats: async ({ threadIds }) => ({
-      stats: await collectInBatches(threadIds, (threadId) =>
-        loadWorkStats(bb.sdk.threads, threadId, (message) =>
-          bb.log.warn(message),
-        ),
+      stats: await collectInBatches(
+        threadIds,
+        (threadId) =>
+          loadWorkStats(bb.sdk.threads, threadId, (message) =>
+            bb.log.warn(message),
+          ),
+        (entry) => entry.threadId,
       ),
     }),
     // A row's host name is worth drawing only when the work runs somewhere

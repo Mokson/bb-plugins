@@ -8,6 +8,7 @@
  * derive from it, never in the fetching. The hook keeps its own semantics; the
  * cache keeps the parts that were identical.
  */
+import type { z } from "zod";
 export interface BatchCacheOptions<TValue, TResult, TMethod extends string> {
   /** The RPC method name, passed straight to `call`. */
   method: TMethod;
@@ -36,6 +37,13 @@ export interface BatchCache<TValue, TMethod extends string> {
   /** Requests every id that is neither fresh nor already in flight. */
   ensure(threadIds: readonly string[], call: BatchCall<TMethod>): void;
   /**
+   * Expires one id so the next `ensure` refetches it, and repaints its
+   * listeners. Round-2 M4: the dossier-channel hook for per-id TTL-bypass.
+   * Expiry (not deletion) keeps the last known value on screen while the
+   * refresh flies — the stale-while-revalidate contract of `get`.
+   */
+  invalidate(threadId: string): void;
+  /**
    * The entry for one id, or undefined when it has never resolved.
    *
    * Stale-while-revalidate: an expired entry is still served. The TTL decides
@@ -59,12 +67,57 @@ type BatchCall<TMethod extends string> = (
   input: { threadIds: string[] },
 ) => Promise<unknown>;
 
+/**
+ * Round-2 M5: validates one wire element per batch entry at the unpack site.
+ * A corrupt-but-formed element (tokensUsed: "1000") resolves to `missing`
+ * under its claimed id — when the row carries no usable id it is dropped —
+ * so one corrupt entry degrades alone instead of poisoning its batch.
+ */
+export function unpackValidated<TValue, TElement>(
+  rows: unknown,
+  schema: z.ZodType<TElement>,
+  pick: (element: TElement) => { threadId: string; value: TValue },
+  missing: TValue,
+): ReadonlyMap<string, TValue> {
+  const out = new Map<string, TValue>();
+  if (!Array.isArray(rows)) return out;
+  for (const row of rows) {
+    const parsed = schema.safeParse(row);
+    if (parsed.success) {
+      const { threadId, value } = pick(parsed.data);
+      out.set(threadId, value);
+    } else if (
+      typeof row === "object" &&
+      row !== null &&
+      typeof (row as { threadId?: unknown }).threadId === "string"
+    ) {
+      out.set((row as { threadId: string }).threadId, missing);
+    }
+  }
+  return out;
+}
+
 export function createBatchCache<TValue, TResult, TMethod extends string>(
   options: BatchCacheOptions<TValue, TResult, TMethod>,
 ): BatchCache<TValue, TMethod> {
   const entries = new Map<string, BatchCacheEntry<TValue> & { expiresAt: number }>();
   const inFlight = new Set<string>();
   const listeners = new Set<() => void>();
+  /**
+   * Round-2 M2: the same FIFO cap-200 as useDossier's, so a long session
+   * resolving hundreds of distinct ids cannot grow this without bound.
+   */
+  const MAX_BATCH_CACHE_ENTRIES = 200;
+  /**
+   * Ids invalidated while their batch is still in flight. The settle below
+   * would otherwise store the pre-invalidation answer with a fresh TTL and the
+   * event would be lost until that TTL lapses.
+   */
+  const invalidatedWhileInFlight = new Set<string>();
+
+  const notify = (): void => {
+    for (const listener of [...listeners]) listener();
+  };
 
   const store = (threadId: string, value: TValue, failed: boolean): void => {
     entries.set(threadId, {
@@ -72,6 +125,11 @@ export function createBatchCache<TValue, TResult, TMethod extends string>(
       failed,
       expiresAt: Date.now() + (failed ? options.errorTtlMs : options.readyTtlMs),
     });
+    while (entries.size > MAX_BATCH_CACHE_ENTRIES) {
+      const oldest = entries.keys().next();
+      if (oldest.done) break;
+      entries.delete(oldest.value);
+    }
   };
 
   const settle = (chunk: readonly string[], values: ReadonlyMap<string, TValue> | null) => {
@@ -83,8 +141,15 @@ export function createBatchCache<TValue, TResult, TMethod extends string>(
       const previous = values === null ? entries.get(id)?.value : undefined;
       store(id, previous ?? values?.get(id) ?? options.missing, values === null);
       inFlight.delete(id);
+      // M4: an invalidation that landed mid-flight wins over this settle.
+      // Expire what was just stored so the next `ensure` refetches; the
+      // notify below repaints, and the hooks' unconditional effects refetch.
+      if (invalidatedWhileInFlight.delete(id)) {
+        const stored = entries.get(id);
+        if (stored !== undefined) stored.expiresAt = 0;
+      }
     }
-    for (const listener of [...listeners]) listener();
+    notify();
   };
 
   return {
@@ -117,6 +182,14 @@ export function createBatchCache<TValue, TResult, TMethod extends string>(
     get(threadId) {
       return entries.get(threadId);
     },
+    invalidate(threadId) {
+      if (inFlight.has(threadId)) invalidatedWhileInFlight.add(threadId);
+      const entry = entries.get(threadId);
+      // Nothing held and nothing flying: no repaint to trigger.
+      if (entry === undefined && !inFlight.has(threadId)) return;
+      if (entry !== undefined) entry.expiresAt = 0;
+      notify();
+    },
     subscribe(listener) {
       listeners.add(listener);
       return () => {
@@ -127,6 +200,7 @@ export function createBatchCache<TValue, TResult, TMethod extends string>(
       entries.clear();
       inFlight.clear();
       listeners.clear();
+      invalidatedWhileInFlight.clear();
     },
   };
 }

@@ -24,7 +24,7 @@
       ]
     },
     "noEmit": true,
-    "skipLibCheck": true
+    "skipLibCheck": false
   },
   "include": [
     "server.ts",

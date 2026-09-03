@@ -249,7 +249,7 @@ describe("useRowSignals batching (§7 B37-B40 ruling)", () => {
     ).toHaveLength(2);
   });
 
-  it("renders no glyphs and does not throw when the batch rejects", async () => {
+    it("renders no glyphs and does not throw when the batch rejects", async () => {
     visibleIds = new Set(["t1"]);
     const slot = renderSlot<{ threadIds: string[] }, Contract>(
       { component: Harness },
@@ -275,5 +275,61 @@ describe("useRowSignals batching (§7 B37-B40 ruling)", () => {
     expect(
       slot.inspection.rpcCalls.filter((c) => c.method === "rowSignals"),
     ).toHaveLength(1);
+  });
+
+  it("discards a settle superseded by an invalidation and refetches (H2)", async () => {
+    visibleIds = new Set(["t1"]);
+    const resolvers: Array<(value: { signals: RowSignal[] }) => void> = [];
+    const slot = renderSlot<{ threadIds: string[] }, Contract>(
+      { component: Harness },
+      { threadIds: ["t1"] },
+      {
+        rpc: {
+          threadDossier: ({ threadId }) => ({
+            threadId,
+            execution: null,
+            economics: null,
+            contextWindow: null,
+            fetchedAt: 0,
+          }),
+          rowSignals: () =>
+            new Promise<{ signals: RowSignal[] }>((resolve) => {
+              resolvers.push(resolve);
+            }),
+          threadExecutions: () => ({ executions: [] }),
+          lastActivity: () => ({ activity: [] }),
+          threadWorkStats: () => ({ stats: [] }),
+          localHost: () => ({ hostId: null }),
+        },
+      },
+    );
+    // Past the 50ms batch delay: the first request is in flight.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60);
+    });
+    expect(
+      slot.inspection.rpcCalls.filter((c) => c.method === "rowSignals"),
+    ).toHaveLength(1);
+
+    // The turn boundary lands mid-flight.
+    await slot.behavior.emitRealtime(DOSSIER_CHANNEL, { threadId: "t1" });
+    await act(async () => {
+      resolvers[0]!({ signals: [signal("t1", { isRateLimitPaused: true })] });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // The stale settle stores nothing: the refetch it scheduled is a second
+    // request, and the fresh answer (no pause) is what finally draws.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60);
+    });
+    expect(
+      slot.inspection.rpcCalls.filter((c) => c.method === "rowSignals"),
+    ).toHaveLength(2);
+    await act(async () => {
+      resolvers[1]!({ signals: [signal("t1")] });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(glyph("t1", "rate-limit-paused")).toBeNull();
   });
 });

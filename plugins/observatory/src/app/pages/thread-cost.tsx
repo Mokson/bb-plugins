@@ -15,6 +15,7 @@ import {
   NumHead,
   QueryFrame,
   TextHead,
+  TruncatedNotice,
 } from "@/components/spend-common";
 import {
   formatDuration,
@@ -151,6 +152,11 @@ export function ThreadCost({ threadId }: { threadId: string }) {
             <Heroes totals={data.totals} />
             <Sparkline turns={data.turns} onSelect={openCacheDrilldown} />
             <TurnTable turns={data.turns} />
+            <TruncatedNotice
+              show={data.truncated}
+              shown={data.turns.length}
+              unit="turns"
+            />
           </>
         )}
       </QueryFrame>

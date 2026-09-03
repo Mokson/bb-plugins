@@ -153,7 +153,7 @@ import {
  * A test asserts the two agree, so a release that bumps one and forgets the
  * other fails in CI rather than in a support round.
  */
-export const VERSION = "0.0.1";
+export const VERSION = "0.0.3";
 
 /**
  * Where this build is actually installed.
@@ -440,7 +440,7 @@ function parseHours(value: string | boolean | undefined, fallback: number) {
 }
 
 /** Retention days, from the setting, falling back to the advertised default. */
-function parseDays(value: string | boolean | undefined, fallback: number) {
+export function parseDays(value: string | boolean | undefined, fallback: number) {
   const parsed = Number.parseFloat(typeof value === "string" ? value : "");
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
@@ -974,9 +974,12 @@ export function runAuditCommand(
     if (hasFlag(argv, "pack")) {
       // Verbatim, unformatted: this surface exists so an operator can measure
       // what the agent tool returns, and pretty-printing would change it.
+      // `--export` rides along the same way it does on the tool: without it
+      // the pack is a read and leaves no files behind.
       const result = auditPackToolResult(
         resolved,
         isFolder ? { runFolder: target } : { threadId: target },
+        { write: hasFlag(argv, "export") },
       );
       return { exitCode: 0, stdout: `${result}\n` };
     }
@@ -1375,23 +1378,10 @@ export function auditPackToolResult(
   return clampToolResult(auditPackWithExport(deps, target, options));
 }
 
-/** Every run folder the ledger attributes at least one thread to. */
-export function knownRunFolders(db: Database): Set<string> {
-  const rows = db
-    .prepare<[], { run_folder: string | null }>(
-      `SELECT DISTINCT run_folder FROM obs_thread WHERE run_folder IS NOT NULL`,
-    )
-    .all();
-  return new Set(
-    rows
-      .map((row) => row.run_folder)
-      .filter((folder): folder is string => folder !== null),
-  );
-}
-
 /**
- * The tool-call hot path of the above: one parameterized EXISTS instead of
- * loading every attributed folder to test one id.
+ * Whether the ledger attributes at least one thread to this run folder: one
+ * parameterized EXISTS, so gating an operator-supplied folder never loads
+ * every attributed folder to test one id.
  */
 export function isKnownRunFolder(db: Database, folder: string): boolean {
   return (
@@ -1532,6 +1522,15 @@ export function runSpendCommand(
       const folder = argv.find((entry) => !entry.startsWith("--"));
       if (!folder) {
         return { exitCode: 1, stderr: "cost-md needs a run folder\n" };
+      }
+      // `buildCostMd` reads `<folder>/LEDGER.md` from disk, so an unchecked
+      // folder makes this command an arbitrary-file read. The agent tool
+      // applies the same gate; the CLI must not be the way around it.
+      if (!isKnownRunFolder(deps.db, folder)) {
+        return {
+          exitCode: 1,
+          stderr: `no such run folder in the ledger: ${folder}\n`,
+        };
       }
       const snapshot = parseSnapshot(flagValue(argv, "snapshot"));
       const report = buildCostMd(deps.db, {
@@ -1687,7 +1686,9 @@ async function backfill(
           .slice(0, 10)
           .join(", ")}${failures.size > 10 ? ", …" : ""}`;
   return {
-    exitCode: 0,
+    // A backfill that names failures failed: exit 0 would let a schedule
+    // report healthy while threads sit undrained.
+    exitCode: failures.size === 0 ? 0 : 1,
     stdout: `backfilled ${drained} threads since ${new Date(since).toISOString()}${failureLine}\n${formatCoverage(
       runtime.events.coverage(provider ?? null),
       runtime.events.coverageByProvider(provider ?? null),

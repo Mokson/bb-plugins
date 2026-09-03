@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-observatory",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "type": "module",
   "description": "Cost, cache, stall, context, audit, eval and distillery for bb agent runs.",
   "license": "MIT",
