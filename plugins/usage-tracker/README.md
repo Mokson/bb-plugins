@@ -28,8 +28,9 @@ usage reading, without adding a navigation item or a separate plugin page.
   strip compacts for fewer providers and disappears when all are disabled.
 - Lets you choose whether the compact percentage and progress bar show the
   weekly or five-hour limit. Weekly is the default.
-- Expands either provider to show its five-hour, weekly, and additional
-  provider-defined percentages.
+- Expands any provider reading into one popover listing every enabled
+  provider with all of its limit windows, reset countdowns, and provider
+  status; selecting a row slides to that provider's full detail view.
 - Includes reset timing and provider session status in the expanded view.
 - Refreshes automatically every five minutes and whenever a stale BB window
   becomes active again.
@@ -82,13 +83,15 @@ to see the recovery instruction reported by BB.
 
 The collapsed strip is designed for quick scanning:
 
-- Select the Claude Code, Codex, or OpenCode Go reading to open its details in
-  place.
-- Review the full **5-hour limit**, **weekly limit**, every additional
-  provider-defined window (including OpenCode Go's **monthly limit**), and
-  their reset times.
+- Select the compact usage strip (one clickable area covering all provider
+  readings) to open the usage popover.
+- Review every provider's **5-hour limit**, **weekly limit**, additional
+  provider-defined windows (including OpenCode Go's **monthly limit**), and
+  their reset countdowns in one list.
+- Select a provider row to slide to its full detail view; use the back
+  button or <kbd>Esc</kbd> to return to the list.
 - Select the same provider again, use the close button, press <kbd>Esc</kbd>,
-  or click outside the details to collapse it.
+  or click outside the popover to collapse it.
 - Select the refresh icon to fetch both providers immediately.
 
 Usage Tracker otherwise refreshes in the background every five minutes. It
