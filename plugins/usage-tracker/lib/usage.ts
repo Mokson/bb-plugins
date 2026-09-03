@@ -1,7 +1,16 @@
-export const PROVIDER_IDS = ["codex", "claudeCode", "cursor"] as const;
+export const PROVIDER_IDS = [
+  "codex",
+  "claudeCode",
+  "cursor",
+  "opencodeGo",
+] as const;
 
 export type ProviderId = (typeof PROVIDER_IDS)[number];
-export type RawProviderId = ProviderId | "claude-code" | "acp-cursor";
+export type RawProviderId =
+  | ProviderId
+  | "claude-code"
+  | "acp-cursor"
+  | "opencode-go";
 export type ProviderStatus =
   | "ok"
   | "not_installed"
@@ -76,6 +85,8 @@ interface ProviderDefinition {
   wireIds: readonly RawProviderId[];
   name: string;
   loginCommand: string;
+  /** Replaces the login-command copy for providers that authenticate outside a CLI. */
+  signInMessage?: string;
 }
 
 const PROVIDERS: readonly ProviderDefinition[] = [
@@ -96,6 +107,14 @@ const PROVIDERS: readonly ProviderDefinition[] = [
     wireIds: ["acp-cursor", "cursor"],
     name: "Cursor",
     loginCommand: "cursor-agent login",
+  },
+  {
+    id: "opencodeGo",
+    wireIds: ["opencode-go", "opencodeGo"],
+    name: "OpenCode Go",
+    loginCommand: "",
+    signInMessage:
+      "Add your OpenCode API key under Settings → Plugins → Usage Tracker, then refresh usage.",
   },
 ];
 
@@ -124,7 +143,10 @@ function statusMessage(
     case "not_installed":
       return `${provider.name} is not installed on this machine.`;
     case "unauthenticated":
-      return `Sign in with \`${provider.loginCommand}\`, then refresh usage.`;
+      return (
+        provider.signInMessage ??
+        `Sign in with \`${provider.loginCommand}\`, then refresh usage.`
+      );
     case "expired":
       return `The ${provider.name} session expired. Run \`${provider.loginCommand}\`, then refresh usage.`;
     case "error":

@@ -48,19 +48,25 @@ async function resolveHostName(
   }
 }
 
+/**
+ * Provider usage the plugin gathers itself, layered under whatever bb reports.
+ * bb never emits these keys, so the overlay can only ever add providers.
+ */
 export async function loadUsageSnapshot(
   sdk: UsageSdk,
   threadId: string | null,
   fetchedAt = new Date(),
+  extra: RawUsageResponse = {},
 ): Promise<UsageSnapshot> {
   const hostId =
     threadId === null ? null : await resolveThreadHostId(sdk, threadId);
-  const [response, hostName] = await Promise.all([
+  const [bbResponse, hostName] = await Promise.all([
     hostId === null
       ? sdk.system.usageLimits()
       : sdk.system.usageLimits({ hostId }),
     resolveHostName(sdk, hostId),
   ]);
+  const response: RawUsageResponse = { ...extra, ...bbResponse };
 
   return normalizeUsage(response, { id: hostId, name: hostName }, fetchedAt);
 }

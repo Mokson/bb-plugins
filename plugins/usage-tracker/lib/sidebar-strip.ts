@@ -105,9 +105,15 @@ function closeGlyph(): SVGSVGElement {
 }
 
 function emptyProvider(providerId: SidebarProviderId): ProviderUsage {
+  const name =
+    providerId === "codex"
+      ? "Codex"
+      : providerId === "opencodeGo"
+        ? "OpenCode Go"
+        : "Claude Code";
   return {
     id: providerId,
-    name: providerId === "codex" ? "Codex" : "Claude Code",
+    name,
     status: "error",
     accountEmail: null,
     planLabel: null,

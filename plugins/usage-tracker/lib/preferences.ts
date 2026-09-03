@@ -1,4 +1,8 @@
-export const SIDEBAR_PROVIDER_IDS = ["claudeCode", "codex"] as const;
+export const SIDEBAR_PROVIDER_IDS = [
+  "claudeCode",
+  "codex",
+  "opencodeGo",
+] as const;
 export const COMPACT_LIMIT_OPTIONS = ["Weekly", "Five-hour"] as const;
 
 export type SidebarProviderId = (typeof SIDEBAR_PROVIDER_IDS)[number];
@@ -13,18 +17,28 @@ export function normalizeCompactLimitOption(
 export interface UsageTrackerPreferences {
   enableClaudeCode: boolean;
   enableCodex: boolean;
+  enableOpenCodeGo: boolean;
   compactLimit: CompactLimitOption;
 }
+
+const PROVIDER_TOGGLE: Readonly<
+  Record<
+    SidebarProviderId,
+    "enableClaudeCode" | "enableCodex" | "enableOpenCodeGo"
+  >
+> = {
+  claudeCode: "enableClaudeCode",
+  codex: "enableCodex",
+  opencodeGo: "enableOpenCodeGo",
+};
 
 export function enabledSidebarProviderIds(
   preferences: Pick<
     UsageTrackerPreferences,
-    "enableClaudeCode" | "enableCodex"
+    "enableClaudeCode" | "enableCodex" | "enableOpenCodeGo"
   >,
 ): SidebarProviderId[] {
-  return SIDEBAR_PROVIDER_IDS.filter((providerId) =>
-    providerId === "claudeCode"
-      ? preferences.enableClaudeCode
-      : preferences.enableCodex,
+  return SIDEBAR_PROVIDER_IDS.filter(
+    (providerId) => preferences[PROVIDER_TOGGLE[providerId]] === true,
   );
 }

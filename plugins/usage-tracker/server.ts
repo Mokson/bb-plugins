@@ -1,6 +1,7 @@
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { loadUsageSnapshot } from "./lib/load-usage.ts";
+import { fetchOpenCodeGoUsage } from "./lib/opencode-go.ts";
 import {
   COMPACT_LIMIT_OPTIONS,
   enabledSidebarProviderIds,
@@ -87,6 +88,19 @@ export default function plugin(bb: BbPluginApi) {
       description: "Show Codex usage in the sidebar footer.",
       default: true,
     },
+    enableOpenCodeGo: {
+      type: "boolean",
+      label: "Enable OpenCode Go",
+      description: "Show OpenCode Go usage in the sidebar footer.",
+      default: true,
+    },
+    opencodeApiKey: {
+      type: "string",
+      label: "OpenCode API key",
+      secret: true,
+      description:
+        "API key from opencode.ai, used to read OpenCode Go usage limits.",
+    },
     compactLimit: {
       type: "select",
       label: "Compact limit",
@@ -104,8 +118,16 @@ export default function plugin(bb: BbPluginApi) {
         compactLimit: normalizeCompactLimitOption(preferences.compactLimit),
       };
     },
-    getUsage({ threadId }) {
-      return loadUsageSnapshot(bb.sdk, threadId);
+    async getUsage({ threadId }) {
+      const preferences = await settings.get();
+      const extra = preferences.enableOpenCodeGo
+        ? {
+            "opencode-go": await fetchOpenCodeGoUsage(
+              preferences.opencodeApiKey,
+            ),
+          }
+        : {};
+      return loadUsageSnapshot(bb.sdk, threadId, new Date(), extra);
     },
   });
 }
