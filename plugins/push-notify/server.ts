@@ -207,7 +207,7 @@ function wait(delayMs: number): Promise<void> {
 }
 
 /** Seconds (numeric) or HTTP-date value of a Retry-After header, in ms. */
-function retryAfterDelayMs(error: unknown): number | null {
+export function retryAfterDelayMs(error: unknown): number | null {
   if (typeof error !== "object" || error === null || !("headers" in error)) {
     return null;
   }
@@ -282,6 +282,51 @@ self.addEventListener("notificationclick", (event) => {
   })());
 });
 `.trimStart();
+}
+
+export const MAX_TURN_START_ENTRIES = 1000;
+export const TURN_START_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Turn-start bookkeeping shared by the thread.active/idle handlers. Kept as
+ * map-in/map-out helpers (instead of closures) so the TTL/cap eviction is
+ * unit-testable with direct ms math.
+ */
+export function recordTurnStartEntry(
+  entries: Map<string, number>,
+  threadId: string,
+  now: number = Date.now(),
+): void {
+  // Insertion order tracks age (recorded ids are refreshed below), so the
+  // sweep can stop at the first entry that is still fresh.
+  for (const [id, startedAt] of entries) {
+    if (now - startedAt <= TURN_START_TTL_MS) break;
+    entries.delete(id);
+  }
+  while (entries.size >= MAX_TURN_START_ENTRIES) {
+    const oldest = entries.keys().next();
+    if (oldest.done) break;
+    entries.delete(oldest.value);
+  }
+  entries.delete(threadId);
+  entries.set(threadId, now);
+}
+
+/**
+ * Read without removing: the entry is deleted only after the idle handler
+ * settles, so a second thread.idle racing the first still sees the start
+ * time and cannot bypass the short-turn filter with an unknown duration.
+ */
+export function peekTurnStartEntry(
+  entries: Map<string, number>,
+  threadId: string,
+  now: number = Date.now(),
+): number | undefined {
+  const startedAt = entries.get(threadId);
+  if (startedAt === undefined) return undefined;
+  if (now - startedAt <= TURN_START_TTL_MS) return startedAt;
+  entries.delete(threadId);
+  return undefined;
 }
 
 export default function plugin(bb: BbPluginApi) {
@@ -375,7 +420,7 @@ export default function plugin(bb: BbPluginApi) {
     readMetadata.get("vapid_private_key") as { value: string } | undefined
   )?.value;
 
-  if (!publicKey || !privateKey) {
+  if (!publicKey && !privateKey) {
     const keys = webPush.generateVAPIDKeys();
     // Subscriptions are encrypted to the old key pair, so every stored
     // device is orphaned by a rotation and must go in the same transaction.
@@ -389,6 +434,18 @@ export default function plugin(bb: BbPluginApi) {
     bb.log.info(
       `Generated new VAPID keys and removed ${orphanedDevices} orphaned device(s)`,
     );
+    publicKey = keys.publicKey;
+    privateKey = keys.privateKey;
+  } else if (!publicKey || !privateKey) {
+    // Partial key loss is corruption, not a rotation: wiping devices here
+    // would destroy registrations that still work once the missing key is
+    // restored, so keep them and mint a fresh pair for new subscriptions.
+    bb.log.error(
+      "VAPID key pair is incomplete; keeping existing devices and generating a fresh pair",
+    );
+    const keys = webPush.generateVAPIDKeys();
+    upsertMetadata.run("vapid_public_key", keys.publicKey);
+    upsertMetadata.run("vapid_private_key", keys.privateKey);
     publicKey = keys.publicKey;
     privateKey = keys.privateKey;
   }
@@ -468,6 +525,11 @@ export default function plugin(bb: BbPluginApi) {
     }
   }
 
+  // Superseded fan-outs stop quietly: when the delivery budget times out, the
+  // losing workers keep their in-flight send but must not start new devices
+  // once a newer notifyDevices call has begun.
+  let fanoutGeneration = 0;
+
   async function notifyDevices(
     kind: ThreadNotificationKind,
     thread: { id: string; projectId: string; title: string | null; titleFallback: string | null },
@@ -511,10 +573,13 @@ export default function plugin(bb: BbPluginApi) {
     const href = threadHref(thread.projectId, thread.id);
     // Bound the whole fan-out: slow push services must not stall the
     // fire-and-forget event handler indefinitely.
+    fanoutGeneration += 1;
+    const generation = fanoutGeneration;
     let fanoutTimeoutId: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
         eachWithConcurrency(notifiable, MAX_PARALLEL_SENDS, async (row) => {
+          if (generation !== fanoutGeneration) return;
           const content = notificationContent(
             kind,
             projectName,
@@ -589,39 +654,25 @@ export default function plugin(bb: BbPluginApi) {
   // turn, so a restarted plugin simply reports an unknown duration. Bounded
   // (1000 entries, 24h TTL) so a busy server cannot grow this map without
   // limit.
-  const MAX_TURN_START_ENTRIES = 1000;
-  const TURN_START_TTL_MS = 24 * 60 * 60 * 1000;
   const turnStartedAt = new Map<string, number>();
 
   function recordTurnStart(threadId: string): void {
-    const now = Date.now();
-    // Insertion order tracks age (recorded ids are refreshed below), so the
-    // sweep can stop at the first entry that is still fresh.
-    for (const [id, startedAt] of turnStartedAt) {
-      if (now - startedAt <= TURN_START_TTL_MS) break;
-      turnStartedAt.delete(id);
-    }
-    while (turnStartedAt.size >= MAX_TURN_START_ENTRIES) {
-      const oldest = turnStartedAt.keys().next();
-      if (oldest.done) break;
-      turnStartedAt.delete(oldest.value);
-    }
-    turnStartedAt.delete(threadId);
-    turnStartedAt.set(threadId, now);
+    recordTurnStartEntry(turnStartedAt, threadId);
   }
 
   /**
-   * Read without removing: the entry is deleted only after the idle handler
-   * settles, so a second thread.idle racing the first still sees the start
-   * time and cannot bypass the short-turn filter with an unknown duration.
+   * Read without removing; see peekTurnStartEntry. The idle handler deletes
+   * conditionally (only if the entry still holds the value it read), so a
+   * thread.active that re-inserts mid-handler is never removed by the stale
+   * handler.
    */
   function peekTurnStartedAt(threadId: string): number | undefined {
-    const startedAt = turnStartedAt.get(threadId);
-    if (startedAt === undefined) return undefined;
-    if (Date.now() - startedAt <= TURN_START_TTL_MS) return startedAt;
-    turnStartedAt.delete(threadId);
-    return undefined;
+    return peekTurnStartEntry(turnStartedAt, threadId);
   }
+
+  // Guards concurrent thread.idle deliveries for the same thread: the second
+  // handler returns early as a duplicate instead of double-notifying.
+  const idleInFlight = new Set<string>();
 
   bb.events.on("thread.active", ({ thread }) => {
     recordTurnStart(thread.id);
@@ -637,6 +688,8 @@ export default function plugin(bb: BbPluginApi) {
 
   bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
     const startedAt = peekTurnStartedAt(thread.id);
+    if (idleInFlight.has(thread.id)) return;
+    idleInFlight.add(thread.id);
     try {
       if (thread.visibility !== "visible") return;
       const filters = readFilters();
@@ -651,7 +704,10 @@ export default function plugin(bb: BbPluginApi) {
       if (!meetsMinimumDuration(durationMs, filters.minTurnSeconds)) return;
       await notifyDevices("idle", thread, compactText(lastAssistantText));
     } finally {
-      turnStartedAt.delete(thread.id);
+      idleInFlight.delete(thread.id);
+      if (turnStartedAt.get(thread.id) === startedAt) {
+        turnStartedAt.delete(thread.id);
+      }
     }
   });
 

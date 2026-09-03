@@ -275,4 +275,81 @@ describe("notification settings", () => {
       }),
     );
   });
+
+  it.each(["60abc", "5.5", "-1", ""])(
+    "rejects invalid minimum turn %p",
+    async (value) => {
+      const updateFilters = vi.fn();
+      setTestRpcHandlers({
+        getPushState: () => ({
+          vapidPublicKey:
+            "BOr7x74zSaD4vKLqHY4oQkhh3m9sHHOu8tC9mCtcZp7yyroLvBaY5qxG6qrU8PCo1uAqkp6hN7y5jXQOX7vaKNg",
+          workerUrl: "/api/v1/plugins/push-notify/http/service-worker.js",
+          workerScope: "/api/v1/plugins/push-notify/http/",
+          devices: [],
+          filters: {
+            suppressSubagents: true,
+            minTurnSeconds: 30,
+            mutedProjectIds: [],
+          },
+        }),
+        listProjects: () => [],
+        updateFilters,
+      });
+      const SettingsSection = await loadSettingsSection();
+      render(<SettingsSection />);
+
+      const minTurn = await screen.findByRole("textbox", {
+        name: "Minimum turn length in seconds",
+      });
+      fireEvent.change(minTurn, { target: { value } });
+      fireEvent.blur(minTurn);
+
+      expect(updateFilters).not.toHaveBeenCalled();
+      expect(
+        await screen.findByText(
+          "Minimum turn length must be between 0 and 3600 seconds.",
+        ),
+      ).toBeTruthy();
+      expect((minTurn as HTMLInputElement).value).toBe("30");
+    },
+  );
+
+  it("blocks muting a 501st project", async () => {
+    const updateFilters = vi.fn();
+    const mutedProjectIds = Array.from(
+      { length: 500 },
+      (_value, index) => `project-${index}`,
+    );
+    setTestRpcHandlers({
+      getPushState: () => ({
+        vapidPublicKey:
+          "BOr7x74zSaD4vKLqHY4oQkhh3m9sHHOu8tC9mCtcZp7yyroLvBaY5qxG6qrU8PCo1uAqkp6hN7y5jXQOX7vaKNg",
+        workerUrl: "/api/v1/plugins/push-notify/http/service-worker.js",
+        workerScope: "/api/v1/plugins/push-notify/http/",
+        devices: [],
+        filters: {
+          suppressSubagents: true,
+          minTurnSeconds: 30,
+          mutedProjectIds,
+        },
+      }),
+      listProjects: () => [
+        ...mutedProjectIds.map((id) => ({ id, name: id })),
+        { id: "project-new", name: "New project" },
+      ],
+      updateFilters,
+    });
+    const SettingsSection = await loadSettingsSection();
+    render(<SettingsSection />);
+
+    fireEvent.click(await screen.findByLabelText("New project"));
+
+    expect(updateFilters).not.toHaveBeenCalled();
+    expect(
+      await screen.findByText(
+        "You can mute up to 500 projects. Unmute one to mute another.",
+      ),
+    ).toBeTruthy();
+  });
 });

@@ -12,7 +12,14 @@ const webPushMock = vi.hoisted(() => ({
 
 vi.mock("web-push", () => webPushMock);
 
-import plugin, { PUSH_REQUEST_TIMEOUT_MS } from "./server";
+import plugin, {
+  MAX_TURN_START_ENTRIES,
+  peekTurnStartEntry,
+  PUSH_REQUEST_TIMEOUT_MS,
+  recordTurnStartEntry,
+  retryAfterDelayMs,
+  TURN_START_TTL_MS,
+} from "./server";
 
 type RpcHandler = (input: any) => any;
 
@@ -530,6 +537,25 @@ describe("web push plugin", () => {
     host.db.close();
   });
 
+  it("parses Retry-After as seconds or an HTTP date, and rejects the rest", () => {
+    expect(retryAfterDelayMs({ headers: { "retry-after": 2 } })).toBe(2000);
+    expect(retryAfterDelayMs({ headers: { "retry-after": "3" } })).toBe(3000);
+    expect(retryAfterDelayMs({ headers: { "retry-after": "  4  " } })).toBe(
+      4000,
+    );
+    const httpDate = new Date(Date.now() + 60_000).toUTCString();
+    const dateDelay = retryAfterDelayMs({
+      headers: { "retry-after": httpDate },
+    });
+    expect(dateDelay).toBeGreaterThan(0);
+    expect(dateDelay).toBeLessThanOrEqual(60_000);
+    // Arrays and garbage fall back to null so the caller uses fixed backoff.
+    expect(retryAfterDelayMs({ headers: { "retry-after": ["2"] } })).toBeNull();
+    expect(retryAfterDelayMs({ headers: { "retry-after": "soon" } })).toBeNull();
+    expect(retryAfterDelayMs({ headers: {} })).toBeNull();
+    expect(retryAfterDelayMs(new Error("boom"))).toBeNull();
+  });
+
   it("falls back to the default filters when the filter read fails", async () => {
     const host = createHost();
     plugin(host.bb);
@@ -559,6 +585,178 @@ describe("web push plugin", () => {
     expect(host.bb.log.warn).toHaveBeenCalledWith(
       "Could not read notification filters; using defaults",
     );
+    host.db.close();
+  });
+
+  it("wipes devices on reload only when both VAPID keys are gone", () => {
+    const host = createHost();
+    plugin(host.bb);
+    host.rpc.get("registerDevice")!({
+      id: "browser-1",
+      name: "Laptop",
+      subscription: subscription(),
+    });
+
+    host.db
+      .prepare("DELETE FROM push_metadata WHERE key LIKE 'vapid_%'")
+      .run();
+    plugin(host.bb);
+    expect(host.rpc.get("getPushState")!(null).devices).toEqual([]);
+
+    host.rpc.get("registerDevice")!({
+      id: "browser-2",
+      name: "Phone",
+      subscription: subscription("https://push.example/phone"),
+    });
+    host.db
+      .prepare("DELETE FROM push_metadata WHERE key = 'vapid_private_key'")
+      .run();
+    plugin(host.bb);
+    expect(host.rpc.get("getPushState")!(null).devices).toMatchObject([
+      { id: "browser-2", name: "Phone" },
+    ]);
+    expect(host.bb.log.error).toHaveBeenCalledWith(
+      expect.stringContaining("VAPID key pair is incomplete"),
+    );
+    host.db.close();
+  });
+
+  it("expires stale turn starts and caps the tracker", () => {
+    const entries = new Map<string, number>();
+    recordTurnStartEntry(entries, "thread-1", 1_000);
+    expect(
+      peekTurnStartEntry(entries, "thread-1", 1_000 + TURN_START_TTL_MS),
+    ).toBe(1_000);
+    expect(
+      peekTurnStartEntry(entries, "thread-1", 1_000 + TURN_START_TTL_MS + 1),
+    ).toBeUndefined();
+    expect(entries.has("thread-1")).toBe(false);
+
+    for (let index = 0; index <= MAX_TURN_START_ENTRIES; index += 1) {
+      recordTurnStartEntry(entries, `thread-${index}`, 2_000 + index);
+    }
+    expect(entries.size).toBe(MAX_TURN_START_ENTRIES);
+    expect(entries.has("thread-0")).toBe(false);
+    expect(entries.has(`thread-${MAX_TURN_START_ENTRIES}`)).toBe(true);
+  });
+
+  it("caps push fan-out at 25 devices", async () => {
+    const host = createHost();
+    plugin(host.bb);
+    const register = host.rpc.get("registerDevice")!;
+    for (let index = 0; index < 30; index += 1) {
+      register({
+        id: `browser-${index}`,
+        name: `Browser ${index}`,
+        subscription: subscription(`https://push.example/device-${index}`),
+      });
+    }
+
+    await host.events.get("thread.idle")!({
+      thread: {
+        id: "thread-1",
+        projectId: "project-1",
+        parentThreadId: null,
+        title: "Big launch",
+        titleFallback: null,
+        visibility: "visible",
+      },
+      lastAssistantText: "Done",
+    });
+
+    expect(webPushMock.sendNotification).toHaveBeenCalledTimes(25);
+    expect(host.bb.log.warn).toHaveBeenCalledWith(
+      "Capping push fan-out at 25 of 30 devices",
+    );
+    host.db.close();
+  });
+
+  it("merges sequential partial filter updates instead of resetting", () => {
+    const host = createHost();
+    plugin(host.bb);
+    host.rpc.get("updateFilters")!({ minTurnSeconds: 60 });
+    host.rpc.get("updateFilters")!({ suppressSubagents: false });
+    expect(host.rpc.get("getPushState")!(null).filters).toEqual({
+      suppressSubagents: false,
+      minTurnSeconds: 60,
+      mutedProjectIds: [],
+    });
+    host.db.close();
+  });
+
+  it("notifies only once when two thread.idle events race", async () => {
+    const host = createHost();
+    plugin(host.bb);
+    host.rpc.get("registerDevice")!({
+      id: "browser-1",
+      name: "Laptop",
+      subscription: subscription(),
+    });
+    const thread = {
+      id: "thread-1",
+      projectId: "project-1",
+      parentThreadId: null,
+      title: "Race",
+      titleFallback: null,
+      visibility: "visible",
+    };
+
+    const first = host.events.get("thread.idle")!({
+      thread,
+      lastAssistantText: "Done",
+    });
+    const second = host.events.get("thread.idle")!({
+      thread,
+      lastAssistantText: "Done",
+    });
+    await Promise.all([first, second]);
+
+    expect(webPushMock.sendNotification).toHaveBeenCalledTimes(1);
+    host.db.close();
+  });
+
+  it("keeps a turn start recorded while an idle handler is in flight", async () => {
+    const host = createHost();
+    plugin(host.bb);
+    host.rpc.get("registerDevice")!({
+      id: "browser-1",
+      name: "Laptop",
+      subscription: subscription(),
+    });
+    const thread = {
+      id: "thread-1",
+      projectId: "project-1",
+      parentThreadId: null,
+      title: "Restarted turn",
+      titleFallback: null,
+      visibility: "visible",
+    };
+
+    let releaseInteractions!: (value: Array<{ status: string }>) => void;
+    const interactionsGate = new Promise<Array<{ status: string }>>(
+      (resolve) => {
+        releaseInteractions = resolve;
+      },
+    );
+    host.interactionsList.mockImplementationOnce(() => interactionsGate);
+    const first = host.events.get("thread.idle")!({
+      thread,
+      lastAssistantText: "Done",
+    });
+    // The first handler runs its synchronous prefix on call, so it is parked
+    // on the pending-interaction lookup before the restart lands.
+    expect(host.interactionsList).toHaveBeenCalledTimes(1);
+    await host.events.get("thread.active")!({ thread });
+    releaseInteractions([]);
+    await first;
+    expect(webPushMock.sendNotification).toHaveBeenCalledTimes(1);
+
+    // The restarted turn is seconds old, so it stays below the minimum.
+    await host.events.get("thread.idle")!({
+      thread,
+      lastAssistantText: "Done",
+    });
+    expect(webPushMock.sendNotification).toHaveBeenCalledTimes(1);
     host.db.close();
   });
 });
