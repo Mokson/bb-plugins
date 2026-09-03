@@ -2,7 +2,22 @@
 
 All notable changes to Usage Tracker are documented here.
 
-## Unreleased
+## 0.3.0 - 2026-09-04
+
+### Changed
+
+- Expanded usage now opens one popover above the footer, opened from a single
+  clickable strip area, listing every enabled provider with all of its limit
+  windows as aligned inline mini bars; selecting a row slides to that
+  provider's full detail view with a back button. Escape steps back from the
+  detail view before closing.
+- Each provider row shows the 5-hour and weekly reset countdowns next to the
+  name, separated by a dot, and the last-updated time reads as a relative
+  age ("Updated 1m ago") next to the refresh and close buttons.
+- The popover adapts to narrow viewports and bb's mobile drawer, wrapping
+  countdown chips and capping its width to the footer instead of clipping.
+- The OpenCode Go mark is the official pixel-style glyph from opencode.ai,
+  and the strip's responsive tier ladder extends to three providers.
 
 ## 0.2.0 - 2026-09-04
 

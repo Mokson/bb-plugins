@@ -5,26 +5,63 @@ import {
 } from "./usage.ts";
 import type { CompactLimitOption } from "./preferences.ts";
 
-export interface SidebarUsageWindows {
-  fiveHour: UsageWindow | null;
-  weekly: UsageWindow | null;
+export function formatResetsIn(
+  value: string | null,
+  now = new Date(),
+): string {
+  if (value === null) return "Reset unavailable";
+  const resetTime = new Date(value).getTime();
+  if (Number.isNaN(resetTime)) return "Reset unavailable";
+  const minutes = Math.ceil((resetTime - now.getTime()) / 60_000);
+  if (minutes <= 0) return "Resets soon";
+  if (minutes < 60) return `Resets in ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `Resets in ${hours}h ${minutes % 60}m`;
+  return `Resets in ${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
 
-export interface SidebarUsageDetailRow {
-  label: string;
-  window: UsageWindow | null;
+export function formatRelativeAge(value: string | null, now = new Date()): string {
+  if (value === null) return "just now";
+  const then = new Date(value).getTime();
+  if (Number.isNaN(then)) return "just now";
+  const seconds = Math.floor((now.getTime() - then) / 1000);
+  if (seconds < 45) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+  }).format(new Date(value));
 }
 
-export type SidebarUsagePrimaryFallback =
-  | "none"
-  | "current-alternative"
-  | "last-known"
-  | "unavailable";
+export function formatResetsInShort(
+  value: string | null,
+  now = new Date(),
+): string {
+  if (value === null) return "";
+  const resetTime = new Date(value).getTime();
+  if (Number.isNaN(resetTime)) return "";
+  const minutes = Math.ceil((resetTime - now.getTime()) / 60_000);
+  if (minutes <= 0) return "soon";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return minutes % 60 === 0 ? `${hours}h` : `${hours}h ${minutes % 60}m`;
+  }
+  const days = Math.floor(hours / 24);
+  return hours % 24 === 0 ? `${days}d` : `${days}d ${hours % 24}h`;
+}
 
-export interface SidebarUsagePrimarySelection {
-  window: UsageWindow | null;
-  actualKind: CompactLimitOption | null;
-  fallback: SidebarUsagePrimaryFallback;
+export function sidebarUsageShortLabel(label: string): string {
+  const normalized = label.toLowerCase();
+  if (normalized.includes("month")) return "mo";
+  if (isWeeklyLabel(label)) return "wk";
+  if (isFiveHourLabel(label)) return "ses";
+  return label.length <= 6 ? label : label.slice(0, 5) + "…";
 }
 
 function isFiveHourLabel(label: string): boolean {
@@ -47,6 +84,11 @@ function isWeeklyLabel(label: string): boolean {
   );
 }
 
+export interface SidebarUsageWindows {
+  fiveHour: UsageWindow | null;
+  weekly: UsageWindow | null;
+}
+
 export function sidebarUsageWindows(
   provider: ProviderUsage,
 ): SidebarUsageWindows {
@@ -56,6 +98,11 @@ export function sidebarUsageWindows(
     weekly:
       provider.windows.find((window) => isWeeklyLabel(window.label)) ?? null,
   };
+}
+
+export interface SidebarUsageDetailRow {
+  label: string;
+  window: UsageWindow | null;
 }
 
 export function sidebarUsageDetailRows(
@@ -82,6 +129,18 @@ export function sidebarUsageSummary(provider: ProviderUsage): string {
   const weeklyValue =
     weekly === null ? "—" : formatUsedPercent(weekly.usedPercent);
   return `${fiveHourValue}% 5h · ${weeklyValue}% wk`;
+}
+
+export type SidebarUsagePrimaryFallback =
+  | "none"
+  | "current-alternative"
+  | "last-known"
+  | "unavailable";
+
+export interface SidebarUsagePrimarySelection {
+  window: UsageWindow | null;
+  actualKind: CompactLimitOption | null;
+  fallback: SidebarUsagePrimaryFallback;
 }
 
 function windowForKind(
