@@ -64,6 +64,26 @@
           "tagPrefix": "observatory/"
         }
       }
+    },
+    {
+      "id": "files",
+      "displayName": "Files",
+      "description": "Workspace file explorer and viewer in the thread right panel, with search, changed-files stats, and CAS-guarded editing.",
+      "icon": "FolderTree",
+      "tags": ["interface", "files", "productivity"],
+      "author": {
+        "name": "Maksym Moklyak",
+        "github": "Mokson",
+        "url": "https://github.com/Mokson"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/Mokson/bb-plugins.git",
+          "subdir": "plugins/files",
+          "range": "^0.1.0",
+          "tagPrefix": "files/"
+        }
+      }
     }
   ]
 }

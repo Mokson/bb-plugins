@@ -18,6 +18,7 @@ under **Extensions → Plugins**, in `bb plugin search`, and installable by id.
 | [`better-sidebar`](plugins/better-sidebar) | A sidebar thread list organised by activity date, with the currently active thread highlighted, a second metadata row, real provider logos, five minimal status glyphs, a PR chip, and a hover dossier. |
 | [`push-notify`](plugins/push-notify) | Web Push notifications when an agent finishes, fails, or needs you, filtered by subagent threads, turn length, and muted projects. |
 | [`observatory`](plugins/observatory) | Cost, cache, stall, context, audit, eval and distillery for bb agent runs, from one ingestion core joining thread events to the provider session logs. |
+| [`files`](plugins/files) | Workspace file explorer and viewer in the thread right panel, with search, changed-files stats, and CAS-guarded editing. |
 
 Install one directly, without the marketplace:
 
