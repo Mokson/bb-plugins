@@ -107,16 +107,14 @@ function ThreadListBody({
   // B68.5: the reconciler sees the UNFILTERED set. Scope and search are
   // presentation, so a thread they hide has not left its section, and clearing
   // one must not reshuffle the list.
-  const completedIds = useMemo(
-    () => new Set(completed.completedAt.keys()),
-    [completed.completedAt],
-  );
   const sectionOf = useCallback(
-    // The completion set is passed here too, or the reconciler and the model
+    // The completion map is passed here too, or the reconciler and the model
     // would disagree about which section a filed thread is in — which is the
-    // one thing `sectionKeyOf` exists to prevent.
-    (thread: PluginSidebarThread) => sectionKeyOf(thread, settings, now, completedIds),
-    [settings.groupBy, now, completedIds],
+    // one thing `sectionKeyOf` exists to prevent. The map, not a set of ids:
+    // B86.1 needs the filing time to pick a filed thread's date bucket.
+    (thread: PluginSidebarThread) =>
+      sectionKeyOf(thread, settings, now, completed.completedAt),
+    [settings.groupBy, now, completed.completedAt],
   );
   const sectionOrder = useSectionOrder(threads, sectionOf);
   const navigate = useBbNavigate();
@@ -185,6 +183,7 @@ function ThreadListBody({
   });
   const jumpIndexRef = useRef(-1);
   const setCompleted = completed.setCompleted;
+  const completedAt = completed.completedAt;
   const onKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
     // B86.6: the shortcut acts on the row the focus is inside, read off the DOM
     // rather than from a selection the list would otherwise have to own. The
@@ -197,7 +196,7 @@ function ThreadListBody({
       const threadId = row?.getAttribute("data-better-sidebar-row");
       if (!threadId) return;
       event.preventDefault();
-      setCompleted(threadId, !completedIds.has(threadId));
+      setCompleted(threadId, !completedAt.has(threadId));
       return;
     }
     const direction = matchBucketJump(event);
@@ -210,7 +209,7 @@ function ThreadListBody({
     jumpIndexRef.current = index;
     header.scrollIntoView({ block: "start" });
     header.focus();
-  }, [setCompleted, completedIds]);
+  }, [setCompleted, completedAt]);
 
   /*
    * B61: model and effort are fetched for the rows the list is actually
@@ -428,8 +427,12 @@ function SectionHeader({
     // `px-1` mirrors the row's own inset (`ROW_INSET_PX`, B74), so a
     // header's label starts on the same x as the leading MARK of every row
     // beneath it — which is where bb's own sidebar puts it.
-    "group/section flex w-full items-center gap-1.5 px-1 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide",
+    "group/section flex w-full items-center gap-1.5 px-1 pb-1 text-[11px] font-medium uppercase tracking-wide",
     "text-muted-foreground",
+    // B86.1: a subgroup belongs to the group above it, so it indents to the
+    // row title's x and sits tight under its group's last row. A full `pt-3`
+    // would read as a sibling heading rather than as part of what precedes it.
+    section.isSubgroup ? "pl-5 pt-1" : "pt-3",
     dimClassFor(section),
   );
 

@@ -43,7 +43,7 @@ const DIM_BY_BUCKET: Record<DateBucketKey, 0 | 1 | 2 | 3> = {
 export function dimLevelFor(section: SectionKey): 0 | 1 | 2 | 3 {
   // B86.3: a filed thread reads like an old one. Reusing `OLDER`'s level keeps
   // the panel on one dim scale rather than inventing a second row style.
-  if (section === "completed") return DIM_FLOOR;
+  if (isCompletedSection(section)) return DIM_FLOOR;
   return Object.hasOwn(DIM_BY_BUCKET, section)
     ? DIM_BY_BUCKET[section as DateBucketKey]
     : 0;
@@ -52,7 +52,6 @@ export function dimLevelFor(section: SectionKey): 0 | 1 | 2 | 3 {
 const STATIC_LABELS: Record<string, string> = {
   "needs-you": "NEEDS YOU",
   done: "DONE",
-  completed: "COMPLETED",
   pinned: "PINNED",
   // B65.4: the same five words the row's glyph legend uses, plus the `unread`
   // state B67.7 folds the DONE band into.
@@ -81,6 +80,11 @@ export function labelFor(
   section: SectionKey,
   dynamicLabels: ReadonlyMap<SectionKey, string>,
 ): string {
+  // B86.1: every subgroup reads COMPLETED. Its own group's name is already the
+  // header directly above it, so repeating it here would say the same word
+  // twice in two rows. This test comes FIRST: the generic fallback below would
+  // otherwise turn `completed:project:p1` into "PROJECT:P1".
+  if (isCompletedSection(section)) return "COMPLETED";
   const staticLabel = STATIC_LABELS[section];
   if (staticLabel !== undefined) return staticLabel;
   const resolved = dynamicLabels.get(section);
@@ -96,16 +100,31 @@ export function isCollapsibleSection(section: SectionKey): boolean {
   return section !== "needs-you" && section !== "pinned" && section !== "search";
 }
 
+/** B86.1: the prefix every COMPLETED subgroup key carries. */
+export const COMPLETED_PREFIX = "completed:";
+
 /**
- * B86.4: `COMPLETED` is the one section that starts folded.
+ * True for a COMPLETED subgroup, whichever group it hangs off.
+ *
+ * One predicate rather than four string tests: the label, the dim level, the
+ * fold default and the count all key off exactly this, and four copies of a
+ * `startsWith` drift the moment the prefix changes.
+ */
+export function isCompletedSection(section: SectionKey): boolean {
+  return section.startsWith(COMPLETED_PREFIX);
+}
+
+/**
+ * B86.4: a COMPLETED subgroup starts folded; every other section starts open.
  *
  * `useCollapse` stores the sections the user has FOLDED, so an absent key
  * means "never touched", which for every other section reads as open. This
- * inverts that test for exactly one key. The stored set still records the
- * user's first toggle either way, so one click settles it for good.
+ * inverts that test for the completed keys. The stored set still records the
+ * user's first toggle either way, so one click settles it for good — and it
+ * settles that ONE subgroup, not the rest.
  */
 export function isCollapsedByDefault(section: SectionKey): boolean {
-  return section === "completed";
+  return isCompletedSection(section);
 }
 
 /**
@@ -117,7 +136,7 @@ export function isCollapsedByDefault(section: SectionKey): boolean {
  * header is a closed box whose contents cannot be seen at all.
  */
 export function showsCount(section: SectionKey): boolean {
-  return section === "completed";
+  return isCompletedSection(section);
 }
 
 /** B65.5/B67.7: the status groups, in the order they render. */

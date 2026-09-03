@@ -4,16 +4,20 @@ import {
   STATUS_GROUP_ORDER,
   bucketOf,
   dimLevelFor,
+  COMPLETED_PREFIX,
   isCollapsedByDefault,
   isCollapsibleSection,
+  isCompletedSection,
   labelFor,
   showsCount,
   statusGroupOf,
 } from "./buckets";
 import { rankSearch, type SearchCandidate } from "./search";
+import { childrenByParent, rollUpIndicator } from "./rollup";
 import {
   NO_HOST_KEY,
   type BetterSidebarSettings,
+  type GroupKey,
   type ListModel,
   type ListModelInput,
   type RenderRow,
@@ -105,13 +109,13 @@ function byAttention(a: PluginSidebarThread, b: PluginSidebarThread): number {
 }
 
 /**
- * The default for `sectionKeyOf`'s completion set.
+ * The default for `sectionKeyOf`'s completion map.
  *
  * `useSectionOrder` and the tests call the predicate with three arguments, and
  * a thread nobody has filed is the overwhelming majority case; a shared frozen
- * empty set keeps those call sites from each allocating one.
+ * empty map keeps those call sites from each allocating one.
  */
-const EMPTY_IDS: ReadonlySet<string> = new Set<string>();
+const NOTHING_FILED: ReadonlyMap<string, number> = new Map<string, number>();
 
 /** B67.1: the host's own rolled-up "finished, and you have not looked" state. */
 export function isFinished(thread: PluginSidebarThread): boolean {
@@ -134,24 +138,45 @@ export function sectionKeyOf(
   thread: PluginSidebarThread,
   settings: BetterSidebarSettings,
   now: number,
-  completedIds: ReadonlySet<string> = EMPTY_IDS,
+  completedAt: ReadonlyMap<string, number> = NOTHING_FILED,
 ): SectionKey {
   const merged = settings.groupBy === "status";
   if (thread.hasPendingInteraction) return merged ? "status:needs-you" : "needs-you";
-  // B86.1: COMPLETED outranks every band but NEEDS YOU, and it is flat in every
-  // grouping mode — `status` included. Splitting the pile back across the modes
-  // would re-scatter the one thing the band exists to gather.
+  // B86.1: a filed thread stays WITH the group it belongs to, in that group's
+  // own COMPLETED subgroup. The pile is not one heap at the foot of the list:
+  // the mode the user chose is the primary split, and completion is the second.
   //
-  // It sits UNDER the pending-interaction test on purpose: a filed thread that
-  // blocks on the user is not filed any more, and `useCompleted` clears its
-  // flag on the same signal (B86.2). The band only has to agree with that while
+  // The band sits UNDER the pending-interaction test on purpose: a filed thread
+  // that blocks on the user is not filed any more, and `useCompleted` clears
+  // its flag on the same signal (B86.2). This only has to agree with that while
   // the write is in flight.
-  if (completedIds.has(thread.id)) return "completed";
+  const filedAt = completedAt.get(thread.id);
+  if (filedAt !== undefined) {
+    return `completed:${groupKeyOf(thread, settings, now, filedAt)}`;
+  }
   if (isFinished(thread)) return merged ? "status:unread" : "done";
   if (thread.isPinned) return "pinned";
+  return groupKeyOf(thread, settings, now, null);
+}
+
+/**
+ * The group the current mode puts this thread in, ignoring every band.
+ *
+ * `filedAt` is the moment the user filed the thread, or null for a thread still
+ * in play. It changes ONE answer: B86.1 buckets a filed thread by when it was
+ * FILED, not by its last activity. A filed thread still receives background
+ * writes, and bucketing on those walked its subgroup back up to TODAY days
+ * after the user had put it away. Filing time is the date the user would name.
+ */
+function groupKeyOf(
+  thread: PluginSidebarThread,
+  settings: BetterSidebarSettings,
+  now: number,
+  filedAt: number | null,
+): GroupKey {
   switch (settings.groupBy) {
     case "date":
-      return bucketOf(thread.latestAttentionAt, now);
+      return bucketOf(filedAt ?? thread.latestAttentionAt, now);
     case "project":
       return `project:${thread.projectId}`;
     case "host":
@@ -197,6 +222,13 @@ function byEntrance(order: SectionOrder | null) {
 
 interface Tree {
   readonly visible: readonly PluginSidebarThread[];
+  /**
+   * B87: parent id → direct children over the WHOLE thread set, scope and
+   * archived threads included. Deliberately NOT `childrenOf`: that one is the
+   * render tree, and a roll-up built from it would go quiet whenever a filter
+   * hid the children rather than when the children stopped working.
+   */
+  readonly rollupChildren: ReadonlyMap<string, PluginSidebarThread[]>;
   readonly byId: ReadonlyMap<string, PluginSidebarThread>;
   readonly childrenOf: ReadonlyMap<string, PluginSidebarThread[]>;
   readonly roots: readonly PluginSidebarThread[];
@@ -287,7 +319,7 @@ function buildTree(input: ListModelInput): Tree {
   // B68.2 for every section at once. Grouping preserves this order, so no
   // section needs its own sort and the new B65 keys need no special case.
   roots.sort(byEntrance(input.sectionOrder));
-  return { visible, byId, childrenOf, roots };
+  return { visible, byId, childrenOf, roots, rollupChildren: childrenByParent(input.threads) };
 }
 
 /**
@@ -301,11 +333,10 @@ function assignSections(
   const assignment = new Map<string, SectionKey>();
   // Built once, not per root: the predicate takes a set so that the hot path is
   // a membership test rather than a map lookup per band decision.
-  const completedIds = new Set(input.completedAt.keys());
   for (const root of roots) {
     assignment.set(
       root.id,
-      sectionKeyOf(root, input.settings, input.now, completedIds),
+      sectionKeyOf(root, input.settings, input.now, input.completedAt),
     );
   }
   return assignment;
@@ -326,14 +357,14 @@ function orderRoots(
   assignment: ReadonlyMap<string, SectionKey>,
   completedAt: ReadonlyMap<string, number>,
 ): readonly PluginSidebarThread[] {
-  const filed = roots.filter((root) => assignment.get(root.id) === "completed");
+  const filed = roots.filter((root) => isCompletedSection(assignment.get(root.id)!));
   if (filed.length < 2) return roots;
   filed.sort((a, b) => {
     const delta = (completedAt.get(b.id) ?? 0) - (completedAt.get(a.id) ?? 0);
     if (delta !== 0) return delta;
     return a.id < b.id ? -1 : 1;
   });
-  const rest = roots.filter((root) => assignment.get(root.id) !== "completed");
+  const rest = roots.filter((root) => !isCompletedSection(assignment.get(root.id)!));
   return [...rest, ...filed];
 }
 
@@ -377,6 +408,7 @@ function makeRow(
     // that is what the dot claims. `>` and not `>=`: the write that RECORDS the
     // completion lands at the same millisecond, and it is not news.
     hasUpdateSinceCompleted: filedAt !== undefined && thread.updatedAt > filedAt,
+    rolledUpIndicator: rollUpIndicator(thread, tree.rollupChildren),
     title: resolveTitle(thread),
     workspaceLabel: resolveWorkspaceLabel(thread, localHostId),
     depth,
@@ -420,36 +452,43 @@ function sectionOrderFor(
   present: ReadonlySet<SectionKey>,
   dynamicLabels: ReadonlyMap<SectionKey, string>,
 ): SectionKey[] {
-  // B67: DONE sits between NEEDS YOU and PINNED. In `status` mode neither band
-  // is emitted (B65.5/B67.7), so these two keys are simply never present.
-  const order: SectionKey[] = ["needs-you", "done", "pinned"];
-  // B86.1: COMPLETED renders LAST, under every group the mode produces, even
-  // though its band outranks them in `sectionKeyOf`. Precedence answers "which
-  // section is this thread in"; this list answers "where does that section
-  // sit". The whole point of the feature is that the pile is out of the way.
-  if (input.settings.groupBy === "date") order.push(...DATE_BUCKET_ORDER);
-  else if (input.settings.groupBy === "none") order.push("all");
+  const groups: GroupKey[] = [];
+  if (input.settings.groupBy === "date") groups.push(...DATE_BUCKET_ORDER);
+  else if (input.settings.groupBy === "none") groups.push("all");
   else if (input.settings.groupBy === "status") {
-    for (const status of STATUS_GROUP_ORDER) order.push(`status:${status}`);
+    for (const status of STATUS_GROUP_ORDER) groups.push(`status:${status}`);
   } else if (input.settings.groupBy === "host") {
     // B65.2: machines by name, with `No machine` pinned last however it sorts.
     const hosts = [...present].filter(
       (key) => key !== NO_HOST_KEY && key.startsWith("host:"),
-    );
+    ) as GroupKey[];
     hosts.sort((a, b) =>
       labelFor(a, dynamicLabels).localeCompare(labelFor(b, dynamicLabels)),
     );
-    order.push(...hosts, NO_HOST_KEY);
+    groups.push(...hosts, NO_HOST_KEY);
   } else {
     // B8: project sections follow the host's project order.
-    for (const project of input.projects) order.push(`project:${project.id}`);
-    // `completed` is appended below, after every mode's own groups; the
-    // catch-all must not place it among the projects instead.
+    for (const project of input.projects) groups.push(`project:${project.id}`);
+    // A project the host did not list, discovered from the threads themselves.
+    // Matched on the prefix rather than by subtracting the keys already placed:
+    // `present` also holds the band keys and the COMPLETED subgroups, and a
+    // catch-all that took those emitted NEEDS YOU and PINNED a second time.
     for (const key of present) {
-      if (key !== "completed" && !order.includes(key)) order.push(key);
+      if (!key.startsWith("project:")) continue;
+      if (!groups.includes(key as GroupKey)) groups.push(key as GroupKey);
     }
   }
-  order.push("completed");
+
+  // B67: DONE sits between NEEDS YOU and PINNED. In `status` mode neither band
+  // is emitted (B65.5/B67.7), so these two keys are simply never present.
+  //
+  // B86.1: every group is immediately followed by its own COMPLETED subgroup,
+  // so the filed threads of a project sit under that project rather than in one
+  // heap at the foot of the list. The bands get no subgroup: a filed thread
+  // that blocks on the user is unfiled (B86.2), and filing clears the pin, so
+  // no band can hold one.
+  const order: SectionKey[] = ["needs-you", "done", "pinned"];
+  for (const group of groups) order.push(group, `${COMPLETED_PREFIX}${group}`);
   return order;
 }
 
@@ -474,6 +513,7 @@ function makeSection(
     label: labelFor(key, dynamicLabels),
     count,
     showCount: showsCount(key),
+    isSubgroup: isCompletedSection(key),
     isCollapsible,
     isCollapsed,
     rows: isCollapsed ? [] : rows,
@@ -537,7 +577,16 @@ function buildLiveSections(
   const sections: RenderSection[] = [];
   for (const key of order) {
     const count = countBySection.get(key) ?? 0;
-    if (count === 0) continue; // B4: an empty section renders nothing at all
+    // B4: an empty section renders nothing at all — with one exception B86.1
+    // creates. A group whose threads are ALL filed has no rows of its own, but
+    // it still owns a COMPLETED subgroup. Dropping the header left that
+    // subgroup with the previous group's header above it, which reads as the
+    // filed threads belonging to a project they are not in. A group with a
+    // subgroup under it is not empty; it is a group whose work is all done.
+    // The cast covers the band keys, which have no subgroup key at the type
+    // level; the lookup simply misses for them, which is the right answer.
+    const subgroup = `${COMPLETED_PREFIX}${key}` as SectionKey;
+    if (count === 0 && (countBySection.get(subgroup) ?? 0) === 0) continue;
     sections.push(
       makeSection(key, rowsBySection.get(key) ?? [], count, input, dynamicLabels),
     );

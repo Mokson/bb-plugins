@@ -1031,18 +1031,20 @@ describe("parent cycles (B1, F4)", () => {
 });
 
 /**
- * B86. Two inversions make these read oddly, and both are deliberate:
+ * B86. Two things make these read oddly, and both are deliberate:
  *
- * - COMPLETED is folded by DEFAULT, and the stored set lists the sections the
- *   user TOGGLED, so `collapsedSections: ["completed"]` is what expands it.
- * - The band outranks every group in `sectionKeyOf`, but the section renders
- *   last. Precedence and render order answer different questions.
+ * - A COMPLETED subgroup is folded by DEFAULT, and the stored set lists the
+ *   sections the user TOGGLED, so naming a subgroup in `collapsedSections` is
+ *   what EXPANDS it.
+ * - Completion outranks the DONE band and the pin in `sectionKeyOf`, but a
+ *   subgroup renders directly under its own group rather than at the foot of
+ *   the list. Precedence and render order answer different questions.
  */
-describe("COMPLETED band (B86)", () => {
+describe("COMPLETED subgroups (B86)", () => {
   const filed = (ids: Record<string, number>) => new Map(Object.entries(ids));
-  const expanded = new Set<SectionKey>(["completed"]);
+  const expand = (...keys: SectionKey[]) => new Set<SectionKey>(keys);
 
-  it("moves a filed thread out of its group and into COMPLETED, rendered last", () => {
+  it("puts a filed thread in its own group's subgroup, directly under it", () => {
     const threads = [thread("a"), thread("b")];
     const model = buildListModel(
       input(threads, {
@@ -1050,8 +1052,78 @@ describe("COMPLETED band (B86)", () => {
         completedAt: filed({ b: NOW - 1000 }),
       }),
     );
-    expect(keys(model)).toEqual(["today", "completed"]);
+    expect(keys(model)).toEqual(["today", "completed:today"]);
     expect(sequence(model)).toEqual(["a"]); // folded, so it draws no rows
+  });
+
+  it("gives every group its own subgroup rather than one shared pile", () => {
+    const threads = [
+      thread("a", { projectId: "p1" }),
+      thread("b", { projectId: "p2" }),
+      thread("filed-1", { projectId: "p1" }),
+      thread("filed-2", { projectId: "p2" }),
+    ];
+    const model = buildListModel(
+      input(threads, {
+        settings: { ...DEFAULT_SETTINGS, groupBy: "project" },
+        sectionOrder: mount(threads, { ...DEFAULT_SETTINGS, groupBy: "project" }),
+        completedAt: filed({ "filed-1": NOW - 1, "filed-2": NOW - 2 }),
+        collapsedSections: expand("completed:project:p1", "completed:project:p2"),
+      }),
+    );
+    expect(keys(model)).toEqual([
+      "project:p1",
+      "completed:project:p1",
+      "project:p2",
+      "completed:project:p2",
+    ]);
+    expect(sequence(model)).toEqual(["a", "filed-1", "b", "filed-2"]);
+  });
+
+  it("keeps the group header when every one of its threads is filed", () => {
+    // Without this, `project:p2` renders nothing and its subgroup appears
+    // directly under `project:p1`'s rows — reading as p1's filed threads.
+    const threads = [
+      thread("a", { projectId: "p1" }),
+      thread("all-filed", { projectId: "p2" }),
+    ];
+    const model = buildListModel(
+      input(threads, {
+        settings: { ...DEFAULT_SETTINGS, groupBy: "project" },
+        completedAt: filed({ "all-filed": NOW - 1 }),
+        collapsedSections: expand("completed:project:p2"),
+      }),
+    );
+    expect(keys(model)).toEqual([
+      "project:p1",
+      "project:p2",
+      "completed:project:p2",
+    ]);
+    // The header is there, and it is genuinely empty.
+    expect(model.sections[1]!.rows).toEqual([]);
+    expect(model.sections[1]!.count).toBe(0);
+  });
+
+  it("still renders nothing for a group with neither rows nor filed threads", () => {
+    const model = buildListModel(
+      input([thread("a", { projectId: "p1" })], {
+        settings: { ...DEFAULT_SETTINGS, groupBy: "project" },
+      }),
+    );
+    expect(keys(model)).toEqual(["project:p1"]);
+  });
+
+  it("labels every subgroup COMPLETED, never its group's own name", () => {
+    const threads = [thread("filed", { projectId: "p1" })];
+    const model = buildListModel(
+      input(threads, {
+        settings: { ...DEFAULT_SETTINGS, groupBy: "project" },
+        completedAt: filed({ filed: NOW - 1 }),
+      }),
+    );
+    const section = model.sections.find((entry) => entry.key === "completed:project:p1")!;
+    expect(section.label).toBe("COMPLETED");
+    expect(section.isSubgroup).toBe(true);
   });
 
   it("is folded on arrival and shows its count, alone among sections", () => {
@@ -1062,29 +1134,48 @@ describe("COMPLETED band (B86)", () => {
         completedAt: filed({ b: NOW - 1000 }),
       }),
     );
-    const completed = model.sections.find((section) => section.key === "completed")!;
+    const completed = model.sections.find((s) => s.key === "completed:today")!;
     expect(completed.isCollapsed).toBe(true);
     expect(completed.count).toBe(1);
     expect(completed.showCount).toBe(true);
-    expect(completed.label).toBe("COMPLETED");
-    expect(
-      model.sections.find((section) => section.key === "today")!.showCount,
-    ).toBe(false);
+    const today = model.sections.find((s) => s.key === "today")!;
+    expect(today.showCount).toBe(false);
+    expect(today.isSubgroup).toBe(false);
   });
 
-  it("expands when the user has toggled it, which is the stored set's INVERSE", () => {
-    const threads = [thread("a"), thread("b")];
+  it("folds each subgroup on its own, so opening one leaves the rest shut", () => {
+    const threads = [
+      thread("filed-1", { projectId: "p1" }),
+      thread("filed-2", { projectId: "p2" }),
+    ];
     const model = buildListModel(
       input(threads, {
-        sectionOrder: mount(threads),
-        completedAt: filed({ b: NOW - 1000 }),
-        collapsedSections: expanded,
+        settings: { ...DEFAULT_SETTINGS, groupBy: "project" },
+        completedAt: filed({ "filed-1": NOW - 1, "filed-2": NOW - 2 }),
+        collapsedSections: expand("completed:project:p1"),
       }),
     );
-    expect(sequence(model)).toEqual(["a", "b"]);
+    expect(sequence(model)).toEqual(["filed-1"]);
   });
 
-  it("keeps a thread that blocks on the user OUT of COMPLETED (B86.2)", () => {
+  it("buckets a filed thread by WHEN IT WAS FILED, not by its last activity", () => {
+    // Filed a week ago, but written to a minute ago by a background agent.
+    const threads = [
+      thread("filed", { latestAttentionAt: NOW - 60_000, updatedAt: NOW - 60_000 }),
+    ];
+    const model = buildListModel(
+      input(threads, {
+        completedAt: filed({ filed: NOW - 8 * DAY_MS }),
+        collapsedSections: expand("completed:last-30"),
+      }),
+    );
+    // `last-30`, from the filing date — not `today`, where its activity sits.
+    // The empty `last-30` header comes with it: the bucket owns the subgroup.
+    expect(keys(model)).toEqual(["last-30", "completed:last-30"]);
+    expect(sequence(model)).toEqual(["filed"]);
+  });
+
+  it("keeps a thread that blocks on the user OUT of any subgroup (B86.2)", () => {
     const threads = [thread("stuck", { hasPendingInteraction: true })];
     const model = buildListModel(
       input(threads, {
@@ -1104,10 +1195,10 @@ describe("COMPLETED band (B86)", () => {
       input(threads, {
         sectionOrder: mount(threads),
         completedAt: filed({ finished: NOW - 1, pinned: NOW - 2 }),
-        collapsedSections: expanded,
+        collapsedSections: expand("completed:today"),
       }),
     );
-    expect(keys(model)).toEqual(["completed"]);
+    expect(keys(model)).toEqual(["today", "completed:today"]);
   });
 
   it("takes the children of a filed parent with it", () => {
@@ -1116,46 +1207,49 @@ describe("COMPLETED band (B86)", () => {
       input(threads, {
         sectionOrder: mount(threads),
         completedAt: filed({ parent: NOW - 1000 }),
-        collapsedSections: expanded,
+        collapsedSections: expand("completed:today"),
         expandedThreadIds: new Set(["parent"]),
       }),
     );
-    expect(keys(model)).toEqual(["completed"]);
+    expect(keys(model)).toEqual(["today", "completed:today"]);
     expect(sequence(model)).toEqual(["parent", "child"]);
     // The child was never filed itself; only its parent was.
-    expect(model.sections[0]!.rows.map((row) => row.isCompleted)).toEqual([
+    expect(model.sections[1]!.rows.map((row) => row.isCompleted)).toEqual([
       true,
       false,
     ]);
   });
 
-  it("orders the section by most recently filed, not by entrance (B86.3)", () => {
+  it("orders a subgroup by most recently filed, not by entrance (B86.3)", () => {
     const threads = [thread("old"), thread("new"), thread("mid")];
     const model = buildListModel(
       input(threads, {
         sectionOrder: mount(threads),
         completedAt: filed({ old: NOW - 3000, new: NOW - 1000, mid: NOW - 2000 }),
-        collapsedSections: expanded,
+        collapsedSections: expand("completed:today"),
       }),
     );
     expect(sequence(model)).toEqual(["new", "mid", "old"]);
   });
 
-  it("stays flat under every grouping mode", () => {
-    const threads = [
-      thread("a", { projectId: "p1" }),
-      thread("b", { projectId: "p2" }),
-    ];
-    for (const groupBy of ["project", "host", "status", "none"] as const) {
+  it("follows every grouping mode's own groups", () => {
+    const threads = [thread("a")];
+    const expected: Record<string, string> = {
+      project: "completed:project:p1",
+      status: "completed:status:idle",
+      none: "completed:all",
+      date: "completed:today",
+    };
+    for (const [groupBy, key] of Object.entries(expected)) {
       const model = buildListModel(
         input(threads, {
-          settings: { ...DEFAULT_SETTINGS, groupBy },
-          completedAt: filed({ a: NOW - 1, b: NOW - 2 }),
-          collapsedSections: expanded,
+          settings: { ...DEFAULT_SETTINGS, groupBy: groupBy as never },
+          completedAt: filed({ a: NOW - 1 }),
+          collapsedSections: expand(key as SectionKey),
         }),
       );
-      expect(keys(model)).toEqual(["completed"]);
-      expect(sequence(model)).toEqual(["a", "b"]);
+      expect(keys(model).at(-1)).toBe(key);
+      expect(sequence(model)).toEqual(["a"]);
     }
   });
 
@@ -1164,10 +1258,10 @@ describe("COMPLETED band (B86)", () => {
     const model = buildListModel(
       input(threads, {
         completedAt: filed({ a: NOW - 1000 }),
-        collapsedSections: expanded,
+        collapsedSections: expand("completed:today"),
       }),
     );
-    expect(model.sections[0]!.rows[0]!.dimLevel).toBe(3);
+    expect(model.sections.at(-1)!.rows[0]!.dimLevel).toBe(3);
   });
 
   it("marks a filed thread in the search list, which has no section to say so", () => {
@@ -1195,11 +1289,11 @@ describe("COMPLETED band (B86)", () => {
           moved: NOW - 1000,
           same: NOW - 1000,
         }),
-        collapsedSections: expanded,
+        collapsedSections: expand("completed:today"),
       }),
     );
     const dots = new Map(
-      model.sections[0]!.rows.map((row) => [
+      model.sections.at(-1)!.rows.map((row) => [
         row.thread.id,
         row.hasUpdateSinceCompleted,
       ]),

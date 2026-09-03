@@ -1,6 +1,7 @@
 import type {
   PluginSidebarProject,
   PluginSidebarThread,
+  PluginSidebarThreadIndicator,
 } from "@get-bb/plugin-sdk/app";
 
 /** B65: `host` and `status` join the modes an unknown value degrades to `date`. */
@@ -60,16 +61,27 @@ export type StatusGroupKey =
 /** B65.2: the `host:` section a thread with no `host` lands in. */
 export const NO_HOST_KEY = "host:none";
 
-export type SectionKey =
-  | "needs-you"
-  | "done"
-  | "completed"
-  | "pinned"
+/**
+ * What the current grouping mode splits threads into, before any band applies.
+ *
+ * Split out from `SectionKey` because B86.1 nests: a COMPLETED subgroup exists
+ * per GROUP, so its key has to embed one, and `completed:completed:x` must not
+ * be constructible.
+ */
+export type GroupKey =
   | DateBucketKey
   | `project:${string}`
   | `host:${string}`
   | `status:${StatusGroupKey}`
-  | "all"
+  | "all";
+
+export type SectionKey =
+  | "needs-you"
+  | "done"
+  | "pinned"
+  /** B86.1: the filed threads of one group, rendered under it. */
+  | `completed:${GroupKey}`
+  | GroupKey
   | "search";
 
 /** One thread's place in the section it currently occupies (B68.1). */
@@ -156,6 +168,16 @@ export interface RenderRow {
    * False for every row that is not completed.
    */
   readonly hasUpdateSinceCompleted: boolean;
+  /**
+   * B87: the state this row draws ON BEHALF OF its descendants, or null when it
+   * has none to draw. Set only for a thread whose own indicator is `none`, so
+   * it never contradicts the thread's own state.
+   *
+   * Presentation only. The section key, the bands and the sort all still read
+   * the thread's own indicator, so a parent never migrates between sections
+   * because a child started or stopped.
+   */
+  readonly rolledUpIndicator: PluginSidebarThreadIndicator | null;
 }
 
 export interface RenderSection {
@@ -175,6 +197,11 @@ export interface RenderSection {
    * already answers.
    */
   readonly showCount: boolean;
+  /**
+   * B86.1: this section is a COMPLETED subgroup of the section above it, and
+   * the header draws indented to say so.
+   */
+  readonly isSubgroup: boolean;
   readonly isCollapsible: boolean;
   readonly isCollapsed: boolean;
   /** Pre-order flat: parent immediately followed by its visible subtree. */
