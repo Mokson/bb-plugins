@@ -4,6 +4,7 @@ import { cn } from "../lib/utils";
 import { Glyph } from "../ui/Glyph";
 import type { RenderRow } from "../model/types";
 import { PrChip } from "./PrChip";
+import { ProjectGlyph } from "./ProjectGlyph";
 import { ProviderGlyph } from "./ProviderGlyph";
 import { ROW2_ICON } from "./row-metrics";
 
@@ -67,7 +68,10 @@ export function SecondRow({
     labels.push({
       id: "project",
       node: (
-        <Label id="project" glyph={<Glyph name="folder" className={MARK_CLASS} aria-hidden />}>
+        <Label
+          id="project"
+          glyph={<ProjectGlyph projectId={row.thread.projectId} className={MARK_CLASS} />}
+        >
           {row.projectName}
         </Label>
       ),
