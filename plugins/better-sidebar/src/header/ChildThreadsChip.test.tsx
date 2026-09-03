@@ -529,6 +529,8 @@ function handlers(
     }),
     lastActivity: () => ({ activity: [] }),
     localHost: () => ({ hostId: null }),
+    completedThreads: () => ({ entries: [] }),
+    setThreadCompleted: () => ({ entries: [] }),
     ...overrides,
   };
 }

@@ -55,6 +55,8 @@ function handlers(
     lastActivity: () => ({ activity: [] }),
     threadWorkStats: () => ({ stats: [] }),
     localHost: () => ({ hostId: null }),
+    completedThreads: () => ({ entries: [] }),
+    setThreadCompleted: () => ({ entries: [] }),
     ...overrides,
   };
 }

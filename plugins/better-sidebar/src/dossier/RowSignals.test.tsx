@@ -96,6 +96,8 @@ function render(threadIds: string[], signals: RowSignal[]) {
         lastActivity: () => ({ activity: [] }),
         threadWorkStats: () => ({ stats: [] }),
         localHost: () => ({ hostId: null }),
+        completedThreads: () => ({ entries: [] }),
+        setThreadCompleted: () => ({ entries: [] }),
       },
     },
   );
@@ -266,6 +268,8 @@ describe("useRowSignals batching (§7 B37-B40 ruling)", () => {
           lastActivity: () => ({ activity: [] }),
           threadWorkStats: () => ({ stats: [] }),
           localHost: () => ({ hostId: null }),
+          completedThreads: () => ({ entries: [] }),
+          setThreadCompleted: () => ({ entries: [] }),
         },
       },
     );
@@ -300,6 +304,8 @@ describe("useRowSignals batching (§7 B37-B40 ruling)", () => {
           lastActivity: () => ({ activity: [] }),
           threadWorkStats: () => ({ stats: [] }),
           localHost: () => ({ hostId: null }),
+          completedThreads: () => ({ entries: [] }),
+          setThreadCompleted: () => ({ entries: [] }),
         },
       },
     );

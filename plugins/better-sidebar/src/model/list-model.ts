@@ -4,8 +4,10 @@ import {
   STATUS_GROUP_ORDER,
   bucketOf,
   dimLevelFor,
+  isCollapsedByDefault,
   isCollapsibleSection,
   labelFor,
+  showsCount,
   statusGroupOf,
 } from "./buckets";
 import { rankSearch, type SearchCandidate } from "./search";
@@ -102,8 +104,17 @@ function byAttention(a: PluginSidebarThread, b: PluginSidebarThread): number {
   return a.id < b.id ? -1 : 1;
 }
 
+/**
+ * The default for `sectionKeyOf`'s completion set.
+ *
+ * `useSectionOrder` and the tests call the predicate with three arguments, and
+ * a thread nobody has filed is the overwhelming majority case; a shared frozen
+ * empty set keeps those call sites from each allocating one.
+ */
+const EMPTY_IDS: ReadonlySet<string> = new Set<string>();
+
 /** B67.1: the host's own rolled-up "finished, and you have not looked" state. */
-export function isDone(thread: PluginSidebarThread): boolean {
+export function isFinished(thread: PluginSidebarThread): boolean {
   return thread.indicator === "unread-success" || thread.indicator === "unread-error";
 }
 
@@ -123,10 +134,20 @@ export function sectionKeyOf(
   thread: PluginSidebarThread,
   settings: BetterSidebarSettings,
   now: number,
+  completedIds: ReadonlySet<string> = EMPTY_IDS,
 ): SectionKey {
   const merged = settings.groupBy === "status";
   if (thread.hasPendingInteraction) return merged ? "status:needs-you" : "needs-you";
-  if (isDone(thread)) return merged ? "status:unread" : "done";
+  // B86.1: COMPLETED outranks every band but NEEDS YOU, and it is flat in every
+  // grouping mode — `status` included. Splitting the pile back across the modes
+  // would re-scatter the one thing the band exists to gather.
+  //
+  // It sits UNDER the pending-interaction test on purpose: a filed thread that
+  // blocks on the user is not filed any more, and `useCompleted` clears its
+  // flag on the same signal (B86.2). The band only has to agree with that while
+  // the write is in flight.
+  if (completedIds.has(thread.id)) return "completed";
+  if (isFinished(thread)) return merged ? "status:unread" : "done";
   if (thread.isPinned) return "pinned";
   switch (settings.groupBy) {
     case "date":
@@ -278,10 +299,42 @@ function assignSections(
   input: ListModelInput,
 ): Map<string, SectionKey> {
   const assignment = new Map<string, SectionKey>();
+  // Built once, not per root: the predicate takes a set so that the hot path is
+  // a membership test rather than a map lookup per band decision.
+  const completedIds = new Set(input.completedAt.keys());
   for (const root of roots) {
-    assignment.set(root.id, sectionKeyOf(root, input.settings, input.now));
+    assignment.set(
+      root.id,
+      sectionKeyOf(root, input.settings, input.now, completedIds),
+    );
   }
   return assignment;
+}
+
+/**
+ * B86.3: the roots in the order the sections will read them.
+ *
+ * Every section takes its order from this one iteration (B68.2), so COMPLETED
+ * gets its own rule by reordering the roots bound for it rather than by sorting
+ * a section afterwards: newest mark first, because the thread most likely filed
+ * by mistake is the one just filed. `id` breaks ties so the order is total.
+ *
+ * Roots outside COMPLETED keep their entrance order untouched.
+ */
+function orderRoots(
+  roots: readonly PluginSidebarThread[],
+  assignment: ReadonlyMap<string, SectionKey>,
+  completedAt: ReadonlyMap<string, number>,
+): readonly PluginSidebarThread[] {
+  const filed = roots.filter((root) => assignment.get(root.id) === "completed");
+  if (filed.length < 2) return roots;
+  filed.sort((a, b) => {
+    const delta = (completedAt.get(b.id) ?? 0) - (completedAt.get(a.id) ?? 0);
+    if (delta !== 0) return delta;
+    return a.id < b.id ? -1 : 1;
+  });
+  const rest = roots.filter((root) => assignment.get(root.id) !== "completed");
+  return [...rest, ...filed];
 }
 
 /**
@@ -312,10 +365,18 @@ function makeRow(
   depth: number,
   projectNames: ReadonlyMap<string, string>,
   localHostId: string | null,
+  completedAt: ReadonlyMap<string, number>,
   projectNameFallback: string | null = null,
 ): RenderRow {
+  const filedAt = completedAt.get(thread.id);
   return {
     thread,
+    isCompleted: filedAt !== undefined,
+    // B86.2: `updatedAt` is a record write, not activity — which is exactly the
+    // question here. Any write since the mark means the thread moved on, and
+    // that is what the dot claims. `>` and not `>=`: the write that RECORDS the
+    // completion lands at the same millisecond, and it is not news.
+    hasUpdateSinceCompleted: filedAt !== undefined && thread.updatedAt > filedAt,
     title: resolveTitle(thread),
     workspaceLabel: resolveWorkspaceLabel(thread, localHostId),
     depth,
@@ -336,7 +397,17 @@ function flattenSubtree(
   out: RenderRow[],
   depth = 0,
 ): void {
-  out.push(makeRow(root, tree, sectionKey, depth, projectNames, input.localHostId));
+  out.push(
+    makeRow(
+      root,
+      tree,
+      sectionKey,
+      depth,
+      projectNames,
+      input.localHostId,
+      input.completedAt,
+    ),
+  );
   // B10, inverted: a subtree is closed unless the user opened it.
   if (!input.expandedThreadIds.has(root.id)) return;
   for (const child of tree.childrenOf.get(root.id) ?? []) {
@@ -352,6 +423,10 @@ function sectionOrderFor(
   // B67: DONE sits between NEEDS YOU and PINNED. In `status` mode neither band
   // is emitted (B65.5/B67.7), so these two keys are simply never present.
   const order: SectionKey[] = ["needs-you", "done", "pinned"];
+  // B86.1: COMPLETED renders LAST, under every group the mode produces, even
+  // though its band outranks them in `sectionKeyOf`. Precedence answers "which
+  // section is this thread in"; this list answers "where does that section
+  // sit". The whole point of the feature is that the pile is out of the way.
   if (input.settings.groupBy === "date") order.push(...DATE_BUCKET_ORDER);
   else if (input.settings.groupBy === "none") order.push("all");
   else if (input.settings.groupBy === "status") {
@@ -368,8 +443,13 @@ function sectionOrderFor(
   } else {
     // B8: project sections follow the host's project order.
     for (const project of input.projects) order.push(`project:${project.id}`);
-    for (const key of present) if (!order.includes(key)) order.push(key);
+    // `completed` is appended below, after every mode's own groups; the
+    // catch-all must not place it among the projects instead.
+    for (const key of present) {
+      if (key !== "completed" && !order.includes(key)) order.push(key);
+    }
   }
+  order.push("completed");
   return order;
 }
 
@@ -381,11 +461,19 @@ function makeSection(
   dynamicLabels: ReadonlyMap<SectionKey, string>,
 ): RenderSection {
   const isCollapsible = isCollapsibleSection(key);
-  const isCollapsed = isCollapsible && input.collapsedSections.has(key);
+  // B86.4: the stored set lists the sections the user has TOGGLED, so for a
+  // section that starts folded, membership means expanded. One stored list
+  // still covers both defaults, and the user's first click settles either.
+  const isCollapsed =
+    isCollapsible &&
+    (isCollapsedByDefault(key)
+      ? !input.collapsedSections.has(key)
+      : input.collapsedSections.has(key));
   return {
     key,
     label: labelFor(key, dynamicLabels),
     count,
+    showCount: showsCount(key),
     isCollapsible,
     isCollapsed,
     rows: isCollapsed ? [] : rows,
@@ -414,6 +502,9 @@ function buildSearchSections(
       0,
       projectNames,
       input.localHostId,
+      // B86.5: search always reaches the filed threads, and the row says so.
+      // Grouping is suspended here, so the section key cannot.
+      input.completedAt,
       candidate.projectName,
     ),
   );
@@ -430,7 +521,7 @@ function buildLiveSections(
   const assignment = assignSections(tree.roots, input);
   const rowsBySection = new Map<SectionKey, RenderRow[]>();
   const countBySection = new Map<SectionKey, number>();
-  for (const root of tree.roots) {
+  for (const root of orderRoots(tree.roots, assignment, input.completedAt)) {
     const key = assignment.get(root.id)!;
     let rows = rowsBySection.get(key);
     if (!rows) rowsBySection.set(key, (rows = []));

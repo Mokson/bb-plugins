@@ -48,6 +48,8 @@ export function buildRowMenuItems({
   thread,
   pullRequest,
   actions,
+  isCompleted,
+  setCompleted,
   open,
   onOpenPullRequest,
   requestRename,
@@ -55,6 +57,9 @@ export function buildRowMenuItems({
   thread: PluginSidebarThread;
   pullRequest: PluginSidebarPullRequest | null;
   actions: RowMenuActions;
+  /** B86: whether the user has already filed this thread. */
+  isCompleted: boolean;
+  setCompleted: (threadId: string, completed: boolean) => void;
   open: (split: boolean) => void;
   onOpenPullRequest: () => void;
   requestRename: () => void;
@@ -94,10 +99,27 @@ export function buildRowMenuItems({
     },
     { id: "rename", glyph: "pencil", label: "Rename", onSelect: requestRename },
     {
+      // B86: beside Archive, not beside Pin. Completing and archiving both take
+      // a row out of the active list; pinning is the opposite move, and Q9's
+      // rule — completing CLEARS the pin — means the two never coexist.
+      id: "completed",
+      glyph: isCompleted ? "circle-x" : "check",
+      label: isCompleted ? "Mark active" : "Mark completed",
+      separatorBefore: true,
+      onSelect: () => {
+        setCompleted(thread.id, !isCompleted);
+        // B86.1: a pinned thread that is filed away would claim two bands at
+        // once. Filing wins, and the pin it contradicts goes with it.
+        if (!isCompleted && thread.isPinned) {
+          fireAndForget(actions.setPinned(thread.id, false), "unpin on complete");
+        }
+      },
+    },
+    {
       id: "archive",
       glyph: "archive",
       label: "Archive",
-      separatorBefore: true,
+      // The separator that opened this group now sits on `completed` above.
       onSelect: () => fireAndForget(actions.archive(thread.id), "archive"),
     },
     {

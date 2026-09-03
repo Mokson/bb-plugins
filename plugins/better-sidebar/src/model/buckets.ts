@@ -41,6 +41,9 @@ const DIM_BY_BUCKET: Record<DateBucketKey, 0 | 1 | 2 | 3> = {
  * search list are never dimmed; date buckets step down to `DIM_FLOOR`.
  */
 export function dimLevelFor(section: SectionKey): 0 | 1 | 2 | 3 {
+  // B86.3: a filed thread reads like an old one. Reusing `OLDER`'s level keeps
+  // the panel on one dim scale rather than inventing a second row style.
+  if (section === "completed") return DIM_FLOOR;
   return Object.hasOwn(DIM_BY_BUCKET, section)
     ? DIM_BY_BUCKET[section as DateBucketKey]
     : 0;
@@ -49,6 +52,7 @@ export function dimLevelFor(section: SectionKey): 0 | 1 | 2 | 3 {
 const STATIC_LABELS: Record<string, string> = {
   "needs-you": "NEEDS YOU",
   done: "DONE",
+  completed: "COMPLETED",
   pinned: "PINNED",
   // B65.4: the same five words the row's glyph legend uses, plus the `unread`
   // state B67.7 folds the DONE band into.
@@ -90,6 +94,30 @@ export function labelFor(
  */
 export function isCollapsibleSection(section: SectionKey): boolean {
   return section !== "needs-you" && section !== "pinned" && section !== "search";
+}
+
+/**
+ * B86.4: `COMPLETED` is the one section that starts folded.
+ *
+ * `useCollapse` stores the sections the user has FOLDED, so an absent key
+ * means "never touched", which for every other section reads as open. This
+ * inverts that test for exactly one key. The stored set still records the
+ * user's first toggle either way, so one click settles it for good.
+ */
+export function isCollapsedByDefault(section: SectionKey): boolean {
+  return section === "completed";
+}
+
+/**
+ * B86.4: the one section whose header draws its own count.
+ *
+ * Superseding B53.1 dropped the tally from every header, because it answered a
+ * question nobody asks of a date bucket. `COMPLETED` is the exception it did
+ * not have to consider: it is folded on arrival, so without a number the
+ * header is a closed box whose contents cannot be seen at all.
+ */
+export function showsCount(section: SectionKey): boolean {
+  return section === "completed";
 }
 
 /** B65.5/B67.7: the status groups, in the order they render. */

@@ -86,6 +86,12 @@ export const threadWorkStatSchema = z.object({
   toolCalls: z.number().finite().nonnegative().nullable(),
 });
 
+/** B86: one filed thread and the epoch ms the user filed it at. */
+export const completedEntrySchema = z.object({
+  threadId: threadIdSchema,
+  completedAt: z.number().finite().nonnegative(),
+});
+
 export const betterSidebarRpcContract = defineRpcContract({
   /** One hovered thread's dossier. B31 returns nulls, never throws. */
   threadDossier: {
@@ -141,6 +147,26 @@ export const betterSidebarRpcContract = defineRpcContract({
     input: z.object({}),
     output: z.object({ hostId: z.string().nullable() }),
   },
+  /**
+   * B86: every thread the user has filed, and when.
+   *
+   * One row, not one per thread. `bb.storage.kv` caps a value at 256KB, which
+   * holds tens of thousands of entries at roughly 40 bytes each, and the list
+   * needs the whole set on every paint — so a `list()` plus a `get()` per id
+   * would buy nothing but round trips.
+   */
+  completedThreads: {
+    input: z.object({}),
+    output: z.object({ entries: z.array(completedEntrySchema) }),
+  },
+  /**
+   * B86: file a thread, or put it back. The whole map comes back, so the client
+   * never has to guess what the write produced under a concurrent one.
+   */
+  setThreadCompleted: {
+    input: z.object({ threadId: threadIdSchema, completed: z.boolean() }),
+    output: z.object({ entries: z.array(completedEntrySchema) }),
+  },
 });
 
 export const DOSSIER_CHANNEL = "better-sidebar:dossier";
@@ -155,3 +181,8 @@ export type ThreadExecution = z.infer<typeof threadExecutionSchema>;
 export type ThreadLastActivity = z.infer<typeof threadLastActivitySchema>;
 /** One entry of the `threadWorkStats` result. */
 export type ThreadWorkStat = z.infer<typeof threadWorkStatSchema>;
+/** One entry of the `completedThreads` result. */
+export type CompletedEntry = z.infer<typeof completedEntrySchema>;
+
+/** The `bb.storage.kv` key the whole completion map lives under (B86). */
+export const COMPLETED_KV_KEY = "completed-threads";

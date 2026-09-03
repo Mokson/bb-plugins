@@ -30,6 +30,9 @@ import { CONTROL_BUTTON_CLASS } from "./ui/control-button";
 import { Glyph } from "./ui/Glyph";
 import { ListEmpty, ListError, ListLoading, ListNoMatches } from "./ui/ListStates";
 import { useCollapse } from "./useCollapse";
+import { useCompleted } from "./useCompleted";
+import { CompletedActionsProvider } from "./completed-context";
+import { matchCompleteKey } from "./keyboard/completeKey";
 import { useGroupBy } from "./useGroupBy";
 import { useSectionOrder } from "./useSectionOrder";
 import { useNow } from "./useNow";
@@ -95,6 +98,8 @@ function ThreadListBody({
   const settings = { ...stored, groupBy: groupByState.groupBy };
   const now = useNow();
   const collapse = useCollapse();
+  // B86: server-backed, so a thread filed here is filed on every bb client.
+  const completed = useCompleted(threads);
   // B64.2: session state. Never settings, never `localStorage`, never the
   // backend — a filter that outlives the tab hides work the user forgot about.
   const [projectFilter, setProjectFilter] = useState(ALL_PROJECTS);
@@ -102,9 +107,16 @@ function ThreadListBody({
   // B68.5: the reconciler sees the UNFILTERED set. Scope and search are
   // presentation, so a thread they hide has not left its section, and clearing
   // one must not reshuffle the list.
+  const completedIds = useMemo(
+    () => new Set(completed.completedAt.keys()),
+    [completed.completedAt],
+  );
   const sectionOf = useCallback(
-    (thread: PluginSidebarThread) => sectionKeyOf(thread, settings, now),
-    [settings.groupBy, now],
+    // The completion set is passed here too, or the reconciler and the model
+    // would disagree about which section a filed thread is in — which is the
+    // one thing `sectionKeyOf` exists to prevent.
+    (thread: PluginSidebarThread) => sectionKeyOf(thread, settings, now, completedIds),
+    [settings.groupBy, now, completedIds],
   );
   const sectionOrder = useSectionOrder(threads, sectionOf);
   const navigate = useBbNavigate();
@@ -132,8 +144,10 @@ function ThreadListBody({
         sectionOrder,
         collapsedSections: collapse.collapsedSections,
         expandedThreadIds: collapse.expandedThreadIds,
+        completedAt: completed.completedAt,
       }),
     [
+      completed.completedAt,
       threads,
       projects,
       settings.groupBy,
@@ -170,7 +184,22 @@ function ThreadListBody({
     );
   });
   const jumpIndexRef = useRef(-1);
+  const setCompleted = completed.setCompleted;
   const onKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    // B86.6: the shortcut acts on the row the focus is inside, read off the DOM
+    // rather than from a selection the list would otherwise have to own. The
+    // list has no cursor of its own — focus IS the cursor here, and the row
+    // already carries its thread id for the hover card.
+    if (matchCompleteKey(event)) {
+      const row = (event.target as HTMLElement | null)?.closest?.(
+        "[data-better-sidebar-row]",
+      );
+      const threadId = row?.getAttribute("data-better-sidebar-row");
+      if (!threadId) return;
+      event.preventDefault();
+      setCompleted(threadId, !completedIds.has(threadId));
+      return;
+    }
     const direction = matchBucketJump(event);
     if (direction === null) return;
     const headers = headersRef.current;
@@ -181,7 +210,7 @@ function ThreadListBody({
     jumpIndexRef.current = index;
     header.scrollIntoView({ block: "start" });
     header.focus();
-  }, []);
+  }, [setCompleted, completedIds]);
 
   /*
    * B61: model and effort are fetched for the rows the list is actually
@@ -275,6 +304,7 @@ function ThreadListBody({
   }
 
   return (
+    <CompletedActionsProvider setCompleted={setCompleted}>
     <div
       data-better-sidebar-list=""
       // B73.1: the whole panel sits on one 8px column, and the scroll
@@ -337,6 +367,7 @@ function ThreadListBody({
         </section>
       ))}
     </div>
+    </CompletedActionsProvider>
   );
 }
 
@@ -371,7 +402,24 @@ function SectionHeader({
   // (B53.4) is tested there — it is simply not drawn.
   // Intrinsic, not `flex-1`: the chevron sits beside the label rather than
   // out at the trailing edge, so the label must not stretch past its text.
-  const label = <span className="min-w-0 truncate text-left">{section.label}</span>;
+  //
+  // B86.4 is the one exception: COMPLETED arrives folded, so a header without
+  // its number is a closed box the user cannot see into. The rule above still
+  // holds everywhere else — `showCount` is true for that key alone.
+  const label = (
+    <span className="min-w-0 truncate text-left">
+      {section.label}
+      {/* The space is a real text node, not styling: the header's accessible
+          name is the concatenation of its text, and a margin alone made the
+          collapsed section announce itself as "COMPLETED1". */}
+      {section.showCount ? (
+        <>
+          {" "}
+          <span className="tabular-nums opacity-60">{section.count}</span>
+        </>
+      ) : null}
+    </span>
+  );
   // The row the header occupies. It is never the focusable element: the
   // collapsible variant nests a button inside it, and the panel's controls
   // are buttons too — one interactive element inside another is invalid, and

@@ -55,6 +55,8 @@ function render(
         lastActivity: () => ({ activity: [] }),
         threadWorkStats: () => ({ stats: [] }),
         localHost: () => ({ hostId: null }),
+        completedThreads: () => ({ entries: [] }),
+        setThreadCompleted: () => ({ entries: [] }),
         ...rpc,
       },
     },
