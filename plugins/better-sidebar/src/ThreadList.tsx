@@ -409,8 +409,14 @@ function SectionHeader({
   const label = (
     <span className="min-w-0 truncate text-left">
       {section.label}
+      {/* The space is a real text node, not styling: the header's accessible
+          name is the concatenation of its text, and a margin alone made the
+          collapsed section announce itself as "COMPLETED1". */}
       {section.showCount ? (
-        <span className="ml-1.5 tabular-nums opacity-60">{section.count}</span>
+        <>
+          {" "}
+          <span className="tabular-nums opacity-60">{section.count}</span>
+        </>
       ) : null}
     </span>
   );
