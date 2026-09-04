@@ -850,7 +850,7 @@ describe("registration", () => {
     });
   });
 
-  it("registers all eight contract methods and the fourteen settings descriptors (B59, B85)", async () => {
+  it("registers all eight contract methods and the sixteen settings descriptors (B59, B85)", async () => {
     const host = hostWith({});
     await plugin(host.bb);
 
@@ -881,6 +881,8 @@ describe("registration", () => {
       "showQuickPin",
       "showQuickMarkRead",
       "showQuickArchive",
+      "showQuickCompleted",
+      "showSubgroups",
     ]);
     expect(descriptors.groupBy?.default).toBe("date");
     expect(descriptors.density?.default).toBe("default");
@@ -901,7 +903,12 @@ describe("registration", () => {
     expect(descriptors.showEffort?.type).toBe("boolean");
     expect(descriptors.showEffort?.default).toBe(false);
     // B85: pin replaces mark-read as the first quick action.
-    for (const key of ["showQuickPin", "showQuickArchive"] as const) {
+    for (const key of [
+      "showQuickPin",
+      "showQuickArchive",
+      "showQuickCompleted",
+      "showSubgroups",
+    ] as const) {
       expect(descriptors[key]?.type).toBe("boolean");
       expect(descriptors[key]?.default).toBe(true);
     }

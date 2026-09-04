@@ -415,11 +415,26 @@ describe("ThreadRow hover actions", () => {
     ).toBeNull();
 
     const on = renderRow(row(), {}, {
-      quickActions: { pin: true, markRead: true, archive: true },
+      quickActions: { pin: true, markRead: true, archive: true, completed: true },
     } as Record<string, unknown>);
     expect(
       within(actions(on.container)).getByLabelText("Mark unread"),
     ).toBeTruthy();
+  });
+
+  /** The completed toggle ships on, between pin and archive. */
+  it("draws the completed quick action by default, and omits it when off", () => {
+    const on = renderRow(row());
+    expect(
+      within(actions(on.container)).getByLabelText("Mark completed"),
+    ).toBeTruthy();
+
+    const off = renderRow(row(), {}, {
+      quickActions: { pin: true, markRead: false, archive: true, completed: false },
+    } as Record<string, unknown>);
+    expect(
+      within(actions(off.container)).queryByLabelText(/Mark (completed|active)/),
+    ).toBeNull();
   });
 
   it("archives from the archive button", () => {
@@ -744,7 +759,7 @@ describe("ThreadRow row 1 layout (B57)", () => {
     expect(status.className).toContain(ROW1_ICON);
     const cluster = container.querySelector("[data-better-sidebar-row-actions]")!;
     const buttonGlyphs = cluster.querySelectorAll("svg");
-    expect(buttonGlyphs).toHaveLength(3);
+    expect(buttonGlyphs).toHaveLength(4);
     for (const glyph of buttonGlyphs) {
       expect(glyph.getAttribute("class")).toContain(ROW1_ICON);
     }

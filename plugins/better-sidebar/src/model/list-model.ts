@@ -5,9 +5,11 @@ import {
   bucketOf,
   dimLevelFor,
   COMPLETED_PREFIX,
+  WORKING_PREFIX,
   isCollapsedByDefault,
   isCollapsibleSection,
   isCompletedSection,
+  isSubgroupSection,
   labelFor,
   showsCount,
   statusGroupOf,
@@ -139,9 +141,13 @@ export function sectionKeyOf(
   settings: BetterSidebarSettings,
   now: number,
   completedAt: ReadonlyMap<string, number> = NOTHING_FILED,
+  lastActivity: ReadonlyMap<string, number> = NOTHING_FILED,
 ): SectionKey {
   const merged = settings.groupBy === "status";
   if (thread.hasPendingInteraction) return merged ? "status:needs-you" : "needs-you";
+  // B89: with subgroups on, a thread that is running right now sits in its
+  // group's WORKING subgroup — above COMPLETED, because resuming a filed
+  // thread makes it live work again, and live work outranks the archive.
   // B86.1: a filed thread stays WITH the group it belongs to, in that group's
   // own COMPLETED subgroup. The pile is not one heap at the foot of the list:
   // the mode the user chose is the primary split, and completion is the second.
@@ -151,32 +157,44 @@ export function sectionKeyOf(
   // its flag on the same signal (B86.2). This only has to agree with that while
   // the write is in flight.
   const filedAt = completedAt.get(thread.id);
-  if (filedAt !== undefined) {
-    return `completed:${groupKeyOf(thread, settings, now, filedAt)}`;
+  // B89: the two subgroups split every thread of a group. WORKING is the
+  // COMPLEMENT of COMPLETED — open work, whether an agent is running on it
+  // or the user merely has it open. A finished-and-unread thread still
+  // hoists to DONE, and a pinned one to PINNED; the rest of this function
+  // only runs with subgroups off.
+  if (settings.showSubgroups && !merged) {
+    if (filedAt !== undefined) {
+      return `completed:${groupKeyOf(thread, settings, now, lastActivity)}`;
+    }
+    if (!thread.isPinned && !isFinished(thread)) {
+      return `working:${groupKeyOf(thread, settings, now, lastActivity)}`;
+    }
   }
   if (isFinished(thread)) return merged ? "status:unread" : "done";
   if (thread.isPinned) return "pinned";
-  return groupKeyOf(thread, settings, now, null);
+  return groupKeyOf(thread, settings, now, lastActivity);
 }
 
 /**
  * The group the current mode puts this thread in, ignoring every band.
  *
- * `filedAt` is the moment the user filed the thread, or null for a thread still
- * in play. It changes ONE answer: B86.1 buckets a filed thread by when it was
- * FILED, not by its last activity. A filed thread still receives background
- * writes, and bucketing on those walked its subgroup back up to TODAY days
- * after the user had put it away. Filing time is the date the user would name.
+ * Date mode buckets on the thread's last activity — the timestamp the row's
+ * own time label carries — filed or not: resuming a thread the list filed
+ * under YESTERDAY moves it to TODAY, where the work now sits, and a
+ * completion click never drags it anywhere. (B86.1 as revised twice: filing
+ * time as the bucket date walked a completed thread into TODAY; the host's
+ * `latestAttentionAt`, the previous bucket date, does not advance when an
+ * old thread is resumed, so it froze yesterday's threads in place.)
  */
 function groupKeyOf(
   thread: PluginSidebarThread,
   settings: BetterSidebarSettings,
   now: number,
-  filedAt: number | null,
+  lastActivity: ReadonlyMap<string, number>,
 ): GroupKey {
   switch (settings.groupBy) {
     case "date":
-      return bucketOf(filedAt ?? thread.latestAttentionAt, now);
+      return bucketOf(lastActivity.get(thread.id) ?? thread.latestAttentionAt, now);
     case "project":
       return `project:${thread.projectId}`;
     case "host":
@@ -336,7 +354,7 @@ function assignSections(
   for (const root of roots) {
     assignment.set(
       root.id,
-      sectionKeyOf(root, input.settings, input.now, input.completedAt),
+      sectionKeyOf(root, input.settings, input.now, input.completedAt, input.lastActivity),
     );
   }
   return assignment;
@@ -459,36 +477,42 @@ function sectionOrderFor(
     for (const status of STATUS_GROUP_ORDER) groups.push(`status:${status}`);
   } else if (input.settings.groupBy === "host") {
     // B65.2: machines by name, with `No machine` pinned last however it sorts.
-    const hosts = [...present].filter(
-      (key) => key !== NO_HOST_KEY && key.startsWith("host:"),
-    ) as GroupKey[];
-    hosts.sort((a, b) =>
+    // B89: threads now live under subgroup keys, so every key maps back to
+    // its group before the host prefix is read.
+    const hosts = new Set<GroupKey>();
+    for (const key of present) {
+      const group = (
+        isSubgroupSection(key) ? key.slice(key.indexOf(":") + 1) : key
+      ) as GroupKey;
+      if (group !== NO_HOST_KEY && group.startsWith("host:")) hosts.add(group);
+    }
+    const sorted = [...hosts].sort((a, b) =>
       labelFor(a, dynamicLabels).localeCompare(labelFor(b, dynamicLabels)),
     );
-    groups.push(...hosts, NO_HOST_KEY);
+    groups.push(...sorted, NO_HOST_KEY);
   } else {
     // B8: project sections follow the host's project order.
     for (const project of input.projects) groups.push(`project:${project.id}`);
     // A project the host did not list, discovered from the threads themselves.
     // Matched on the prefix rather than by subtracting the keys already placed:
-    // `present` also holds the band keys and the COMPLETED subgroups, and a
-    // catch-all that took those emitted NEEDS YOU and PINNED a second time.
+    // `present` also holds the band keys and the subgroups, and a catch-all
+    // that took those emitted NEEDS YOU and PINNED a second time.
     for (const key of present) {
-      if (!key.startsWith("project:")) continue;
-      if (!groups.includes(key as GroupKey)) groups.push(key as GroupKey);
+      const group = (
+        isSubgroupSection(key) ? key.slice(key.indexOf(":") + 1) : key
+      ) as GroupKey;
+      if (!group.startsWith("project:")) continue;
+      if (!groups.includes(group)) groups.push(group);
     }
   }
 
   // B67: DONE sits between NEEDS YOU and PINNED. In `status` mode neither band
   // is emitted (B65.5/B67.7), so these two keys are simply never present.
-  //
-  // B86.1: every group is immediately followed by its own COMPLETED subgroup,
-  // so the filed threads of a project sit under that project rather than in one
-  // heap at the foot of the list. The bands get no subgroup: a filed thread
-  // that blocks on the user is unfiled (B86.2), and filing clears the pin, so
-  // no band can hold one.
   const order: SectionKey[] = ["needs-you", "done", "pinned"];
-  for (const group of groups) order.push(group, `${COMPLETED_PREFIX}${group}`);
+  for (const group of groups) {
+    // B89: WORKING above COMPLETED — live work first, archive second.
+    order.push(group, `${WORKING_PREFIX}${group}`, `${COMPLETED_PREFIX}${group}`);
+  }
   return order;
 }
 
@@ -513,7 +537,7 @@ function makeSection(
     label: labelFor(key, dynamicLabels),
     count,
     showCount: showsCount(key),
-    isSubgroup: isCompletedSection(key),
+    isSubgroup: isSubgroupSection(key),
     isCollapsible,
     isCollapsed,
     rows: isCollapsed ? [] : rows,
@@ -575,18 +599,42 @@ function buildLiveSections(
   }
   const order = sectionOrderFor(input, new Set(rowsBySection.keys()), dynamicLabels);
   const sections: RenderSection[] = [];
+  // Order is always a group immediately followed by its three subgroups, so
+  // one flag carries the collapse state to all of them.
+  let groupCollapsed = false;
   for (const key of order) {
+    if (isSubgroupSection(key)) {
+      // A collapsed group hides its subgroups entirely: filing a thread does
+      // not reopen a section the user folded, and the subgroup under a
+      // collapsed header read as content the collapse had failed to take.
+      if (groupCollapsed) continue;
+    } else {
+      const count = countBySection.get(key) ?? 0;
+      // B4: an empty section renders nothing at all — with one exception B86.1
+      // creates. A group whose threads are ALL filed has no rows of its own, but
+      // it still owns a COMPLETED subgroup. Dropping the header left that
+      // subgroup with the previous group's header above it, which reads as the
+      // filed threads belonging to a project they are not in. A group with a
+      // subgroup under it is not empty; it is a group whose work is all done.
+      // The cast covers the band keys, which have no subgroup key at the type
+      // level; the lookup simply misses for them, which is the right answer.
+      const subgroupCount =
+        (countBySection.get(`${COMPLETED_PREFIX}${key}` as SectionKey) ?? 0) +
+        (countBySection.get(`${WORKING_PREFIX}${key}` as SectionKey) ?? 0);
+      if (count === 0 && subgroupCount === 0) continue;
+      const section = makeSection(
+        key,
+        rowsBySection.get(key) ?? [],
+        count,
+        input,
+        dynamicLabels,
+      );
+      sections.push(section);
+      groupCollapsed = section.isCollapsed;
+      continue;
+    }
     const count = countBySection.get(key) ?? 0;
-    // B4: an empty section renders nothing at all — with one exception B86.1
-    // creates. A group whose threads are ALL filed has no rows of its own, but
-    // it still owns a COMPLETED subgroup. Dropping the header left that
-    // subgroup with the previous group's header above it, which reads as the
-    // filed threads belonging to a project they are not in. A group with a
-    // subgroup under it is not empty; it is a group whose work is all done.
-    // The cast covers the band keys, which have no subgroup key at the type
-    // level; the lookup simply misses for them, which is the right answer.
-    const subgroup = `${COMPLETED_PREFIX}${key}` as SectionKey;
-    if (count === 0 && (countBySection.get(subgroup) ?? 0) === 0) continue;
+    if (count === 0) continue;
     sections.push(
       makeSection(key, rowsBySection.get(key) ?? [], count, input, dynamicLabels),
     );

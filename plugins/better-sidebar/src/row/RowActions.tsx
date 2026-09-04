@@ -47,7 +47,7 @@ export function RowActions({
   /** B86: whether the user has filed this thread; the model resolved it. */
   isCompleted: boolean;
   /** B85: which quick actions the cluster draws, from the settings. */
-  quickActions: { pin: boolean; markRead: boolean; archive: boolean };
+  quickActions: { pin: boolean; markRead: boolean; archive: boolean; completed: boolean };
   onNavigate: () => void;
   onOpenPullRequest: () => void;
   renameEditor: RenameEditor;
@@ -122,6 +122,13 @@ export function RowActions({
           onClick={() =>
             fireAndForget(actions.setPinned(thread.id, !thread.isPinned), "pin")
           }
+        />
+      ) : null}
+      {quickActions.completed ? (
+        <ActionButton
+          label={isCompleted ? "Mark active" : "Mark completed"}
+          glyph={isCompleted ? "circle-x" : "check"}
+          onClick={() => setCompleted(thread.id, !isCompleted)}
         />
       ) : null}
       {quickActions.archive ? (

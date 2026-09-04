@@ -559,6 +559,20 @@ export default function plugin(bb: BbPluginApi) {
       description: "The archive button in the row's hover actions.",
       default: true,
     },
+    showQuickCompleted: {
+      type: "boolean",
+      label: "Quick action: mark completed",
+      description:
+        "The completed toggle in the row's hover actions. Off, it stays reachable from the context and overflow menus.",
+      default: true,
+    },
+    showSubgroups: {
+      type: "boolean",
+      label: "Show the Working and Completed subgroups",
+      description:
+        "Files each group's running threads under a WORKING header and its completed threads under a folded COMPLETED header. Off, every thread sits in its group's own rows.",
+      default: true,
+    },
   });
 
   // These handlers do not cache. The frontend already caches both methods at

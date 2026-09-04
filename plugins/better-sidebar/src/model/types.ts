@@ -40,7 +40,11 @@ export interface BetterSidebarSettings {
    * default first action; the read toggle stays reachable from the menus. */
   showQuickPin: boolean;
   showQuickMarkRead: boolean;
+  showQuickCompleted: boolean;
   showQuickArchive: boolean;
+  /** B89: the per-group COMPLETED and WORKING subgroups. Off, every thread
+   * sits in its group's own rows — bb's original flat list. */
+  showSubgroups: boolean;
 }
 
 export type DateBucketKey = "today" | "yesterday" | "last-7" | "last-30" | "older";
@@ -81,6 +85,8 @@ export type SectionKey =
   | "pinned"
   /** B86.1: the filed threads of one group, rendered under it. */
   | `completed:${GroupKey}`
+  /** B89: the actively working threads of one group, rendered above COMPLETED. */
+  | `working:${GroupKey}`
   | GroupKey
   | "search";
 
@@ -132,6 +138,13 @@ export interface ListModelInput {
    * row's "moved on since you filed it" dot is `updatedAt` measured against it.
    */
   readonly completedAt: ReadonlyMap<string, number>;
+  /**
+   * B82 activity, id → epoch ms of the thread's newest event. Date mode
+   * buckets on this — the same timestamp the row's time label carries —
+   * falling back to `latestAttentionAt` while a lookup is missing. An absent
+   * id is "not resolved yet", never "no activity".
+   */
+  readonly lastActivity: ReadonlyMap<string, number>;
   /**
    * B10, inverted: the parents the user has OPENED. A parent with children is
    * collapsed until it appears here.
