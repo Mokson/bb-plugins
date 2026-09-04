@@ -44,6 +44,14 @@ export function dimLevelFor(section: SectionKey): 0 | 1 | 2 | 3 {
   // B86.3: a filed thread reads like an old one. Reusing `OLDER`'s level keeps
   // the panel on one dim scale rather than inventing a second row style.
   if (isCompletedSection(section)) return DIM_FLOOR;
+  // B89: a WORKING subgroup inherits its group's own level, so a thread in
+  // `working:older` still reads as old now that the subgroups hold the rows.
+  if (isWorkingSection(section)) {
+    const group = section.slice(WORKING_PREFIX.length);
+    return Object.hasOwn(DIM_BY_BUCKET, group)
+      ? DIM_BY_BUCKET[group as DateBucketKey]
+      : 0;
+  }
   return Object.hasOwn(DIM_BY_BUCKET, section)
     ? DIM_BY_BUCKET[section as DateBucketKey]
     : 0;
@@ -85,6 +93,7 @@ export function labelFor(
   // twice in two rows. This test comes FIRST: the generic fallback below would
   // otherwise turn `completed:project:p1` into "PROJECT:P1".
   if (isCompletedSection(section)) return "COMPLETED";
+  if (isWorkingSection(section)) return "WORKING";
   const staticLabel = STATIC_LABELS[section];
   if (staticLabel !== undefined) return staticLabel;
   const resolved = dynamicLabels.get(section);
@@ -103,6 +112,23 @@ export function isCollapsibleSection(section: SectionKey): boolean {
 /** B86.1: the prefix every COMPLETED subgroup key carries. */
 export const COMPLETED_PREFIX = "completed:";
 
+/** B89: the prefix every WORKING subgroup key carries. */
+export const WORKING_PREFIX = "working:";
+
+
+/**
+ * True for either per-group subgroup, whichever group it hangs off.
+ *
+ * One predicate rather than two string tests at every site: the header's
+ * indent, size and fold handling key off exactly this.
+ */
+export function isSubgroupSection(section: SectionKey): boolean {
+  return (
+    section.startsWith(COMPLETED_PREFIX) ||
+    section.startsWith(WORKING_PREFIX)
+  );
+}
+
 /**
  * True for a COMPLETED subgroup, whichever group it hangs off.
  *
@@ -112,6 +138,11 @@ export const COMPLETED_PREFIX = "completed:";
  */
 export function isCompletedSection(section: SectionKey): boolean {
   return section.startsWith(COMPLETED_PREFIX);
+}
+
+/** B89: true for a WORKING subgroup, whichever group it hangs off. */
+export function isWorkingSection(section: SectionKey): boolean {
+  return section.startsWith(WORKING_PREFIX);
 }
 
 /**

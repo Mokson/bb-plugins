@@ -18,6 +18,8 @@ describe("parseSettings", () => {
       showQuickPin: true,
       showQuickMarkRead: false,
       showQuickArchive: true,
+      showQuickCompleted: true,
+      showSubgroups: true,
     });
   });
 
@@ -38,6 +40,8 @@ describe("parseSettings", () => {
         showQuickPin: false,
         showQuickMarkRead: true,
         showQuickArchive: false,
+        showQuickCompleted: false,
+        showSubgroups: false,
       }),
     ).toEqual({
       groupBy: "host",
@@ -54,6 +58,8 @@ describe("parseSettings", () => {
       showQuickPin: false,
       showQuickMarkRead: true,
       showQuickArchive: false,
+      showQuickCompleted: false,
+      showSubgroups: false,
     });
   });
 
@@ -79,6 +85,8 @@ describe("parseSettings", () => {
     "showQuickPin",
     "showQuickMarkRead",
     "showQuickArchive",
+    "showQuickCompleted",
+    "showSubgroups",
   ] as const)("falls back to the default on an unknown %s value (B59.2)", (key) => {
     expect(parseSettings({ [key]: "bogus" })).toEqual(SETTINGS_DEFAULTS);
   });

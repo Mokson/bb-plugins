@@ -104,17 +104,22 @@ function ThreadListBody({
   // backend — a filter that outlives the tab hides work the user forgot about.
   const [projectFilter, setProjectFilter] = useState(ALL_PROJECTS);
 
-  // B68.5: the reconciler sees the UNFILTERED set. Scope and search are
-  // presentation, so a thread they hide has not left its section, and clearing
-  // one must not reshuffle the list.
+  // B82, list-owned: one batched lookup for EVERY thread, not one per row,
+  // so a list of 130 threads issues three requests and not 130. Date mode
+  // buckets a thread on its newest event, so the section keys need the
+  // answer for threads no row is rendering yet — a resumed thread has to
+  // walk out of YESTERDAY before it can render at all.
+  const threadIds = useMemo(() => threads.map((thread) => thread.id), [threads]);
+  const lastActivity = useLastActivity(threadIds);
+
   const sectionOf = useCallback(
     // The completion map is passed here too, or the reconciler and the model
     // would disagree about which section a filed thread is in — which is the
     // one thing `sectionKeyOf` exists to prevent. The map, not a set of ids:
-    // B86.1 needs the filing time to pick a filed thread's date bucket.
+    // its timestamps order the COMPLETED subgroup the key may land in.
     (thread: PluginSidebarThread) =>
-      sectionKeyOf(thread, settings, now, completed.completedAt),
-    [settings.groupBy, now, completed.completedAt],
+      sectionKeyOf(thread, settings, now, completed.completedAt, lastActivity),
+    [settings.groupBy, now, completed.completedAt, lastActivity],
   );
   const sectionOrder = useSectionOrder(threads, sectionOf);
   const navigate = useBbNavigate();
@@ -140,9 +145,10 @@ function ThreadListBody({
         projectFilter: projectFilter === ALL_PROJECTS ? null : projectFilter,
         localHostId,
         sectionOrder,
-        collapsedSections: collapse.collapsedSections,
-        expandedThreadIds: collapse.expandedThreadIds,
         completedAt: completed.completedAt,
+        lastActivity,
+        expandedThreadIds: collapse.expandedThreadIds,
+        collapsedSections: collapse.collapsedSections,
       }),
     [
       completed.completedAt,
@@ -154,21 +160,12 @@ function ThreadListBody({
       searchQuery,
       now,
       projectFilter,
-      localHostId,
+      lastActivity,
       sectionOrder,
       collapse.collapsedSections,
       collapse.expandedThreadIds,
     ],
   );
-
-  // B82: one batched lookup for every rendered row, owned here rather than by
-  // the row, so a list of 130 threads issues three requests and not 130. The
-  // ids come from the model, so a collapsed subtree is not asked about.
-  const renderedThreadIds = useMemo(
-    () => model.sections.flatMap((section) => section.rows.map((row) => row.thread.id)),
-    [model],
-  );
-  const lastActivity = useLastActivity(renderedThreadIds);
 
   const headersRef = useRef<(HTMLElement | null)[]>([]);
   // The ref callbacks below repopulate indices 0..n-1 on every commit, so a
@@ -348,6 +345,7 @@ function ThreadListBody({
                 pin: settings.showQuickPin,
                 markRead: settings.showQuickMarkRead,
                 archive: settings.showQuickArchive,
+                completed: settings.showQuickCompleted,
               }}
               showSignals={settings.density === "detailed"}
               isCompactViewport={isCompactViewport}
@@ -406,33 +404,52 @@ function SectionHeader({
   // its number is a closed box the user cannot see into. The rule above still
   // holds everywhere else — `showCount` is true for that key alone.
   const label = (
-    <span className="min-w-0 truncate text-left">
-      {section.label}
-      {/* The space is a real text node, not styling: the header's accessible
-          name is the concatenation of its text, and a margin alone made the
-          collapsed section announce itself as "COMPLETED1". */}
-      {section.showCount ? (
-        <>
-          {" "}
-          <span className="tabular-nums opacity-60">{section.count}</span>
-        </>
+    <>
+      {section.isSubgroup ? (
+        section.key.startsWith("working:") ? (
+          // The row vocabulary reads working indicators as execution in
+          // flight, and the prompt mark says exactly that — distinct, at
+          // 12px, from COMPLETED's check beside which it always renders.
+          <Glyph
+            name="terminal"
+            aria-hidden="true"
+            className="size-3 shrink-0 opacity-80"
+          />
+        ) : (
+          <Glyph
+            name="check"
+            aria-hidden="true"
+            className="size-3 shrink-0 opacity-80"
+          />
+        )
       ) : null}
-    </span>
+      <span className="min-w-0 truncate text-left">
+        {section.label}
+        {/* The space is a real text node, not styling: the header's accessible
+            name is the concatenation of its text, and a margin alone made the
+            collapsed section announce itself as "COMPLETED1". */}
+        {section.showCount ? (
+          <>
+            {" "}
+            <span className="tabular-nums opacity-60">{section.count}</span>
+          </>
+        ) : null}
+      </span>
+    </>
   );
-  // The row the header occupies. It is never the focusable element: the
-  // collapsible variant nests a button inside it, and the panel's controls
   // are buttons too — one interactive element inside another is invalid, and
   // a click on the display menu would toggle the section under it.
   const rowClass = cn(
     // `px-1` mirrors the row's own inset (`ROW_INSET_PX`, B74), so a
     // header's label starts on the same x as the leading MARK of every row
     // beneath it — which is where bb's own sidebar puts it.
-    "group/section flex w-full items-center gap-1.5 px-1 pb-1 text-[11px] font-medium uppercase tracking-wide",
+    "group/section flex w-full items-center gap-1.5 px-1 pb-1 font-medium uppercase tracking-wide",
     "text-muted-foreground",
-    // B86.1: a subgroup belongs to the group above it, so it indents to the
-    // row title's x and sits tight under its group's last row. A full `pt-3`
-    // would read as a sibling heading rather than as part of what precedes it.
-    section.isSubgroup ? "pl-5 pt-1" : "pt-3",
+    // B86.1: a subgroup belongs to the group above it, so it indents under
+    // its group's header and sits tight under its group's last row. A full
+    // `pt-3` would read as a sibling heading rather than as part of what
+    // precedes it.
+    section.isSubgroup ? "pl-2 pt-1 text-[10px] italic" : "pt-3 text-[11px]",
     dimClassFor(section),
   );
 

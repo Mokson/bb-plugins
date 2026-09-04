@@ -1198,6 +1198,32 @@ describe("ThreadList — one leading column", () => {
     expect(screen.queryByRole("button", { name: /needs you/i })).toBeNull();
     expect(header.firstElementChild!.textContent).toBe("NEEDS YOU");
   });
+
+  /**
+   * A COMPLETED subgroup reads as part of the group above it, not as a
+   * sibling heading — so its label steps one size down. Pinned as classes,
+   * because jsdom lays nothing out.
+   */
+  it("renders a subgroup header one step smaller than a group header", async () => {
+    threadsState = ready([thread({ id: "solo" })]);
+    await act(async () => {
+      renderList({}, undefined, {
+        completedThreads: () => ({
+          entries: [{ threadId: "solo", completedAt: Date.now() - 1000 }],
+        }),
+      });
+    });
+
+    const subgroup = screen
+      .getByRole("button", { name: /completed/i })
+      .closest("h2")!;
+    expect(subgroup.className).toContain("text-[10px]");
+    expect(subgroup.className).toContain("italic");
+
+    const group = screen.getByRole("button", { name: /today/i }).closest("h2")!;
+    expect(group.className).toContain("text-[11px]");
+    expect(group.className).not.toContain("text-[10px]");
+  });
 });
 
 /**

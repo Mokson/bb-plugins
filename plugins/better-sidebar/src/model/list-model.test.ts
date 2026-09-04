@@ -10,6 +10,7 @@ import {
   sectionKeyOf,
   usesHostLabel,
 } from "./list-model";
+import { dimLevelFor } from "./buckets";
 // The REAL reconciler, not a copy of it (F6). Every entrance-order test below
 // drives `useSectionOrder`'s own output into `buildListModel`, so the hook and
 // the model can no longer diverge behind two agreeing stand-ins.
@@ -82,6 +83,7 @@ function input(
     projectFilter: null,
     localHostId: null,
     sectionOrder: null,
+    lastActivity: new Map<string, number>(),
     collapsedSections: new Set<SectionKey>(),
     // Every parent opened. The model's own default is CLOSED, but most cases
     // below are about ordering and sectioning and want the full tree; the
@@ -102,10 +104,12 @@ const DEFAULT_SETTINGS: BetterSidebarSettings = {
   showProjectName: true,
   showBranch: true,
   showModel: true,
-  showEffort: false,
   showQuickPin: true,
   showQuickMarkRead: false,
   showQuickArchive: true,
+  showQuickCompleted: true,
+  showEffort: false,
+  showSubgroups: true,
 };
 
 /**
@@ -153,12 +157,19 @@ describe("precedence and emptiness (B1, B4)", () => {
     );
     const ids = sequence(model);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(keys(model)).toEqual(["needs-you", "pinned", "today", "last-30"]);
+    expect(keys(model)).toEqual([
+      "needs-you",
+      "pinned",
+      "today",
+      "working:today",
+      "last-30",
+      "working:last-30",
+    ]);
   });
 
   it("produces no RenderSection for a bucket with no threads", () => {
     const model = buildListModel(input([thread("a")]));
-    expect(keys(model)).toEqual(["today"]);
+    expect(keys(model)).toEqual(["today", "working:today"]);
     expect(model.rowCount).toBe(1);
   });
 
@@ -205,7 +216,12 @@ describe("grouping modes (B8)", () => {
         settings: { ...DEFAULT_SETTINGS, groupBy: "project" },
       }),
     );
-    expect(keys(model)).toEqual(["needs-you", "pinned", "project:p2"]);
+    expect(keys(model)).toEqual([
+      "needs-you",
+      "pinned",
+      "project:p2",
+      "working:project:p2",
+    ]);
     expect(model.sections[2]!.label).toBe("BETA");
   });
 
@@ -215,7 +231,7 @@ describe("grouping modes (B8)", () => {
         settings: { ...DEFAULT_SETTINGS, groupBy: "none" },
       }),
     );
-    expect(keys(model)).toEqual(["needs-you", "pinned", "all"]);
+    expect(keys(model)).toEqual(["needs-you", "pinned", "all", "working:all"]);
   });
 });
 
@@ -249,12 +265,13 @@ describe("nesting (B9) and archived children (B11)", () => {
       ),
     ];
 
-    expect(buildListModel(input(roots)).sections[0]!.count).toBe(2);
+    expect(buildListModel(input(roots)).sections.find((s) => s.key === "working:today")!.count).toBe(2);
     const busy = buildListModel(input(withSubagents));
-    expect(busy.sections[0]!.count).toBe(2);
-    expect(busy.sections[0]!.rows).toHaveLength(18);
+    const working = busy.sections.find((s) => s.key === "working:today")!;
+    expect(working.count).toBe(2);
+    expect(working.rows).toHaveLength(18);
     // The volume is reported where it belongs: on the parent (B53.2).
-    expect(busy.sections[0]!.rows[0]!.childCount).toBe(16);
+    expect(working.rows[0]!.childCount).toBe(16);
   });
 
   /**
@@ -327,10 +344,14 @@ describe("nesting (B9) and archived children (B11)", () => {
       input(threads, { expandedThreadIds: new Set<string>() }),
     );
 
-    expect(expanded.sections[0]!.rows).toHaveLength(4);
-    expect(collapsed.sections[0]!.rows).toHaveLength(2);
-    expect(collapsed.sections[0]!.count).toBe(expanded.sections[0]!.count);
-    expect(expanded.sections[0]!.count).toBe(2);
+    const rowsOf = (model: ListModel) =>
+      model.sections.find((s) => s.key === "working:today")!.rows;
+    expect(rowsOf(expanded)).toHaveLength(4);
+    expect(rowsOf(collapsed)).toHaveLength(2);
+    expect(collapsed.sections.find((s) => s.key === "working:today")!.count).toBe(
+      expanded.sections.find((s) => s.key === "working:today")!.count,
+    );
+    expect(expanded.sections.find((s) => s.key === "working:today")!.count).toBe(2);
   });
 
   it("hides an archived root but shows an archived child of an expanded parent", () => {
@@ -360,23 +381,28 @@ describe("nesting (B9) and archived children (B11)", () => {
       }),
     );
     expect(sequence(model)).toEqual(["parent"]);
-    expect(model.sections[0]!.rows[0]!.childCount).toBe(0);
+    expect(
+      model.sections.find((s) => s.key === "working:today")!.rows[0]!.childCount,
+    ).toBe(0);
   });
 
   it("treats a thread whose parent is absent as its own root", () => {
     const model = buildListModel(input([thread("orphan", { parentThreadId: "gone" })]));
     expect(sequence(model)).toEqual(["orphan"]);
-    expect(model.sections[0]!.rows[0]!.depth).toBe(0);
+    expect(
+      model.sections.find((s) => s.key === "working:today")!.rows[0]!.depth,
+    ).toBe(0);
   });
 
   it("keeps the count of a collapsed section while emitting no rows", () => {
     const model = buildListModel(
       input([thread("a"), thread("b")], {
-        collapsedSections: new Set<SectionKey>(["today"]),
+        collapsedSections: new Set<SectionKey>(["working:today"]),
       }),
     );
-    expect(model.sections[0]!.count).toBe(2);
-    expect(model.sections[0]!.isCollapsed).toBe(true);
+    const folded = model.sections.find((s) => s.key === "working:today")!;
+    expect(folded.count).toBe(2);
+    expect(folded.isCollapsed).toBe(true);
     expect(model.rowCount).toBe(0);
   });
 });
@@ -405,7 +431,9 @@ describe("title resolution (B13)", () => {
     const model = buildListModel(
       input([thread("a", { title: null, titleFallback: " Fallback " })]),
     );
-    expect(model.sections[0]!.rows[0]!.title).toBe("Fallback");
+    expect(
+      model.sections.find((s) => s.key === "working:today")!.rows[0]!.title,
+    ).toBe("Fallback");
   });
 });
 
@@ -600,6 +628,7 @@ describe("search (B43)", () => {
       "needs-you",
       "pinned",
       "today",
+      "working:today",
     ]);
   });
 
@@ -676,7 +705,7 @@ describe("entrance order (B68, B69)", () => {
     );
     const after = mount(promoted, DEFAULT_SETTINGS, sectionOrder);
     const model = buildListModel(input(promoted, { sectionOrder: after }));
-    expect(keys(model)).toEqual(["needs-you", "pinned", "today"]);
+    expect(keys(model)).toEqual(["needs-you", "pinned", "today", "working:today"]);
     expect(sequence(model)).toEqual(["b", "c", "a"]);
   });
 
@@ -732,7 +761,7 @@ describe("entrance order (B68, B69)", () => {
     const model = buildListModel(
       input(base.filter((t) => t.id !== "c"), { sectionOrder }),
     );
-    expect(keys(model)).toEqual(["today"]);
+    expect(keys(model)).toEqual(["today", "working:today"]);
     expect(sequence(model)).toEqual(["a", "b"]);
   });
 
@@ -774,7 +803,9 @@ describe("entrance order (B68, B69)", () => {
     const model = buildListModel(input(threads, { sectionOrder: seeded }));
 
     expect(sequence(model)).toEqual(["p", "kid1", "kid2", "tail"]);
-    expect(model.sections[0]!.rows.map((row) => row.depth)).toEqual([0, 1, 1, 0]);
+    expect(
+      model.sections.find((s) => s.key === "working:today")!.rows.map((row) => row.depth),
+    ).toEqual([0, 1, 1, 0]);
     // The children are not entrants of their own: they move with the subtree.
     expect(sequence(model).indexOf("kid1")).toBeLessThan(
       sequence(model).indexOf("tail"),
@@ -791,18 +822,25 @@ describe("entrance order (B68, B69)", () => {
     const model = buildListModel(
       input(threads, {
         sectionOrder,
-        collapsedSections: new Set<SectionKey>(["today"]),
+        collapsedSections: new Set<SectionKey>(["working:today"]),
       }),
     );
 
-    const today = model.sections.find((section) => section.key === "today");
-    expect(today).toBeDefined();
-    expect(today!.isCollapsed).toBe(true);
-    expect(today!.label).toBe("TODAY");
-    expect(today!.count).toBe(2);
-    expect(today!.rows).toEqual([]);
-    expect(keys(model)).toEqual(["today", "last-30"]);
+    // The section that owns the rows is the WORKING subgroup now; folding it
+    // keeps its header and its root count while emitting no rows.
+    const working = model.sections.find((section) => section.key === "working:today");
+    expect(working).toBeDefined();
+    expect(working!.isCollapsed).toBe(true);
+    expect(working!.label).toBe("WORKING");
+    expect(working!.count).toBe(2);
+    expect(working!.rows).toEqual([]);
     expect(sequence(model)).toEqual(["old"]);
+    expect(keys(model)).toEqual([
+      "today",
+      "working:today",
+      "last-30",
+      "working:last-30",
+    ]);
   });
 
   it("takes section membership from the live model, never from the sequence map", () => {
@@ -811,13 +849,26 @@ describe("entrance order (B68, B69)", () => {
     // is what shipped a blocker in the overlay this replaces.
     const threads = [thread("a"), thread("late")];
     const stale = mount(threads);
-    expect(stale.entries.get("late")!.section).toBe("today");
+    expect(stale.entries.get("late")!.section).toBe("working:today");
     const aged = [thread("a"), thread("late", { latestAttentionAt: NOW - 10 * DAY_MS })];
     const model = buildListModel(input(aged, { sectionOrder: stale }));
-    expect(keys(model)).toEqual(["today", "last-30"]);
-    expect(model.sections[1]!.rows.map((row) => row.thread.id)).toEqual(["late"]);
+    expect(keys(model)).toEqual([
+      "today",
+      "working:today",
+      "last-30",
+      "working:last-30",
+    ]);
+    expect(
+      model.sections.find((s) => s.key === "working:last-30")!.rows.map((r) => r.thread.id),
+    ).toEqual(["late"]);
     for (const section of model.sections) {
-      expect(section.label).toBe(section.key === "today" ? "TODAY" : "LAST 30 DAYS");
+      const expected =
+        section.key === "today"
+          ? "TODAY"
+          : section.key === "last-30"
+            ? "LAST 30 DAYS"
+            : "WORKING";
+      expect(section.label).toBe(expected);
     }
   });
 });
@@ -832,7 +883,13 @@ describe("DONE band (B67)", () => {
       thread("plain"),
     ];
     const model = buildListModel(input(threads, { sectionOrder: mount(threads) }));
-    expect(keys(model)).toEqual(["needs-you", "done", "pinned", "today"]);
+    expect(keys(model)).toEqual([
+      "needs-you",
+      "done",
+      "pinned",
+      "today",
+      "working:today",
+    ]);
     const done = model.sections.find((section) => section.key === "done")!;
     expect(done.rows.map((row) => row.thread.id).sort()).toEqual(["failed", "finished"]);
     expect(done.label).toBe("DONE");
@@ -841,7 +898,10 @@ describe("DONE band (B67)", () => {
 
   it("leaves a thread that is unread but still running out of DONE (B67.1)", () => {
     const threads = [thread("running", { indicator: "runtime", isUnread: true })];
-    expect(keys(buildListModel(input(threads)))).toEqual(["today"]);
+    expect(keys(buildListModel(input(threads)))).toEqual([
+      "today",
+      "working:today",
+    ]);
   });
 
   it("never promotes a parent for a completed CHILD (B67.3)", () => {
@@ -851,8 +911,10 @@ describe("DONE band (B67)", () => {
     ];
     const model = buildListModel(input(threads, { sectionOrder: mount(threads) }));
     // One section, and the child is still nested where it already was.
-    expect(keys(model)).toEqual(["today"]);
-    expect(model.sections[0]!.rows.map((row) => row.depth)).toEqual([0, 1]);
+    expect(keys(model)).toEqual(["today", "working:today"]);
+    expect(
+      model.sections.find((s) => s.key === "working:today")!.rows.map((row) => row.depth),
+    ).toEqual([0, 1]);
   });
 
   it("shows a pending AND unread thread only in NEEDS YOU (B67.5)", () => {
@@ -891,11 +953,21 @@ describe("host and status grouping (B65)", () => {
     const model = buildListModel(
       input(threads, { settings: HOST_SETTINGS, sectionOrder: mount(threads, HOST_SETTINGS) }),
     );
-    expect(keys(model)).toEqual(["host:h1", "host:h2", "host:none"]);
+    expect(keys(model)).toEqual([
+      "host:h1",
+      "working:host:h1",
+      "host:h2",
+      "working:host:h2",
+      "host:none",
+      "working:host:none",
+    ]);
     expect(model.sections.map((section) => section.label)).toEqual([
       "ALPHA",
+      "WORKING",
       "ZETA",
+      "WORKING",
       "NO MACHINE",
+      "WORKING",
     ]);
     expect(sequence(model)).toEqual(["a", "z", "none1"]);
   });
@@ -957,8 +1029,9 @@ describe("host and status grouping (B65)", () => {
     const model = buildListModel(
       input(threads, { settings: HOST_SETTINGS, sectionOrder: mount(threads, HOST_SETTINGS) }),
     );
-    expect(model.sections[0]!.count).toBe(1);
-    expect(model.sections[0]!.rows).toHaveLength(2);
+    const working = model.sections.find((s) => s.key === "working:host:h1")!;
+    expect(working.count).toBe(1);
+    expect(working.rows).toHaveLength(2);
   });
 });
 
@@ -974,14 +1047,14 @@ describe("project scope filter (B64)", () => {
       input(mixed, { projectFilter: "p1", sectionOrder: mount(mixed) }),
     );
     expect(sequence(model)).toEqual(["a1"]);
-    expect(keys(model)).toEqual(["today"]);
+    expect(keys(model)).toEqual(["today", "working:today"]);
   });
 
   it("does not change band precedence (B64.6)", () => {
     const model = buildListModel(
       input(mixed, { projectFilter: "p2", sectionOrder: mount(mixed) }),
     );
-    expect(keys(model)).toEqual(["pinned", "today"]);
+    expect(keys(model)).toEqual(["pinned", "today", "working:today"]);
     expect(sequence(model)).toEqual(["pin2", "b1"]);
   });
 
@@ -1013,8 +1086,10 @@ describe("parent cycles (B1, F4)", () => {
     const ids = sequence(model);
     expect(ids).toEqual(["a", "b"]);
     expect(new Set(ids).size).toBe(2);
-    expect(model.sections[0]!.rows.every((row) => row.depth === 0)).toBe(true);
-    expect(model.sections[0]!.count).toBe(2);
+    expect(
+      model.sections.find((s) => s.key === "working:today")!.rows.every((row) => row.depth === 0),
+    ).toBe(true);
+    expect(model.sections.find((s) => s.key === "working:today")!.count).toBe(2);
   });
 
   it("keeps a non-cyclic child of a cycle member nested under it", () => {
@@ -1026,7 +1101,7 @@ describe("parent cycles (B1, F4)", () => {
       ]),
     );
     expect(sequence(model)).toEqual(["a", "kid", "b"]);
-    expect(model.sections[0]!.rows[1]!.depth).toBe(1);
+    expect(model.sections.find((s) => s.key === "working:today")!.rows[1]!.depth).toBe(1);
   });
 });
 
@@ -1052,8 +1127,35 @@ describe("COMPLETED subgroups (B86)", () => {
         completedAt: filed({ b: NOW - 1000 }),
       }),
     );
-    expect(keys(model)).toEqual(["today", "completed:today"]);
+    expect(keys(model)).toEqual(["today", "working:today", "completed:today"]);
     expect(sequence(model)).toEqual(["a"]); // folded, so it draws no rows
+  });
+
+  it("hides a subgroup whose group is collapsed", () => {
+    const threads = [thread("a"), thread("b")];
+    const model = buildListModel(
+      input(threads, {
+        sectionOrder: mount(threads),
+        completedAt: filed({ b: NOW - 1000 }),
+        collapsedSections: expand("today"),
+      }),
+    );
+    // The group header survives, folded; the subgroups are not rendered at
+    // all — not folded under it, gone.
+    expect(keys(model)).toEqual(["today"]);
+    expect(model.sections[0]!.rows).toEqual([]);
+    expect(model.sections[0]!.isCollapsed).toBe(true);
+  });
+
+  it("brings the subgroup back when the group is reopened", () => {
+    const threads = [thread("a"), thread("b")];
+    const model = buildListModel(
+      input(threads, {
+        sectionOrder: mount(threads),
+        completedAt: filed({ b: NOW - 1000 }),
+      }),
+    );
+    expect(keys(model)).toEqual(["today", "working:today", "completed:today"]);
   });
 
   it("gives every group its own subgroup rather than one shared pile", () => {
@@ -1073,8 +1175,10 @@ describe("COMPLETED subgroups (B86)", () => {
     );
     expect(keys(model)).toEqual([
       "project:p1",
+      "working:project:p1",
       "completed:project:p1",
       "project:p2",
+      "working:project:p2",
       "completed:project:p2",
     ]);
     expect(sequence(model)).toEqual(["a", "filed-1", "b", "filed-2"]);
@@ -1096,12 +1200,14 @@ describe("COMPLETED subgroups (B86)", () => {
     );
     expect(keys(model)).toEqual([
       "project:p1",
+      "working:project:p1",
       "project:p2",
       "completed:project:p2",
     ]);
     // The header is there, and it is genuinely empty.
-    expect(model.sections[1]!.rows).toEqual([]);
-    expect(model.sections[1]!.count).toBe(0);
+    const empty = model.sections.find((s) => s.key === "project:p2")!;
+    expect(empty.rows).toEqual([]);
+    expect(empty.count).toBe(0);
   });
 
   it("still renders nothing for a group with neither rows nor filed threads", () => {
@@ -1110,7 +1216,7 @@ describe("COMPLETED subgroups (B86)", () => {
         settings: { ...DEFAULT_SETTINGS, groupBy: "project" },
       }),
     );
-    expect(keys(model)).toEqual(["project:p1"]);
+    expect(keys(model)).toEqual(["project:p1", "working:project:p1"]);
   });
 
   it("labels every subgroup COMPLETED, never its group's own name", () => {
@@ -1158,21 +1264,29 @@ describe("COMPLETED subgroups (B86)", () => {
     expect(sequence(model)).toEqual(["filed-1"]);
   });
 
-  it("buckets a filed thread by WHEN IT WAS FILED, not by its last activity", () => {
-    // Filed a week ago, but written to a minute ago by a background agent.
+  it("buckets a filed thread by its LAST ACTIVITY, not by when it was filed", () => {
+    // Both directions. Filed 8 days ago but written to a minute ago by a
+    // background agent: it sits with TODAY, where its activity is. Filed a
+    // second ago but last active yesterday: it sits with YESTERDAY, the date
+    // the user would name — the completion click must not drag it to TODAY.
     const threads = [
-      thread("filed", { latestAttentionAt: NOW - 60_000, updatedAt: NOW - 60_000 }),
+      thread("fresh", { latestAttentionAt: NOW - 60_000, updatedAt: NOW - 60_000 }),
+      thread("stale", { latestAttentionAt: NOW - DAY_MS }),
     ];
     const model = buildListModel(
       input(threads, {
-        completedAt: filed({ filed: NOW - 8 * DAY_MS }),
-        collapsedSections: expand("completed:last-30"),
+        completedAt: filed({ fresh: NOW - 8 * DAY_MS, stale: NOW - 1000 }),
+        collapsedSections: expand("completed:today", "completed:yesterday"),
       }),
     );
-    // `last-30`, from the filing date — not `today`, where its activity sits.
-    // The empty `last-30` header comes with it: the bucket owns the subgroup.
-    expect(keys(model)).toEqual(["last-30", "completed:last-30"]);
-    expect(sequence(model)).toEqual(["filed"]);
+    // The empty `yesterday` header comes with it: the bucket owns the subgroup.
+    expect(keys(model)).toEqual([
+      "today",
+      "completed:today",
+      "yesterday",
+      "completed:yesterday",
+    ]);
+    expect(sequence(model)).toEqual(["fresh", "stale"]);
   });
 
   it("keeps a thread that blocks on the user OUT of any subgroup (B86.2)", () => {
@@ -1183,7 +1297,30 @@ describe("COMPLETED subgroups (B86)", () => {
         completedAt: filed({ stuck: NOW - 1000 }),
       }),
     );
+
     expect(keys(model)).toEqual(["needs-you"]);
+  });
+
+  it("moves a resumed thread to TODAY on its last activity, not its attention stamp", () => {
+    // Started yesterday; the host's `latestAttentionAt` never advanced, but
+    // the thread's newest event is a minute old. B82's timestamp is the
+    // bucket date, so the thread walks out of YESTERDAY.
+    const threads = [thread("resumed", { latestAttentionAt: NOW - DAY_MS })];
+    const model = buildListModel(
+      input(threads, {
+        lastActivity: new Map([["resumed", NOW - 60_000]]),
+      }),
+    );
+    expect(keys(model)).toEqual(["today", "working:today"]);
+    expect(sequence(model)).toEqual(["resumed"]);
+  });
+
+  it("keeps the YESTERDAY bucket while a thread's activity is still unresolved", () => {
+    // An id missing from the map is "not resolved yet", so the model falls
+    // back to the attention stamp instead of yanking the thread to TODAY.
+    const threads = [thread("quiet", { latestAttentionAt: NOW - DAY_MS })];
+    const model = buildListModel(input(threads));
+    expect(keys(model)).toEqual(["yesterday", "working:yesterday"]);
   });
 
   it("outranks the DONE band and the pin", () => {
@@ -1214,7 +1351,9 @@ describe("COMPLETED subgroups (B86)", () => {
     expect(keys(model)).toEqual(["today", "completed:today"]);
     expect(sequence(model)).toEqual(["parent", "child"]);
     // The child was never filed itself; only its parent was.
-    expect(model.sections[1]!.rows.map((row) => row.isCompleted)).toEqual([
+    expect(
+      model.sections.find((s) => s.key === "completed:today")!.rows.map((r) => r.isCompleted),
+    ).toEqual([
       true,
       false,
     ]);
@@ -1236,7 +1375,9 @@ describe("COMPLETED subgroups (B86)", () => {
     const threads = [thread("a")];
     const expected: Record<string, string> = {
       project: "completed:project:p1",
-      status: "completed:status:idle",
+      // Status mode IS a status split; B89 nests no subgroup inside one, so
+      // the filed thread sits in its status group directly.
+      status: "status:idle",
       none: "completed:all",
       date: "completed:today",
     };
@@ -1245,7 +1386,9 @@ describe("COMPLETED subgroups (B86)", () => {
         input(threads, {
           settings: { ...DEFAULT_SETTINGS, groupBy: groupBy as never },
           completedAt: filed({ a: NOW - 1 }),
-          collapsedSections: expand(key as SectionKey),
+          collapsedSections: key.startsWith("completed:")
+            ? expand(key as SectionKey)
+            : new Set<SectionKey>(),
         }),
       );
       expect(keys(model).at(-1)).toBe(key);
@@ -1302,5 +1445,78 @@ describe("COMPLETED subgroups (B86)", () => {
     expect(dots.get("quiet")).toBe(false);
     // The write that RECORDS the mark lands on the same millisecond.
     expect(dots.get("same")).toBe(false);
+  });
+});
+
+/**
+ * B89. The WORKING subgroup is COMPLETED's live counterpart: the same
+ * per-group nesting, but open by default (hiding running work would defeat
+ * it), undimmed, and outranking COMPLETED — resuming a filed thread makes it
+ * live work again. `showSubgroups` is the hard off-switch for both.
+ */
+describe("WORKING subgroups (B89)", () => {
+  const filed = (ids: Record<string, number>) => new Map(Object.entries(ids));
+
+  it("files a running thread in its group's WORKING subgroup, above COMPLETED", () => {
+    const threads = [
+      thread("busy", { indicator: "runtime" }),
+      thread("a"),
+      thread("filed", { indicator: "none" }),
+    ];
+    const model = buildListModel(
+      input(threads, {
+        completedAt: filed({ filed: NOW - 1000 }),
+      }),
+    );
+    expect(keys(model)).toEqual([
+      "today",
+      "working:today",
+      "completed:today",
+    ]);
+  });
+  it("keeps a resumed filed thread in COMPLETED even while it runs", () => {
+    // WORKING is the complement of COMPLETED: filing decides, the running
+    // indicator does not pull a filed thread back out of the archive.
+    const threads = [thread("resumed", { indicator: "background-agent" })];
+    const model = buildListModel(
+      input(threads, {
+        completedAt: filed({ resumed: NOW - DAY_MS }),
+      }),
+    );
+    expect(keys(model)).toEqual(["today", "completed:today"]);
+  });
+
+  it("leaves a pending working thread in needs-you (B1 outranks B89)", () => {
+    const threads = [
+      thread("stuck", { indicator: "runtime", hasPendingInteraction: true }),
+    ];
+    const model = buildListModel(input(threads));
+    expect(keys(model)).toEqual(["needs-you"]);
+  });
+
+  it("keeps the WORKING header open and undimmed by default", () => {
+    const threads = [thread("busy", { indicator: "workflow" })];
+    const model = buildListModel(input(threads));
+    const section = model.sections.find((s) => s.key === "working:today")!;
+    expect(section.isCollapsed).toBe(false);
+    expect(section.isSubgroup).toBe(true);
+    expect(dimLevelFor(section.key)).toBe(0);
+  });
+
+  it("renders no subgroups at all when showSubgroups is off", () => {
+    const threads = [
+      thread("busy", { indicator: "runtime" }),
+      thread("filed", { indicator: "none" }),
+    ];
+    const model = buildListModel(
+      input(threads, {
+        settings: { ...DEFAULT_SETTINGS, showSubgroups: false },
+        completedAt: filed({ filed: NOW - 1000 }),
+      }),
+    );
+    // Both threads fall back to the group's own rows; the filed one keeps its
+    // row-level completed state, but no subgroup header exists.
+    expect(keys(model)).toEqual(["today"]);
+    expect(sequence(model)).toEqual(["busy", "filed"]);
   });
 });

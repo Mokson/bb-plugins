@@ -29,6 +29,9 @@ export const SETTINGS_DEFAULTS: BetterSidebarSettings = {
   showQuickPin: true,
   showQuickMarkRead: false,
   showQuickArchive: true,
+  showQuickCompleted: true,
+  /** B89: the subgroups ship on; the flat list is the opt-out. */
+  showSubgroups: true,
 };
 
 /**
@@ -74,6 +77,11 @@ export function parseSettings(
       values?.showQuickArchive,
       SETTINGS_DEFAULTS.showQuickArchive,
     ),
+    showQuickCompleted: flag(
+      values?.showQuickCompleted,
+      SETTINGS_DEFAULTS.showQuickCompleted,
+    ),
+    showSubgroups: flag(values?.showSubgroups, SETTINGS_DEFAULTS.showSubgroups),
   };
 }
 
