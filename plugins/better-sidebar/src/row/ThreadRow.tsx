@@ -8,6 +8,7 @@ import {
   type PluginSidebarPullRequest,
 } from "@get-bb/plugin-sdk/app";
 import { cn } from "../lib/utils";
+import { CONTROL_BUTTON_CLASS } from "../ui/control-button";
 import { Glyph } from "../ui/Glyph";
 import { RowHover } from "../dossier/RowHover";
 import { RowSignals } from "../dossier/RowSignals";
@@ -45,16 +46,6 @@ const DEPTH_INDENT_PX = 12;
  * class would put the two halves of one decision in two places.
  */
 const ROW_INSET_PX = 4;
-
-/**
- * B57.2, superseding B51.1: the chevron's box, drawn only on a parent row and
- * placed immediately after the title rather than in a reserved gutter. Nothing
- * is reserved on a childless row, so B57.5's alignment comes from removal.
- * `relative` is what the hit area's `-inset-1.5` measures against.
- */
-const CHEVRON_BOX_CLASS =
-  cn("relative flex shrink-0 items-center justify-center", ROW1_ICON);
-
 
 /** B51.5: a fixed slot per trailing element, so the time column aligns down the list. */
 const TRAILING_TEXT_CLASS =
@@ -298,11 +289,10 @@ function RowBody({
                 // opens, so its unread flag is noise on every parent's subtree.
                 <span
                   className={cn(
-                    // Revised B51.5 with B57.2: intrinsic rather than
-                    // `flex-1`, so the chevron sits against the end of the
-                    // title instead of being pushed to the row's edge. The
-                    // trailing cluster keeps the right edge with `ml-auto`,
-                    // and the title still truncates only when it runs out.
+                    // Intrinsic rather than `flex-1`: the title truncates
+                    // only when it runs out, against the trailing slot's
+                    // reserved width. The slot keeps the right edge with
+                    // `ml-auto`.
                     "min-w-0 truncate",
                     row.depth === 0 && thread.isUnread
                       ? "font-semibold"
@@ -313,71 +303,73 @@ function RowBody({
                 </span>
               )}
 
-              {/* B57.1/B57.2: the chevron hugs the end of the title, and it is
-                  the only signal that a thread has children — the per-row count
-                  is gone. Its x therefore varies row to row, which is correct:
-                  only a parent draws one, so there is no column to break. */}
-              {row.childCount === 0 ? null : (
-                <span className={cn(CHEVRON_BOX_CLASS, "-ml-1")}>
-                  <span
-                    role="button"
-                    tabIndex={-1}
-                    aria-label={
-                      isSubtreeCollapsed
-                        ? `Expand ${row.childCount} child threads`
-                        : `Collapse ${row.childCount} child threads`
-                    }
-                    aria-expanded={!isSubtreeCollapsed}
-                    // B55.4: the hit area is grown with `-inset-1.5` rather
-                    // than with padding, so a thumb-sized target costs the
-                    // layout nothing and the row's own tap survives beside it.
-                    className="pointer-events-auto absolute -inset-1.5 flex items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
-                    onClick={toggleSubtree}
-                    onPointerDown={(event) => event.stopPropagation()}
-                  >
-                    <Glyph
-                      name={isSubtreeCollapsed ? "chevron-right" : "chevron-down"}
-                      className={ROW1_ICON}
-                      aria-hidden
-                    />
-                  </span>
-                </span>
+              {/* B93: the trailing SLOT, in order. B55.2: it never wraps — the
+                  title truncates into it instead. The slot stacks the
+                  trailing indicator and the hover cluster in one grid cell
+                  (both `col-start-1 row-start-1`), toggling on visibility so
+                  both boxes always exist. The cell is therefore always as
+                  wide as the wider of the two — the cluster — and the title
+                  sits in its hover position at rest too:
+                  hovering moves nothing. That reservation is the point, and
+                  it supersedes B51.5's give-everything-back-to-the-title:
+                  a title that re-truncates under the pointer reads as
+                  jumping, while a title that always clears the actions
+                  reads as stable.
+
+                  B57.4: the indicator's inner spacing is a `ml-1.5` margin
+                  on every element that draws, and on none that does not, so
+                  status-to-time measures the same on every row whatever its
+                  siblings do. B57.1: the child count is gone from here and
+                  from the row entirely.
+
+                  B94 put the subtree chevron here too, FIRST in the slot and
+                  always visible, as a real `<button>` on the shared
+                  `CONTROL_BUTTON_CLASS` surface; B96 moved it down to row 2's
+                  trailing edge (the row-1 fallback above covers the rows with
+                  no second line). */}
+              <div className="ml-auto flex shrink-0 items-center gap-0.5">
+              {/* B96: the subtree chevron moved to row 2's trailing edge, so
+                  row 1 carries only the hover slot. This row-1 button is the
+                  FALLBACK for the rows that draw no second line — `compact`
+                  density and the group modes that hide it — where moving the
+                  affordance would either cost B54's one-bb-row height or
+                  leave a parent with no way to open its subtree. */}
+              {row.childCount === 0 || showSecondRow ? null : (
+                <button
+                  type="button"
+                  aria-label={
+                    isSubtreeCollapsed
+                      ? `Expand ${row.childCount} child threads`
+                      : `Collapse ${row.childCount} child threads`
+                  }
+                  aria-expanded={!isSubtreeCollapsed}
+                  className={cn(CONTROL_BUTTON_CLASS, "pointer-events-auto")}
+                  onClick={toggleSubtree}
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  <Glyph
+                    name={isSubtreeCollapsed ? "chevron-right" : "chevron-down"}
+                    className={ROW1_ICON}
+                    aria-hidden
+                  />
+                </button>
               )}
-
-              {/* B51.3: the trailing cluster, in order. B55.2: it never wraps —
-                  the title truncates into it instead.
-
-                  Revised B51.5: only TIME is a fixed slot, because time is the
-                  only element present on every row and therefore the only one
-                  that can define a stable column. Everything before it is
-                  intrinsic and absent when it has nothing to say, so an idle
-                  childless row — the common row — gives all of that width back
-                  to its title. That is also why the spacing is a margin on each
-                  element rather than a `gap` on the cluster: a gap would still
-                  be charged for `RowSignals`, which must stay mounted even when
-                  it draws nothing (its observer is what discovers it has
-                  something to draw).
-
-                  B57.4: that one margin is `ml-1.5` on every element that
-                  draws, and on none that does not, so status-to-time measures
-                  the same on every row whatever its siblings do. B57.1: the
-                  child count is gone from here and from the row entirely. */}
+              <div className="grid shrink-0 items-center">
               <div
                 data-better-sidebar-row-trailing=""
                 className={cn(
-                  "ml-auto flex shrink-0 items-center",
-                  // The indicator gives its PLACE to the actions, not just its
-                  // paint: it leaves the flow so the cluster inherits exactly
-                  // the width it had. Faded with `opacity-0` it kept its width
-                  // and the title had to clear both.
+                  "col-start-1 row-start-1 flex items-center justify-self-end",
+                  // B93: `invisible` — same box, no pixels — while the hover
+                  // cluster shows in the same cell. `hidden` would collapse
+                  // the box; `opacity-0` would keep a ghost under the
+                  // pointer. `invisible` also drops it from hit-testing.
                   //
-                  // `RowSignals` is unmounted from layout with it, which costs
-                  // nothing: `runBatch` filters on staleness, so the row
-                  // rejoining the visible set sends no request while its entry
-                  // is fresh.
-                  "group-hover/row:hidden",
-                  "group-focus-within/row:hidden",
-                  "group-has-[[data-state=open]]/row:hidden",
+                  // `RowSignals` stays mounted with it, which costs nothing:
+                  // `runBatch` filters on staleness, so the row rejoining the
+                  // visible set sends no request while its entry is fresh.
+                  "group-hover/row:invisible",
+                  "group-focus-within/row:invisible",
+                  "group-has-[[data-state=open]]/row:invisible",
                 )}
               >
                 {/* B61.2: at `compact` and `default` this is not mounted, so
@@ -415,8 +407,9 @@ function RowBody({
                 ) : null}
               </div>
 
-              {/* Last child of row 1, so it lands exactly where the trailing
-                  indicator was and the title measures against it. */}
+              {/* Second in the shared cell (B93): invisible at rest, drawn on
+                  hover, and — both boxes always existing — the cell holds
+                  the cluster's width either way. */}
               <RowActions
                 thread={thread}
                 title={row.title}
@@ -432,6 +425,8 @@ function RowBody({
                     : actions.open(thread.id)
                 }
               />
+              </div>
+              </div>
             </div>
 
             {/* B52.1, revised: a child DOES draw a second line, but not the
@@ -459,6 +454,11 @@ function RowBody({
                     showBranch={showBranch}
                     showEffort={showEffort}
                     execution={execution}
+                    // B96: the subtree chevron, pinned to this line's trailing
+                    // edge. Root rows only — a child has no children, so it
+                    // never draws one.
+                    isSubtreeCollapsed={isSubtreeCollapsed}
+                    onToggleSubtree={onToggleSubtree ? toggleSubtree : undefined}
                   />
                 ) : (
                   <ChildSecondRow

@@ -183,6 +183,13 @@ function rowOne(container: HTMLElement): HTMLElement {
   return element;
 }
 
+/** Row 2: the metadata line (B15); its trailing edge carries the PR chip and, on a parent, the chevron (B96). */
+function rowTwo(container: HTMLElement): HTMLElement {
+  const element = container.querySelector<HTMLElement>("[data-better-sidebar-row2-line]");
+  if (element === null) throw new Error("no row 2 rendered");
+  return element;
+}
+
 /** The PR chip. The row overlay is an anchor now, so `role="link"` is plural. */
 /** Row 1's status/time cluster, which is no longer its last child. */
 function trailing(container: HTMLElement): HTMLElement {
@@ -345,46 +352,47 @@ describe("ThreadRow hover actions", () => {
   }
 
   /**
-   * The cluster stands in for row 1's trailing indicator, so it must sit on
-   * row 1's line. `inset-y-0` centred it over the whole two-line box, which
-   * on a root row left it floating between the lines against nothing.
+   * B93: the cluster stacks with the trailing indicator in one grid cell and
+   * the pair toggles on VISIBILITY, never display. Both boxes always exist,
+   * so the cell is always as wide as the wider of the two — the cluster —
+   * and the title and chevron sit in their hover position at rest too.
+   * Hovering then moves nothing: the chevron is drawn where the hover
+   * buttons will appear, because their width is already reserved.
    */
-  /**
-   * The cluster is absolutely placed at the row's right edge, so without an
-   * inset a long title runs underneath it. Row 1 gives up exactly the
-   * cluster's width — three `size-5` buttons and two `gap-0.5` gaps is 64px,
-   * which is `pr-16` — on the same three triggers the cluster appears on.
-   */
-  /**
-   * The cluster takes the trailing indicator's PLACE in the flow, so the
-   * title's `truncate` measures against whatever is actually beside it. Two
-   * earlier attempts got this wrong: absolutely positioned it overlapped long
-   * titles, and a fixed `pr-16` inset double-counted the faded indicator's
-   * width, so titles truncated with room to spare. A flex sibling needs no
-   * width constant at all.
-   */
-  it("swaps the cluster into the trailing indicator's place, in flow", () => {
+  it("stacks the cluster with the trailing indicator in one grid cell (B93)", () => {
     const { container } = renderRow(row());
     const one = rowOne(container);
     const cluster = actions(container);
+    const indicator = trailing(container);
 
+    // One slot, two stacked children: no overlay, no reserved pixel width.
     expect(cluster.className).not.toContain("absolute");
-    expect(one.className).not.toContain("pr-16");
-    // Last child of row 1: exactly where the indicator sat.
-    expect(one.lastElementChild).toBe(cluster);
+    const stack = indicator.parentElement!;
+    expect(stack.className).toContain("grid");
+    const slot = stack.parentElement!;
+    expect(slot.className).toContain("ml-auto");
+    expect(slot.parentElement).toBe(one);
+    for (const child of [indicator, cluster]) {
+      expect(child.className).toContain("col-start-1");
+      expect(child.className).toContain("row-start-1");
+    }
+    // The indicator right-aligns in the wider cell at rest.
+    expect(indicator.className).toContain("justify-self-end");
 
-    // The indicator leaves the flow rather than merely fading, or the two
-    // would both claim width and the title would clear both.
-    const cluster2 = trailing(container);
+    // Visibility on both sides of every trigger that shows the cluster:
+    // display toggles would collapse the resting box and move the chevron.
     for (const trigger of [
       "group-hover/row:",
       "group-focus-within/row:",
       "group-has-[[data-state=open]]/row:",
     ]) {
-      expect(cluster2.className).toContain(`${trigger}hidden`);
-      expect(cluster.className).toContain(`${trigger}flex`);
+      expect(indicator.className).toContain(`${trigger}invisible`);
+      expect(indicator.className).not.toContain(`${trigger}hidden`);
+      expect(cluster.className).toContain(`${trigger}visible`);
+      expect(cluster.className).not.toContain(`${trigger}flex`);
     }
-    expect(cluster2.className).not.toContain("opacity-0");
+    expect(cluster.className.split(/\s+/)).toContain("invisible");
+    expect(indicator.className).not.toContain("opacity-0");
   });
 
   it("pins an unpinned thread from the pin button (B85)", () => {
@@ -422,6 +430,26 @@ describe("ThreadRow hover actions", () => {
     ).toBeTruthy();
   });
 
+  /** B95: one accent per quick action; the chevron stays muted chrome. */
+  it("tints each quick action and leaves the chevron muted (B95)", () => {
+    const { container } = renderRow(row({ childCount: 2 }));
+    const cluster = actions(container);
+
+    expect(
+      within(cluster).getByLabelText("Mark completed").className,
+    ).toContain("text-emerald-600");
+    expect(within(cluster).getByLabelText("Pin").className).toContain(
+      "text-sky-600",
+    );
+    expect(within(cluster).getByLabelText("Archive").className).toContain(
+      "text-destructive-text",
+    );
+
+    const chevron = container.querySelector('[aria-label*="child threads"]')!;
+    expect(chevron.className).toContain("text-muted-foreground");
+    expect(chevron.className).not.toContain("text-emerald-");
+    expect(chevron.className).not.toContain("text-sky-");
+  });
   /** The completed toggle ships on, between pin and archive. */
   it("draws the completed quick action by default, and omits it when off", () => {
     const on = renderRow(row());
@@ -472,15 +500,20 @@ describe("ThreadRow hover actions", () => {
     }
   });
 
-  it("hides the trailing indicator only on hover, never at rest", () => {
+  it("hides the trailing indicator only on hover, never at rest (B93)", () => {
     const { container } = renderRow(row());
-    const trailing = rowElement(container).querySelector(
+    const trailingEl = rowElement(container).querySelector(
       '[data-better-sidebar-row-trailing]',
     );
-    if (trailing === null) throw new Error("no trailing cluster");
+    if (trailingEl === null) throw new Error("no trailing cluster");
     // A BARE `opacity-0` would dim the indicator at rest; the hover-gated
     // variant of the same utility is the whole point.
-    expect(trailing.className.split(/\s+/)).not.toContain("opacity-0");
+    expect(trailingEl.className.split(/\s+/)).not.toContain("opacity-0");
+    // `invisible` holds the box so the chevron never moves; `hidden` would
+    // collapse it.
+    expect(trailingEl.className.split(/\s+/)).not.toContain("hidden");
+    expect(trailingEl.className.split(/\s+/)).not.toContain("invisible");
+    expect(trailingEl.className).toContain("group-hover/row:invisible");
   });
 });
 
@@ -579,24 +612,59 @@ describe("ThreadRow row 1 layout (B57)", () => {
 
     expect(rowOne(container).textContent).toBe("Ship the sidebar5m");
     expect(rowElement(container).textContent).not.toContain("3");
-    // The chevron stays, and it is the only children signal left.
+    // The chevron stays, and it is the only children signal left — on row 2
+    // since B96, so it is looked up on the whole row, not row 1.
     expect(
-      rowOne(container).querySelector('[aria-label*="child threads"]'),
+      rowElement(container).querySelector('[aria-label*="child threads"]'),
     ).not.toBeNull();
   });
 
   /**
-   * B57.2. The chevron hugs the end of the title instead of preceding it, so
-   * it reads as belonging to that thread rather than to a column.
+   * B96, superseding B94: the chevron moved DOWN to row 2, pinned to the
+   * trailing edge — the last element of the metadata line, after the PR chip.
+   * Still a real `<button>` on the shared control surface, still always
+   * visible, and gone from row 1 entirely. It draws even with no PR and no
+   * handler, because the cluster is right-pinned by `ml-auto` either way.
    */
-  it("places the chevron immediately after the title (B57.2)", () => {
+  it("draws the chevron on row 2, last in the line (B96)", () => {
     const { container } = renderRow(row({ childCount: 2 }));
     const one = rowOne(container);
-    const children = Array.from(one.children);
-    const title = one.querySelector(".truncate")!;
-    const chevron = one.querySelector('[aria-label*="child threads"]')!.parentElement!;
+    const two = rowTwo(container);
+    const chevron = rowElement(container).querySelector(
+      '[aria-label*="child threads"]',
+    )!;
+    const firstLabel = two.querySelector("[data-better-sidebar-row2]")!;
 
-    expect(children.indexOf(chevron)).toBe(children.indexOf(title) + 1);
+    // Gone from row 1.
+    expect(one.querySelector('[aria-label*="child threads"]')).toBeNull();
+    // A real button, on the same surface as the row's other buttons.
+    expect(chevron.tagName).toBe("BUTTON");
+    expect(chevron.className).toContain("hover:bg-accent");
+    // On row 2, after every label: the line's last element.
+    expect(two.contains(chevron)).toBe(true);
+    expect(
+      firstLabel.compareDocumentPosition(chevron) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  /**
+   * B96's fallback: with the second row off — `compact` density — the
+   * chevron has nowhere on row 2 to live, so it stays in row 1's trailing
+   * slot. A parent keeps its affordance at every density.
+   */
+  it("keeps the chevron on row 1 when the second row is off (B96)", () => {
+    const { container } = renderRow(
+      row({ childCount: 2 }),
+      {},
+      { showSecondRow: false },
+    );
+    expect(
+      rowOne(container).querySelector('[aria-label*="child threads"]'),
+    ).not.toBeNull();
+    expect(
+      rowElement(container).querySelector('[aria-label*="child threads"]'),
+    ).not.toBeNull();
   });
 
   /**

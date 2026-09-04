@@ -1,6 +1,7 @@
-import { Fragment, useLayoutEffect, useRef, type ReactNode } from "react";
+import { Fragment, useLayoutEffect, useRef, type MouseEvent, type ReactNode } from "react";
 import type { PluginSidebarPullRequest } from "@get-bb/plugin-sdk/app";
 import { cn } from "../lib/utils";
+import { CONTROL_BUTTON_CLASS } from "../ui/control-button";
 import { Glyph } from "../ui/Glyph";
 import type { RenderRow } from "../model/types";
 import { PrChip } from "./PrChip";
@@ -22,13 +23,16 @@ const DIM_CLASS: Record<RenderRow["dimLevel"], string> = {
 };
 
 /**
- * Row 2 for a ROOT row: project, branch, model and effort, then the PR chip.
+ * Row 2 for a ROOT row: project, branch, model and effort, then the trailing
+ * cluster — the PR chip and, on a parent, the subtree chevron (B96).
  *
  * Every label carries its own mark, and each is independently hideable — by
  * setting or by absent data — so the line is assembled from whatever survives.
- * It reads left to right, except for the PR chip: that is pinned to the
- * trailing edge so the numbers form one column down the list rather than
- * starting at a different x on every row, wherever that row's branch ended.
+ * It reads left to right, except for the trailing cluster: that is pinned to
+ * the right edge, chip first, chevron LAST, so the chevron reads as the row's
+ * one affordance at the line's end and the PR numbers still form one column
+ * down the list rather than starting at a different x on every row, wherever
+ * that row's branch ended.
  */
 export function SecondRow({
   row,
@@ -40,6 +44,8 @@ export function SecondRow({
   showBranch,
   showEffort,
   execution,
+  isSubtreeCollapsed = false,
+  onToggleSubtree,
 }: {
   row: RenderRow;
   pullRequest: PluginSidebarPullRequest | null;
@@ -56,6 +62,10 @@ export function SecondRow({
    * in flight, when the thread never ran, and when the setting is off.
    */
   execution: { model: string; reasoningLevel: string } | null;
+  /** B96: whether the subtree below this parent is folded. */
+  isSubtreeCollapsed?: boolean;
+  /** B96: folds or unfolds the subtree; absent leaves the chevron inert. */
+  onToggleSubtree?: (event: MouseEvent<HTMLElement>) => void;
 }) {
   /*
    * The labels as a LIST. Every one of them is independently hideable —
@@ -124,6 +134,9 @@ export function SecondRow({
 
   return (
     <div
+      // B96: the line carries an address now, so a test can reach row 2 the
+      // way it reaches row 1.
+      data-better-sidebar-row2-line=""
       ref={lineRef}
       className={cn(
         // Whitespace alone divides the labels. Each one already carries its
@@ -141,15 +154,44 @@ export function SecondRow({
         <Fragment key={label.id}>{label.node}</Fragment>
       ))}
 
-      {pullRequest === null ? null : (
-        <span className="ml-auto shrink-0">
+      {/* B96: the trailing cluster, pinned to the line's right edge. The PR
+          chip keeps its column — its right edge is now one chevron short of
+          the row's inset, the same shift on every row that draws a chevron —
+          and the chevron is its LAST element, the farthest right thing on the
+          line. `pointer-events-auto` opts back in: the row's content wrapper
+          is transparent to the pointer so the anchor beneath stays clickable. */}
+      <span className="ml-auto flex shrink-0 items-center">
+        {pullRequest === null ? null : (
           <PrChip
             pullRequest={pullRequest}
             isCompactViewport={isCompactViewport}
             onOpen={onOpenPullRequest}
           />
-        </span>
-      )}
+        )}
+        {row.childCount === 0 ? null : (
+          <button
+            type="button"
+            aria-label={
+              isSubtreeCollapsed
+                ? `Expand ${row.childCount} child threads`
+                : `Collapse ${row.childCount} child threads`
+            }
+            aria-expanded={!isSubtreeCollapsed}
+            // B94's real-button surface, scaled to row 2: a `size-4` box on
+            // the shared `CONTROL_BUTTON_CLASS`, twMerge overriding the
+            // class's own `size-5`.
+            className={cn(CONTROL_BUTTON_CLASS, "pointer-events-auto", "size-4")}
+            onClick={onToggleSubtree}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <Glyph
+              name={isSubtreeCollapsed ? "chevron-right" : "chevron-down"}
+              className={ROW2_ICON}
+              aria-hidden
+            />
+          </button>
+        )}
+      </span>
     </div>
   );
 }
